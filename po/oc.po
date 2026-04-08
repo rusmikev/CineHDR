@@ -8,15 +8,15 @@ msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-04-08 20:04-0300\n"
-"PO-Revision-Date: 2026-02-28 11:40-0300\n"
-"Last-Translator: Diego Povliuk <diegopvlk@gmail.com>\n"
+"PO-Revision-Date: 2026-04-08 23:12+0000\n"
+"Last-Translator: Diego Povliuk <diego.pvlk@gmail.com>\n"
 "Language-Team: Occitan <https://hosted.weblate.org/projects/cine/app/oc/>\n"
 "Language: oc\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
-"X-Generator: Weblate 5.16-dev\n"
+"X-Generator: Weblate 5.17-dev\n"
 
 #: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:209 src/mpris.py:146
 #: src/mpris.py:364 src/window.py:175 src/window.py:292 src/window.py:1806
@@ -254,7 +254,7 @@ msgstr "Davalar los sostítols"
 
 #: src/shortcuts.py:66 src/shortcuts.py:67 src/preferences.blp:89
 msgid "Subtitle Scale"
-msgstr "Echelle dels sostítols"
+msgstr "Escala dels sostítols"
 
 #: src/shortcuts.py:66
 msgid "Increase Subtitle Scale"
@@ -610,7 +610,7 @@ msgstr "Polissa dels sostítols"
 
 #: src/preferences.blp:56
 msgid "Some fonts may not work"
-msgstr "Beler las polissas foncionan pas totas"
+msgstr "Benlèu que las polissas foncionan pas totas"
 
 #: src/preferences.blp:100
 msgid "Preferred Subtitle Languages"
@@ -638,7 +638,7 @@ msgstr "Normalizar lo volum"
 
 #: src/preferences.blp:122
 msgid "Save Session on Close"
-msgstr "Enregistrar la session a la deconnexion"
+msgstr "Enregistrar la session a la tancadura"
 
 #: src/preferences.blp:123
 msgid "Restore files and auto-play on startup"
