@@ -71,6 +71,22 @@
   </requires>
 
   <releases>
+    <release version="1.2.0" date="2026-04-09">
+      <description translate="no">
+        <ul>
+          <li>New: Added preference to save session on close</li>
+          <li>New: Right click menu in playlist to open item location or remove item</li>
+          <li>New: Added menu to select video chapters</li>
+          <li>Fixed subtitle size not being saved</li>
+          <li>Fixed mouse cursor not hiding during fullscreen in some cases</li>
+          <li>Added support for scrolling with modifier keys</li>
+          <li>Performance improvements</li>
+          <li>Added Finnish translation</li>
+          <li>Added Occitan translation</li>
+          <li>Updated GNOME runtime to 50</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.1" date="2026-03-14">
       <description translate="no">
         <ul>
