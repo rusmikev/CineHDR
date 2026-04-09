@@ -71,7 +71,7 @@
   </requires>
 
   <releases>
-    <release version="1.2.0" date="2026-04-09">
+    <release version="1.2.1" date="2026-04-10">
       <description translate="no">
         <ul>
           <li>New: Added preference to save session on close</li>
@@ -80,6 +80,7 @@
           <li>Fixed subtitle size not being saved</li>
           <li>Fixed mouse cursor not hiding during fullscreen in some cases</li>
           <li>Added support for scrolling with modifier keys</li>
+          <li>Added more file extensions when adding subtitles</li>
           <li>Performance improvements</li>
           <li>Added Finnish translation</li>
           <li>Added Occitan translation</li>
