@@ -427,12 +427,6 @@ class CineWindow(Adw.ApplicationWindow):
         self.motion_controls_separator = Gtk.EventControllerMotion()
         self.controls_separator.add_controller(self.motion_controls_separator)
 
-        # Sometimes when opening dialogs/popovers from menus/buttons,
-        # contains_pointer from these still returns True, even if not hovering
-        # this seems to fix it
-        self.motion_header.set_propagation_limit(Gtk.PropagationLimit.NONE)
-        self.motion_controls.set_propagation_limit(Gtk.PropagationLimit.NONE)
-
         self.connect("notify::fullscreened", self._set_fs_state)
 
         buttons = [
@@ -448,6 +442,34 @@ class CineWindow(Adw.ApplicationWindow):
         for btn in buttons:
             if btn.props.popover:
                 btn.props.popover.connect("closed", self._hide_ui_timeout)
+
+        # Somehow because the options menu contains other menus popovers inside,
+        # when closing it, contains_pointer from header/controls still returns True,
+        # even if not hovering; setting Gtk.PropagationLimit.NONE seems to be the only way to fix it
+        # also sets Gtk.PropagationLimit.SAME_NATIVE back for the other buttons
+        groups = {
+            Gtk.PropagationLimit.SAME_NATIVE: [
+                self.primary_menu_button,
+                self.open_menu_button,
+                self.volume_menu_button,
+                self.subtitles_menu_button,
+                self.audio_tracks_menu_button,
+                self.video_tracks_menu_button,
+                self.chapters_menu_button,
+            ],
+            Gtk.PropagationLimit.NONE: [
+                self.options_menu_button,
+            ],
+        }
+        for limit, buttons in groups.items():
+            for btn in buttons:
+                btn.connect(
+                    "notify::active",
+                    lambda *_, l=limit: (
+                        self.motion_header.set_propagation_limit(l),
+                        self.motion_controls.set_propagation_limit(l),
+                    ),
+                )
 
     def _set_fs_state(self, _window, _gparam):
         is_fullscreen = self.props.fullscreened
