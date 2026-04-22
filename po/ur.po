@@ -8,176 +8,185 @@ msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-04-17 17:47-0300\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"PO-Revision-Date: 2026-04-23 00:12+0000\n"
+"Last-Translator: Ahmer Jamil Khan <ahmer@khan.am>\n"
+"Language-Team: Urdu <https://hosted.weblate.org/projects/cine/app/ur/>\n"
 "Language: ur\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
+"X-Generator: Weblate 5.17.1-dev\n"
 
 #: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:209 src/mpris.py:146
 #: src/mpris.py:364 src/window.py:175 src/window.py:292 src/window.py:1826
 #: src/window.blp:6
 msgid "Cine"
-msgstr ""
+msgstr "سنی"
 
 #: data/io.github.diegopvlk.Cine.desktop.in:3
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:23
 msgid "Play your videos"
-msgstr ""
+msgstr "اپنے ویڈیوز چلائیں"
 
 #. TRANSLATORS: Search terms to find this application. Do NOT translate or localize the semicolons! The list MUST also end with a semicolon!
 #: data/io.github.diegopvlk.Cine.desktop.in:10
 msgid "Audio;Video;Movie;TV;Film;Clip;Player;Cine;mpv;"
-msgstr ""
+msgstr "آڈیو;ویڈیو;فلم;ٹی وی;فلم;کلپ;پلیئر;سنی;mpv;"
 
 #: data/io.github.diegopvlk.Cine.desktop.in:18 src/shortcuts-dialog.blp:11
 #: src/window.blp:135
 msgid "New Window"
-msgstr ""
+msgstr "نئی ونڈو"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:25
 msgid ""
 "Cine combines a clean interface with a high-performance engine to deliver a "
 "seamless viewing experience."
 msgstr ""
+"سنی بغیر کسی رکاوٹ کے دیکھنے کا تجربہ فراہم کرنے کے لیے ایک صاف انٹرفیس کو "
+"اعلی کارکردگی والے انجن کے ساتھ جوڑتا ہے۔"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:27
 msgid "Simple Design: A refined, distraction-free interface"
-msgstr ""
+msgstr "سادہ ڈیزائن: ایک بہتر، خلفشار سے پاک انٹرفیس"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:28
 msgid ""
 "MPV-Based: Leverages the robust power of MPV for great playback and format "
 "support"
 msgstr ""
+"ایم پی وی پر مبنی: زبردست پلے بیک اور فارمیٹ سپورٹ کے لیے ایم پی وی کی مضبوط "
+"طاقت کا فائدہ اٹھاتا ہے"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:29
 msgid ""
 "Audio and Subtitles: Control track selection and synchronization for both"
 msgstr ""
+"آڈیو اور سب ٹائٹلز: دونوں کے لیے ٹریک سلیکشن اور سنکرونائزیشن کو کنٹرول کریں"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:30
 msgid ""
 "Video Controls: Easily adjust brightness, contrast, zoom, aspect ratio, etc."
 msgstr ""
+"ویڈیو کنٹرولز: روشنی، کنٹراسٹ، زوم، اسپیکٹ ریشو وغیرہ کو آسانی سے ایڈجسٹ کریں"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:42
 msgid "Video Playing"
-msgstr ""
+msgstr "ویڈیو چل رہی ہے"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:46 src/preferences.blp:5
 #: src/window.blp:140
 msgid "Preferences"
-msgstr ""
+msgstr "ترجیحات"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:50
 msgid "Video Options"
-msgstr ""
+msgstr "ویڈیو آپشنز"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:54
 msgid "Main Window"
-msgstr ""
+msgstr "مین ونڈو"
 
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
 #: src/main.py:219
 msgid "translator-credits"
 msgstr ""
+"Ahmer Jamil Khan - ahmer@khan.am - https://legumlawfirm.co/our-team/ahmer-"
+"jamil-khan"
 
 #: src/mpris.py:153 src/mpris.py:221 src/mpris.py:356
 msgid "Unknown title"
-msgstr ""
+msgstr "نامعلوم عنوان"
 
 #: src/options.py:193 src/options.blp:79 src/options.blp:137
 msgid "Original"
-msgstr ""
+msgstr "اصل"
 
 #: src/playlist.py:76 src/window.py:1248 src/window.py:1665
 msgid "File Error"
-msgstr ""
+msgstr "فائل میں خرابی"
 
 #: src/playlist.py:148 src/playlist.py:327 src/playlist.blp:43
 msgid "Save Playlist"
-msgstr ""
+msgstr "پلے لسٹ کو محفوظ کریں"
 
 #: src/playlist.py:151 src/preferences.blp:156 src/preferences.blp:191
 msgid ""
 "Requires flatpak permission to read the folder where the video is stored"
-msgstr ""
+msgstr "اس فولڈر تک رسائی کے لیے فلیٹ پیک کی اجازت درکار ہے جہاں ویڈیو محفوظ ہے"
 
 #: src/playlist.py:257
 msgid "Open Item Location"
-msgstr ""
+msgstr "آئٹم لوکیشن کھولیں"
 
 #: src/playlist.py:258
 msgid "Remove from Playlist"
-msgstr ""
+msgstr "پلے لسٹ سے ہٹائیں"
 
 #: src/playlist.py:322 src/window.py:672 src/playlist.blp:24 src/window.blp:99
 msgid "Add Files"
-msgstr ""
+msgstr "فائلیں شامل کریں"
 
 #: src/playlist.py:328 src/playlist.blp:5 src/window.blp:349
 msgid "Playlist"
-msgstr ""
+msgstr "پلے لسٹ"
 
 #: src/preferences.py:105 src/preferences.blp:20
 msgid "Subtitle Color"
-msgstr ""
+msgstr "سب ٹائٹل کا رنگ"
 
 #: src/preferences.py:119 src/preferences.blp:100
 msgid "Subtitle Background"
-msgstr ""
+msgstr "سب ٹائٹل پس منظر"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:85 src/shortcuts.py:86
 #: src/window.py:1749 src/window.blp:215
 msgid "Volume"
-msgstr ""
+msgstr "آواز"
 
 #: src/shortcuts.py:29
 msgid "Volume Increase"
-msgstr ""
+msgstr "آواز میں اضافہ"
 
 #: src/shortcuts.py:30
 msgid "Volume Decrease"
-msgstr ""
+msgstr "آواز میں کمی"
 
 #: src/shortcuts.py:33 src/shortcuts.py:34 src/shortcuts.py:35
 #: src/window.blp:198
 msgid "Play/Pause"
-msgstr ""
+msgstr "چلائیں/روکیں"
 
 #: src/shortcuts.py:36
 msgid "Show/Hide Subtitles"
-msgstr ""
+msgstr "سب ٹائٹلز دکھائیں/چھپائیں"
 
 #: src/shortcuts.py:37 src/shortcuts.py:38 src/shortcuts.py:209
 #: src/window.blp:257
 msgid "Subtitles"
-msgstr ""
+msgstr "سب ٹائٹلز"
 
 #: src/shortcuts.py:37
 msgid "Switch to Next Subtitle Track"
-msgstr ""
+msgstr "اگلے سب ٹائٹل ٹریک پر جائیں"
 
 #: src/shortcuts.py:38
 msgid "Switch to Previous Subtitle Track"
-msgstr ""
+msgstr "پچھلے سب ٹائٹل ٹریک پر جائیں"
 
 #: src/shortcuts.py:39
 msgid "Secondary Subtitles"
-msgstr ""
+msgstr "ثانوی سب ٹائٹلز"
 
 #: src/shortcuts.py:39
 msgid "Switch Secondary Subtitle Track"
-msgstr ""
+msgstr "ثانوی سب ٹائٹل ٹریک سوئچ کریں"
 
 #: src/shortcuts.py:40 src/shortcuts.py:41 src/window.py:699 src/window.blp:272
 msgid "Audio"
-msgstr ""
+msgstr "آڈیو"
 
 #: src/shortcuts.py:40
 msgid "Switch to Next Audio Track"
@@ -206,50 +215,50 @@ msgstr ""
 #: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1698
 #: src/window.blp:364
 msgid "Fullscreen"
-msgstr ""
+msgstr "پوری اسکرین"
 
 #: src/shortcuts.py:57 src/shortcuts.py:58 src/shortcuts.py:59
 #: src/shortcuts.py:60 src/shortcuts.py:61 src/options.blp:285
 #: src/options.blp:309
 msgid "Zoom"
-msgstr ""
+msgstr "زوم"
 
 #: src/shortcuts.py:57 src/shortcuts.py:58 src/shortcuts.py:59
 msgid "Zoom In"
-msgstr ""
+msgstr "زوم ان"
 
 #: src/shortcuts.py:60 src/shortcuts.py:61
 msgid "Zoom Out"
-msgstr ""
+msgstr "زوم آؤٹ"
 
 #: src/shortcuts.py:62 src/shortcuts.py:63 src/options.blp:611
 #: src/options.blp:635
 msgid "Subtitle Delay"
-msgstr ""
+msgstr "سب ٹائٹل میں تاخیر"
 
 #: src/shortcuts.py:62
 msgid "Decrease Subtitle Delay"
-msgstr ""
+msgstr "سب ٹائٹل کی تاخیر میں کمی"
 
 #: src/shortcuts.py:63
 msgid "Increase Subtitle Delay"
-msgstr ""
+msgstr "سب ٹائٹل کی تاخیر میں اضافہ"
 
 #: src/shortcuts.py:64 src/shortcuts.py:65
 msgid "Subtitle Position"
-msgstr ""
+msgstr "سب ٹائٹل پوزیشن"
 
 #: src/shortcuts.py:64
 msgid "Move Subtitles Up"
-msgstr ""
+msgstr "سب ٹائٹلز اوپر منتقل کریں"
 
 #: src/shortcuts.py:65
 msgid "Move Subtitles Down"
-msgstr ""
+msgstr "سب ٹائٹلز کو نیچے منتقل کریں"
 
 #: src/shortcuts.py:66 src/shortcuts.py:67 src/preferences.blp:89
 msgid "Subtitle Scale"
-msgstr ""
+msgstr "سب ٹائٹلز کا پیمانہ"
 
 #: src/shortcuts.py:66
 msgid "Increase Subtitle Scale"
@@ -261,28 +270,28 @@ msgstr ""
 
 #: src/shortcuts.py:68 src/window.blp:226
 msgid "Mute/Unmute"
-msgstr ""
+msgstr "خاموش/آواز"
 
 #: src/shortcuts.py:69 src/shortcuts.py:70 src/shortcuts.py:71
 #: src/options.blp:666 src/options.blp:690
 msgid "Audio Delay"
-msgstr ""
+msgstr "آڈیو تاخیر"
 
 #: src/shortcuts.py:69
 msgid "Decrease Audio Delay"
-msgstr ""
+msgstr "آڈیو تاخیر کو کم کریں"
 
 #: src/shortcuts.py:70 src/shortcuts.py:71
 msgid "Increase Audio Delay"
-msgstr ""
+msgstr "آڈیو تاخیر میں اضافہ کریں"
 
 #: src/shortcuts.py:81
 msgid "Go Back One Frame"
-msgstr ""
+msgstr "ایک فریم پیچھے"
 
 #: src/shortcuts.py:82
 msgid "Advance One Frame"
-msgstr ""
+msgstr "ایک فریم آگے"
 
 #: src/shortcuts.py:83
 msgid "Seek to the Previous Chapter"
@@ -294,19 +303,19 @@ msgstr ""
 
 #: src/shortcuts.py:88
 msgid "Take Screenshot With Subtitles"
-msgstr ""
+msgstr "سب ٹائٹلز کے ساتھ سکرین شاٹ لیں"
 
 #: src/shortcuts.py:89
 msgid "Take Screenshot Without Subtitles"
-msgstr ""
+msgstr "سب ٹائٹلز کے بغیر اسکرین شاٹ لیں"
 
 #: src/shortcuts.py:90
 msgid "Statistics"
-msgstr ""
+msgstr "اعداد و شمار"
 
 #: src/shortcuts.py:91
 msgid "Statistics Overlay"
-msgstr ""
+msgstr "شماریات اوورلے"
 
 #: src/shortcuts.py:92
 msgid "Set/Clear A-B Loop Points"
@@ -314,99 +323,99 @@ msgstr ""
 
 #: src/shortcuts.py:93
 msgid "Loop"
-msgstr ""
+msgstr "لوپ"
 
 #: src/shortcuts.py:93 src/window.blp:339
 msgid "Loop File"
-msgstr ""
+msgstr "لوپ فائل"
 
 #: src/shortcuts.py:94 src/shortcuts.py:95 src/options.blp:340
 #: src/options.blp:363
 msgid "Contrast"
-msgstr ""
+msgstr "کنٹراسٹ"
 
 #: src/shortcuts.py:94
 msgid "Decrease Contrast"
-msgstr ""
+msgstr "کنٹراسٹ کو کم کریں"
 
 #: src/shortcuts.py:95
 msgid "Increase Contrast"
-msgstr ""
+msgstr "کنٹراسٹ میں اضافہ کریں"
 
 #: src/shortcuts.py:96 src/shortcuts.py:97 src/options.blp:394
 #: src/options.blp:417
 msgid "Brightness"
-msgstr ""
+msgstr "روشنی"
 
 #: src/shortcuts.py:96
 msgid "Decrease Brightness"
-msgstr ""
+msgstr "روشنی کو کم کریں"
 
 #: src/shortcuts.py:97
 msgid "Increase Brightness"
-msgstr ""
+msgstr "روشنی میں اضافہ کریں"
 
 #: src/shortcuts.py:98 src/shortcuts.py:99 src/options.blp:448
 #: src/options.blp:471
 msgid "Gamma"
-msgstr ""
+msgstr "گاما"
 
 #: src/shortcuts.py:98
 msgid "Decrease Gamma"
-msgstr ""
+msgstr "گاما کو کم کریں"
 
 #: src/shortcuts.py:99
 msgid "Increase Gamma"
-msgstr ""
+msgstr "گاما میں اضافہ کریں"
 
 #: src/shortcuts.py:100 src/shortcuts.py:101 src/options.blp:502
 #: src/options.blp:525
 msgid "Saturation"
-msgstr ""
+msgstr "سنترپتی"
 
 #: src/shortcuts.py:100
 msgid "Decrease Saturation"
-msgstr ""
+msgstr "سنترپتی کو کم کریں"
 
 #: src/shortcuts.py:101
 msgid "Increase Saturation"
-msgstr ""
+msgstr "سنترپتی میں اضافہ کریں"
 
 #: src/shortcuts.py:102 src/shortcuts.py:103 src/shortcuts.py:104
 msgid "Speed"
-msgstr ""
+msgstr "رفتار"
 
 #: src/shortcuts.py:102
 msgid "Decrease Playback Speed"
-msgstr ""
+msgstr "پلے بیک کی رفتار کو کم کریں"
 
 #: src/shortcuts.py:103
 msgid "Increase Playback Speed"
-msgstr ""
+msgstr "پلے بیک کی رفتار میں اضافہ کریں"
 
 #: src/shortcuts.py:104 src/options.blp:711
 msgid "Reset Playback Speed"
-msgstr ""
+msgstr "پلے بیک کی رفتار کو دوبارہ ترتیب دیں"
 
 #: src/shortcuts.py:193
 msgid "Display & Video"
-msgstr ""
+msgstr "ڈسپلے اور ویڈیو"
 
 #: src/shortcuts.py:210
 msgid "Audio & Volume"
-msgstr ""
+msgstr "آڈیو اور والیوم"
 
 #: src/shortcuts.py:211
 msgid "Navigation"
-msgstr ""
+msgstr "نیویگیشن"
 
 #: src/shortcuts.py:212
 msgid "Playback"
-msgstr ""
+msgstr "پلے بیک"
 
 #: src/shortcuts.py:216 src/shortcuts.py:222
 msgid "Miscellaneous"
-msgstr ""
+msgstr "متفرق"
 
 #: src/window.py:549 src/window.py:1240 src/window.blp:114
 msgid "Add Subtitle Track"
@@ -414,7 +423,7 @@ msgstr ""
 
 #: src/window.py:551 src/window.py:560
 msgid "None"
-msgstr ""
+msgstr "کچھ نہیں"
 
 #: src/window.py:558 src/window.blp:119
 msgid "Add Audio Track"
@@ -447,44 +456,44 @@ msgstr ""
 
 #: src/window.py:694
 msgid "Subtitle"
-msgstr ""
+msgstr "سب ٹائٹل"
 
 #: src/window.py:703
 msgid "Media"
-msgstr ""
+msgstr "میڈیا"
 
 #: src/window.py:770 src/playlist.blp:36 src/window.blp:109
 msgid "Add URL"
-msgstr ""
+msgstr "یو آر ایل شامل کریں"
 
 #: src/window.py:770 src/shortcuts-dialog.blp:26 src/window.blp:94
 #: src/window.blp:476
 msgid "Open URL"
-msgstr ""
+msgstr "یو آر ایل کھولیں"
 
 #: src/window.py:783
 msgid "URL"
-msgstr ""
+msgstr "یو آر ایل"
 
 #: src/window.py:791
 msgid "Add"
-msgstr ""
+msgstr "شامل کریں"
 
 #: src/window.py:791 src/window.blp:78
 msgid "Open"
-msgstr ""
+msgstr "کھولیں"
 
 #: src/window.py:964 src/window.py:1081
 msgid "Chapter"
-msgstr ""
+msgstr "باب"
 
 #: src/window.py:1139
 msgid "Pause"
-msgstr ""
+msgstr "روکیں"
 
 #: src/window.py:1139 src/window.py:1244
 msgid "Play"
-msgstr ""
+msgstr "چلائیں"
 
 #: src/window.py:1698
 msgid "Exit Fullscreen"
@@ -681,15 +690,15 @@ msgstr ""
 
 #: src/shortcuts-dialog.blp:66
 msgid "Close Window"
-msgstr ""
+msgstr "ونڈو بند کریں"
 
 #: src/shortcuts-dialog.blp:71
 msgid "Quit"
-msgstr ""
+msgstr "بند کریں"
 
 #: src/window.blp:130
 msgid "Main Menu"
-msgstr ""
+msgstr "مین مینو"
 
 #: src/window.blp:145
 msgid "Keyboard Shortcuts"
@@ -701,15 +710,15 @@ msgstr ""
 
 #: src/window.blp:188
 msgid "Previous"
-msgstr ""
+msgstr "پچھلا"
 
 #: src/window.blp:208
 msgid "Next"
-msgstr ""
+msgstr "اگلا"
 
 #: src/window.blp:286
 msgid "Video"
-msgstr ""
+msgstr "ویڈیو"
 
 #: src/window.blp:300
 msgid "Chapters"
