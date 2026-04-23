@@ -59,6 +59,7 @@
     <category>AudioVideo</category>
     <category>Audio</category>
     <category>Video</category>
+    <category>Player</category>
   </categories>
 
   <recommends>
