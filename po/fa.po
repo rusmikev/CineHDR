@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-17 17:47-0300\n"
+"POT-Creation-Date: 2026-04-26 19:13-0300\n"
 "PO-Revision-Date: 2026-04-03 15:09+0000\n"
 "Last-Translator: Danial Behzadi <dani.behzi@ubuntu.com>\n"
 "Language-Team: Persian <https://hosted.weblate.org/projects/cine/app/fa/>\n"
@@ -18,8 +18,8 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
 "X-Generator: Weblate 5.17-dev\n"
 
-#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:209 src/mpris.py:146
-#: src/mpris.py:364 src/window.py:175 src/window.py:292 src/window.py:1826
+#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:223 src/mpris.py:146
+#: src/mpris.py:364 src/window.py:176 src/window.py:295 src/window.py:1840
 #: src/window.blp:6
 msgid "Cine"
 msgstr "سین"
@@ -35,7 +35,7 @@ msgid "Audio;Video;Movie;TV;Film;Clip;Player;Cine;mpv;"
 msgstr "Audio;Video;Movie;TV;Film;Clip;Player;Cine;mpv;صدا;تصویر;ویدیو;فیلم;تلویزیون;کلیپ;قطعه;پخش;"
 
 #: data/io.github.diegopvlk.Cine.desktop.in:18 src/shortcuts-dialog.blp:11
-#: src/window.blp:135
+#: src/window.blp:136
 msgid "New Window"
 msgstr "پنجرهٔ جدید"
 
@@ -76,7 +76,7 @@ msgid "Video Playing"
 msgstr "پخش کردن ویدیو"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:46 src/preferences.blp:5
-#: src/window.blp:140
+#: src/window.blp:141
 msgid "Preferences"
 msgstr "ترجیحات"
 
@@ -89,7 +89,7 @@ msgid "Main Window"
 msgstr "پنجرهٔ اصلی"
 
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
-#: src/main.py:219
+#: src/main.py:233
 msgid "translator-credits"
 msgstr ""
 "آوید <avds@disroot.org>\n"
@@ -103,7 +103,7 @@ msgstr "عنوان ناشناخته"
 msgid "Original"
 msgstr "اصلی"
 
-#: src/playlist.py:76 src/window.py:1248 src/window.py:1665
+#: src/playlist.py:76 src/window.py:1260 src/window.py:1679
 msgid "File Error"
 msgstr "خطای پرونده"
 
@@ -111,7 +111,7 @@ msgstr "خطای پرونده"
 msgid "Save Playlist"
 msgstr "ذخیرهٔ سیاههٔ پخش"
 
-#: src/playlist.py:151 src/preferences.blp:156 src/preferences.blp:191
+#: src/playlist.py:151 src/preferences.blp:157 src/preferences.blp:192
 msgid ""
 "Requires flatpak permission to read the folder where the video is stored"
 msgstr "نیازمند اجازهٔ فلت‌پک برای خواندن شاخهٔ محل ذخیرهٔ ویدیو"
@@ -124,25 +124,25 @@ msgstr "گشودن مکان مورد"
 msgid "Remove from Playlist"
 msgstr "برداشتن از سیاههٔ پخش"
 
-#: src/playlist.py:322 src/window.py:672 src/playlist.blp:24 src/window.blp:99
+#: src/playlist.py:322 src/window.py:679 src/playlist.blp:24 src/window.blp:100
 msgid "Add Files"
 msgstr "افزودن پرونده‌ها"
 
-#: src/playlist.py:328 src/playlist.blp:5 src/window.blp:349
+#: src/playlist.py:328 src/playlist.blp:5 src/window.blp:365
 msgid "Playlist"
 msgstr "سیاههٔ پخش"
 
-#: src/preferences.py:105 src/preferences.blp:20
+#: src/preferences.py:106 src/preferences.blp:20
 msgid "Subtitle Color"
 msgstr "رنگ زیرنویس"
 
-#: src/preferences.py:119 src/preferences.blp:100
+#: src/preferences.py:120 src/preferences.blp:100
 msgid "Subtitle Background"
 msgstr "پس‌زمینه زیرنویس"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:85 src/shortcuts.py:86
-#: src/window.py:1749 src/window.blp:215
+#: src/window.py:1763 src/window.blp:228
 msgid "Volume"
 msgstr "حجم صدا"
 
@@ -155,7 +155,7 @@ msgid "Volume Decrease"
 msgstr "کاهش حجم صدا"
 
 #: src/shortcuts.py:33 src/shortcuts.py:34 src/shortcuts.py:35
-#: src/window.blp:198
+#: src/window.blp:209
 msgid "Play/Pause"
 msgstr "پخش یا مکث"
 
@@ -164,7 +164,7 @@ msgid "Show/Hide Subtitles"
 msgstr "نمایش یا نهفتن زیرنویس‌ها"
 
 #: src/shortcuts.py:37 src/shortcuts.py:38 src/shortcuts.py:209
-#: src/window.blp:257
+#: src/window.blp:270
 msgid "Subtitles"
 msgstr "زیرنویس‌ها"
 
@@ -184,7 +184,7 @@ msgstr "زیرنویس‌های ثانویه"
 msgid "Switch Secondary Subtitle Track"
 msgstr "تعویض قطعهٔ زیرنویس ثانویه"
 
-#: src/shortcuts.py:40 src/shortcuts.py:41 src/window.py:699 src/window.blp:272
+#: src/shortcuts.py:40 src/shortcuts.py:41 src/window.py:706 src/window.blp:285
 msgid "Audio"
 msgstr "صوت"
 
@@ -212,8 +212,8 @@ msgstr "۵ ثانیه به پیش"
 msgid "Seek 5s Forward"
 msgstr "۵ ثانیه به پس"
 
-#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1698
-#: src/window.blp:364
+#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1712
+#: src/window.blp:381
 msgid "Fullscreen"
 msgstr "تمام‌صفحه"
 
@@ -268,7 +268,7 @@ msgstr "افزایش مقیاس زیرنویس"
 msgid "Decrease Subtitle Scale"
 msgstr "کاهش مقیاس زیرنویس"
 
-#: src/shortcuts.py:68 src/window.blp:226
+#: src/shortcuts.py:68 src/window.blp:239
 msgid "Mute/Unmute"
 msgstr "خموشی یا ناخموشی"
 
@@ -325,7 +325,7 @@ msgstr "تنظیم/پاک کردن نقاط تکرار A-B"
 msgid "Loop"
 msgstr "حلقه"
 
-#: src/shortcuts.py:93 src/window.blp:339
+#: src/shortcuts.py:93 src/window.blp:354
 msgid "Loop File"
 msgstr "حلقه کردن پرونده"
 
@@ -417,85 +417,85 @@ msgstr "پخش"
 msgid "Miscellaneous"
 msgstr "متفرقه"
 
-#: src/window.py:549 src/window.py:1240 src/window.blp:114
+#: src/window.py:556 src/window.py:1252 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "افزودن قطعه زیرنویس"
 
-#: src/window.py:551 src/window.py:560
+#: src/window.py:558 src/window.py:567
 msgid "None"
 msgstr "هیچ"
 
-#: src/window.py:558 src/window.blp:119
+#: src/window.py:565 src/window.blp:120
 msgid "Add Audio Track"
 msgstr "افزودن قطعه صوتی"
 
-#: src/window.py:597
+#: src/window.py:604
 msgid "Track"
 msgstr "قطعه"
 
-#: src/window.py:640 src/playlist.blp:30 src/window.blp:104
+#: src/window.py:647 src/playlist.blp:30 src/window.blp:105
 msgid "Add Folder"
 msgstr "افزودن شاخه"
 
-#: src/window.py:640 src/shortcuts-dialog.blp:21 src/window.blp:89
-#: src/window.blp:466
+#: src/window.py:647 src/shortcuts-dialog.blp:21 src/window.blp:90
+#: src/window.blp:484
 msgid "Open Folder"
 msgstr "گشودن شاخه"
 
-#: src/window.py:669 src/shortcuts-dialog.blp:16 src/window.blp:84
+#: src/window.py:676 src/shortcuts-dialog.blp:16 src/window.blp:85
 msgid "Open Files"
 msgstr "گشودن پرونده‌ها"
 
-#: src/window.py:675
+#: src/window.py:682
 msgid "Add Subtitle"
 msgstr "افزودن زیرنویس"
 
-#: src/window.py:678
+#: src/window.py:685
 msgid "Add Audio"
 msgstr "افزودن صوت"
 
-#: src/window.py:694
+#: src/window.py:701
 msgid "Subtitle"
 msgstr "زیرنویس"
 
-#: src/window.py:703
+#: src/window.py:710
 msgid "Media"
 msgstr "رسانه"
 
-#: src/window.py:770 src/playlist.blp:36 src/window.blp:109
+#: src/window.py:782 src/playlist.blp:36 src/window.blp:110
 msgid "Add URL"
 msgstr "افزودن لینک"
 
-#: src/window.py:770 src/shortcuts-dialog.blp:26 src/window.blp:94
-#: src/window.blp:476
+#: src/window.py:782 src/shortcuts-dialog.blp:26 src/window.blp:95
+#: src/window.blp:494
 msgid "Open URL"
 msgstr "باز کردن لینک"
 
-#: src/window.py:783
+#: src/window.py:795
 msgid "URL"
 msgstr "لینک"
 
-#: src/window.py:791
+#: src/window.py:803
 msgid "Add"
 msgstr "افزودن"
 
-#: src/window.py:791 src/window.blp:78
+#: src/window.py:803 src/window.blp:79
 msgid "Open"
 msgstr "گشودن"
 
-#: src/window.py:964 src/window.py:1081
+#: src/window.py:976 src/window.py:1093
 msgid "Chapter"
 msgstr "فصل"
 
-#: src/window.py:1139
+#: src/window.py:1151
 msgid "Pause"
 msgstr "مکث"
 
-#: src/window.py:1139 src/window.py:1244
+#: src/window.py:1151 src/window.py:1256
 msgid "Play"
 msgstr "پخش"
 
-#: src/window.py:1698
+#: src/window.py:1712
 msgid "Exit Fullscreen"
 msgstr "خروج از تمام‌صفحه"
 
@@ -633,26 +633,32 @@ msgid "Progress Bar Thumbnail"
 msgstr "پیش‌نمایش نوار پیشرفت"
 
 #: src/preferences.blp:131
-msgid "Hardware Decoding"
-msgstr "کدگشایی سخت‌افزاری"
-
-#: src/preferences.blp:135
 msgid "Normalize Volume"
 msgstr "عادی‌سازی حجم صدا"
 
-#: src/preferences.blp:139
-msgid "Save Session on Close"
-msgstr "ذخیرهٔ نشست هنگام بستن"
+#: src/preferences.blp:135
+#, fuzzy
+#| msgid "Hardware Decoding"
+msgid "Hardware Acceleration"
+msgstr "کدگشایی سخت‌افزاری"
+
+#: src/preferences.blp:136
+msgid "Use GPU for video decoding when available"
+msgstr ""
 
 #: src/preferences.blp:140
-msgid "Restore files and auto-play on startup"
-msgstr "بازگردانی پرونده‌ها و پخش خودکار در هنگام شروع"
+msgid "Restore Saved Session"
+msgstr ""
 
-#: src/preferences.blp:174
+#: src/preferences.blp:141
+msgid "Pick up where you left off after saving from the menu"
+msgstr ""
+
+#: src/preferences.blp:175
 msgid "Save Video Position on Close"
 msgstr "ذخیره موقعیت ویدیو هنگام بستن"
 
-#: src/preferences.blp:175
+#: src/preferences.blp:176
 msgid "Also save options like brightness, subtitle delay, etc."
 msgstr "همچنین ذخیره گزینه‌هایی مانند روشنایی، تأخیر زیرنویس و..."
 
@@ -692,54 +698,63 @@ msgstr "نمایش میان‌برها"
 msgid "Close Window"
 msgstr "بستن پنجره"
 
-#: src/shortcuts-dialog.blp:71
+#: src/shortcuts-dialog.blp:71 src/window.blp:158
+#, fuzzy
+#| msgid "Save Session on Close"
+msgid "Save Session and Close"
+msgstr "ذخیرهٔ نشست هنگام بستن"
+
+#: src/shortcuts-dialog.blp:76
 msgid "Quit"
 msgstr "خروج"
 
-#: src/window.blp:130
+#: src/window.blp:131
 msgid "Main Menu"
 msgstr "فهرست اصلی"
 
-#: src/window.blp:145
+#: src/window.blp:146
 msgid "Keyboard Shortcuts"
 msgstr "میان‌برهای صفحه‌کلید"
 
-#: src/window.blp:150
+#: src/window.blp:151
 msgid "About Cine"
 msgstr "دربارهٔ سین"
 
-#: src/window.blp:188
+#: src/window.blp:199
 msgid "Previous"
 msgstr "پیشین"
 
-#: src/window.blp:208
+#: src/window.blp:220
 msgid "Next"
 msgstr "بعدی"
 
-#: src/window.blp:286
+#: src/window.blp:299
 msgid "Video"
 msgstr "ویدیو"
 
-#: src/window.blp:300
+#: src/window.blp:313
 msgid "Chapters"
 msgstr "فصل‌ها"
 
-#: src/window.blp:317
+#: src/window.blp:330
 msgid "Shuffle Playlist"
 msgstr "بُر زدن سیاههٔ پخش"
 
-#: src/window.blp:328
+#: src/window.blp:342
 msgid "Loop Playlist"
 msgstr "حلقه کردن سیاههٔ پخش"
 
-#: src/window.blp:396
+#: src/window.blp:414
 msgid "Toggle Elapsed/Remaining"
 msgstr "تغییر وضعیت رفته و مانده"
 
-#: src/window.blp:442
+#: src/window.blp:460
 msgid "Drag and Drop Files Here"
 msgstr "کشیدن و رها کردن پرونده‌ها در این‌جا"
 
-#: src/window.blp:455
+#: src/window.blp:473
 msgid "Open…"
 msgstr "گشودن…"
+
+#~ msgid "Restore files and auto-play on startup"
+#~ msgstr "بازگردانی پرونده‌ها و پخش خودکار در هنگام شروع"

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-17 17:47-0300\n"
+"POT-Creation-Date: 2026-04-26 19:13-0300\n"
 "PO-Revision-Date: 2026-02-28 11:40-0300\n"
 "Last-Translator: Vladimir Kosolapov\n"
 "Language-Team: \n"
@@ -18,8 +18,8 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
 "n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
-#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:209 src/mpris.py:146
-#: src/mpris.py:364 src/window.py:175 src/window.py:292 src/window.py:1826
+#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:223 src/mpris.py:146
+#: src/mpris.py:364 src/window.py:176 src/window.py:295 src/window.py:1840
 #: src/window.blp:6
 msgid "Cine"
 msgstr "Cine"
@@ -35,7 +35,7 @@ msgid "Audio;Video;Movie;TV;Film;Clip;Player;Cine;mpv;"
 msgstr "Аудио;Видео;Фильм;ТВ;Кино;Клип;Плеер;Просмотр;mpv;"
 
 #: data/io.github.diegopvlk.Cine.desktop.in:18 src/shortcuts-dialog.blp:11
-#: src/window.blp:135
+#: src/window.blp:136
 msgid "New Window"
 msgstr "Новое окно"
 
@@ -74,7 +74,7 @@ msgid "Video Playing"
 msgstr "Воспроизведение видео"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:46 src/preferences.blp:5
-#: src/window.blp:140
+#: src/window.blp:141
 msgid "Preferences"
 msgstr "Параметры"
 
@@ -87,7 +87,7 @@ msgid "Main Window"
 msgstr "Главное окно"
 
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
-#: src/main.py:219
+#: src/main.py:233
 msgid "translator-credits"
 msgstr "Vladimir Kosolapov https://github.com/vmkspv"
 
@@ -99,7 +99,7 @@ msgstr "Название неизвестно"
 msgid "Original"
 msgstr "Оригинал"
 
-#: src/playlist.py:76 src/window.py:1248 src/window.py:1665
+#: src/playlist.py:76 src/window.py:1260 src/window.py:1679
 msgid "File Error"
 msgstr "Ошибка файла"
 
@@ -107,7 +107,7 @@ msgstr "Ошибка файла"
 msgid "Save Playlist"
 msgstr "Сохранить плейлист"
 
-#: src/playlist.py:151 src/preferences.blp:156 src/preferences.blp:191
+#: src/playlist.py:151 src/preferences.blp:157 src/preferences.blp:192
 msgid ""
 "Requires flatpak permission to read the folder where the video is stored"
 msgstr "Требуется разрешение Flatpak для чтения папки, где хранится видео"
@@ -120,25 +120,25 @@ msgstr "Открыть расположение файла"
 msgid "Remove from Playlist"
 msgstr "Удалить из плейлиста"
 
-#: src/playlist.py:322 src/window.py:672 src/playlist.blp:24 src/window.blp:99
+#: src/playlist.py:322 src/window.py:679 src/playlist.blp:24 src/window.blp:100
 msgid "Add Files"
 msgstr "Добавить файлы"
 
-#: src/playlist.py:328 src/playlist.blp:5 src/window.blp:349
+#: src/playlist.py:328 src/playlist.blp:5 src/window.blp:365
 msgid "Playlist"
 msgstr "Плейлист"
 
-#: src/preferences.py:105 src/preferences.blp:20
+#: src/preferences.py:106 src/preferences.blp:20
 msgid "Subtitle Color"
 msgstr "Цвет субтитров"
 
-#: src/preferences.py:119 src/preferences.blp:100
+#: src/preferences.py:120 src/preferences.blp:100
 msgid "Subtitle Background"
 msgstr "Фон субтитров"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:85 src/shortcuts.py:86
-#: src/window.py:1749 src/window.blp:215
+#: src/window.py:1763 src/window.blp:228
 msgid "Volume"
 msgstr "Громкость"
 
@@ -151,7 +151,7 @@ msgid "Volume Decrease"
 msgstr "Уменьшить громкость"
 
 #: src/shortcuts.py:33 src/shortcuts.py:34 src/shortcuts.py:35
-#: src/window.blp:198
+#: src/window.blp:209
 msgid "Play/Pause"
 msgstr "Воспроизведение/Пауза"
 
@@ -160,7 +160,7 @@ msgid "Show/Hide Subtitles"
 msgstr "Показать/Скрыть субтитры"
 
 #: src/shortcuts.py:37 src/shortcuts.py:38 src/shortcuts.py:209
-#: src/window.blp:257
+#: src/window.blp:270
 msgid "Subtitles"
 msgstr "Субтитры"
 
@@ -180,7 +180,7 @@ msgstr "Вторичные субтитры"
 msgid "Switch Secondary Subtitle Track"
 msgstr "Переключить дорожку вторичных субтитров"
 
-#: src/shortcuts.py:40 src/shortcuts.py:41 src/window.py:699 src/window.blp:272
+#: src/shortcuts.py:40 src/shortcuts.py:41 src/window.py:706 src/window.blp:285
 msgid "Audio"
 msgstr "Аудио"
 
@@ -208,8 +208,8 @@ msgstr "Перемотка на 5 сек назад"
 msgid "Seek 5s Forward"
 msgstr "Перемотка на 5 сек вперёд"
 
-#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1698
-#: src/window.blp:364
+#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1712
+#: src/window.blp:381
 msgid "Fullscreen"
 msgstr "Полный экран"
 
@@ -264,7 +264,7 @@ msgstr "Увеличить масштаб субтитров"
 msgid "Decrease Subtitle Scale"
 msgstr "Уменьшить масштаб субтитров"
 
-#: src/shortcuts.py:68 src/window.blp:226
+#: src/shortcuts.py:68 src/window.blp:239
 msgid "Mute/Unmute"
 msgstr "Включить/выключить звук"
 
@@ -321,7 +321,7 @@ msgstr "Установить/сбросить точки петли A-B"
 msgid "Loop"
 msgstr "Повтор"
 
-#: src/shortcuts.py:93 src/window.blp:339
+#: src/shortcuts.py:93 src/window.blp:354
 msgid "Loop File"
 msgstr "Повторять файл"
 
@@ -413,85 +413,85 @@ msgstr "Воспроизведение"
 msgid "Miscellaneous"
 msgstr "Разное"
 
-#: src/window.py:549 src/window.py:1240 src/window.blp:114
+#: src/window.py:556 src/window.py:1252 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "Добавить дорожку субтитров"
 
-#: src/window.py:551 src/window.py:560
+#: src/window.py:558 src/window.py:567
 msgid "None"
 msgstr "Нет"
 
-#: src/window.py:558 src/window.blp:119
+#: src/window.py:565 src/window.blp:120
 msgid "Add Audio Track"
 msgstr "Добавить аудиодорожку"
 
-#: src/window.py:597
+#: src/window.py:604
 msgid "Track"
 msgstr "Дорожка"
 
-#: src/window.py:640 src/playlist.blp:30 src/window.blp:104
+#: src/window.py:647 src/playlist.blp:30 src/window.blp:105
 msgid "Add Folder"
 msgstr "Добавить папку"
 
-#: src/window.py:640 src/shortcuts-dialog.blp:21 src/window.blp:89
-#: src/window.blp:466
+#: src/window.py:647 src/shortcuts-dialog.blp:21 src/window.blp:90
+#: src/window.blp:484
 msgid "Open Folder"
 msgstr "Открыть папку"
 
-#: src/window.py:669 src/shortcuts-dialog.blp:16 src/window.blp:84
+#: src/window.py:676 src/shortcuts-dialog.blp:16 src/window.blp:85
 msgid "Open Files"
 msgstr "Открыть файлы"
 
-#: src/window.py:675
+#: src/window.py:682
 msgid "Add Subtitle"
 msgstr "Добавить субтитры"
 
-#: src/window.py:678
+#: src/window.py:685
 msgid "Add Audio"
 msgstr "Добавить аудио"
 
-#: src/window.py:694
+#: src/window.py:701
 msgid "Subtitle"
 msgstr "Субтитры"
 
-#: src/window.py:703
+#: src/window.py:710
 msgid "Media"
 msgstr "Медиа"
 
-#: src/window.py:770 src/playlist.blp:36 src/window.blp:109
+#: src/window.py:782 src/playlist.blp:36 src/window.blp:110
 msgid "Add URL"
 msgstr "Добавить URL"
 
-#: src/window.py:770 src/shortcuts-dialog.blp:26 src/window.blp:94
-#: src/window.blp:476
+#: src/window.py:782 src/shortcuts-dialog.blp:26 src/window.blp:95
+#: src/window.blp:494
 msgid "Open URL"
 msgstr "Открыть URL"
 
-#: src/window.py:783
+#: src/window.py:795
 msgid "URL"
 msgstr "URL"
 
-#: src/window.py:791
+#: src/window.py:803
 msgid "Add"
 msgstr "Добавить"
 
-#: src/window.py:791 src/window.blp:78
+#: src/window.py:803 src/window.blp:79
 msgid "Open"
 msgstr "Открыть"
 
-#: src/window.py:964 src/window.py:1081
+#: src/window.py:976 src/window.py:1093
 msgid "Chapter"
 msgstr "Глава"
 
-#: src/window.py:1139
+#: src/window.py:1151
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/window.py:1139 src/window.py:1244
+#: src/window.py:1151 src/window.py:1256
 msgid "Play"
 msgstr "Воспроизведение"
 
-#: src/window.py:1698
+#: src/window.py:1712
 msgid "Exit Fullscreen"
 msgstr "Выйти из полноэкранного режима"
 
@@ -629,26 +629,32 @@ msgid "Progress Bar Thumbnail"
 msgstr "Миниатюра индикатора выполнения"
 
 #: src/preferences.blp:131
-msgid "Hardware Decoding"
-msgstr "Аппаратное декодирование"
-
-#: src/preferences.blp:135
 msgid "Normalize Volume"
 msgstr "Нормализовать громкость"
 
-#: src/preferences.blp:139
-msgid "Save Session on Close"
-msgstr "Сохранить сессию при закрытии"
+#: src/preferences.blp:135
+#, fuzzy
+#| msgid "Hardware Decoding"
+msgid "Hardware Acceleration"
+msgstr "Аппаратное декодирование"
+
+#: src/preferences.blp:136
+msgid "Use GPU for video decoding when available"
+msgstr ""
 
 #: src/preferences.blp:140
-msgid "Restore files and auto-play on startup"
-msgstr "Восстанавливать файлы и автовоспроизведение при запуске"
+msgid "Restore Saved Session"
+msgstr ""
 
-#: src/preferences.blp:174
+#: src/preferences.blp:141
+msgid "Pick up where you left off after saving from the menu"
+msgstr ""
+
+#: src/preferences.blp:175
 msgid "Save Video Position on Close"
 msgstr "Сохранять позицию видео при закрытии"
 
-#: src/preferences.blp:175
+#: src/preferences.blp:176
 msgid "Also save options like brightness, subtitle delay, etc."
 msgstr "Также сохранять параметры вроде яркости, задержки субтитров и прочее"
 
@@ -688,57 +694,66 @@ msgstr "Показать комбинации клавиш"
 msgid "Close Window"
 msgstr "Закрыть окно"
 
-#: src/shortcuts-dialog.blp:71
+#: src/shortcuts-dialog.blp:71 src/window.blp:158
+#, fuzzy
+#| msgid "Save Session on Close"
+msgid "Save Session and Close"
+msgstr "Сохранить сессию при закрытии"
+
+#: src/shortcuts-dialog.blp:76
 msgid "Quit"
 msgstr "Выход"
 
-#: src/window.blp:130
+#: src/window.blp:131
 msgid "Main Menu"
 msgstr "Главное меню"
 
-#: src/window.blp:145
+#: src/window.blp:146
 msgid "Keyboard Shortcuts"
 msgstr "Комбинации клавиш"
 
-#: src/window.blp:150
+#: src/window.blp:151
 msgid "About Cine"
 msgstr "О приложении"
 
-#: src/window.blp:188
+#: src/window.blp:199
 msgid "Previous"
 msgstr "Предыдущий"
 
-#: src/window.blp:208
+#: src/window.blp:220
 msgid "Next"
 msgstr "Следующий"
 
-#: src/window.blp:286
+#: src/window.blp:299
 msgid "Video"
 msgstr "Видео"
 
-#: src/window.blp:300
+#: src/window.blp:313
 msgid "Chapters"
 msgstr "Главы"
 
-#: src/window.blp:317
+#: src/window.blp:330
 msgid "Shuffle Playlist"
 msgstr "Перемешать плейлист"
 
-#: src/window.blp:328
+#: src/window.blp:342
 msgid "Loop Playlist"
 msgstr "Повторять плейлист"
 
-#: src/window.blp:396
+#: src/window.blp:414
 msgid "Toggle Elapsed/Remaining"
 msgstr "Переключить прошедшее/оставшееся"
 
-#: src/window.blp:442
+#: src/window.blp:460
 msgid "Drag and Drop Files Here"
 msgstr "Перетащите файлы сюда"
 
-#: src/window.blp:455
+#: src/window.blp:473
 msgid "Open…"
 msgstr "Открыть…"
+
+#~ msgid "Restore files and auto-play on startup"
+#~ msgstr "Восстанавливать файлы и автовоспроизведение при запуске"
 
 #~ msgid "Muted"
 #~ msgstr "Без звука"
