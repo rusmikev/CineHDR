@@ -100,7 +100,7 @@ class CineApplication(Adw.Application):
                         "-select_streams",
                         "v:0",
                         "-show_entries",
-                        "stream=width,height",
+                        "stream=width,height:stream_side_data=rotation",
                         "-of",
                         "csv=s=x:p=0",
                         first_video_path,
@@ -110,12 +110,27 @@ class CineApplication(Adw.Application):
                     ).strip()
 
                     if output:
-                        # 1920x1080
-                        res = output.splitlines()[0].split("x")
-                        if len(res) >= 2:
-                            win._set_window_size(int(res[0]), int(res[1]))
+                        # "1920x1080x-90" or just "1920x1080"
+                        parts = output.splitlines()[0].split("x")
+
+                        width = int(parts[0])
+                        height = int(parts[1])
+
+                        try:
+                            rotation = int(parts[2]) if len(parts) > 2 else 0
+                        except:
+                            rotation = 0
+
+                        if abs(rotation) in (90, 270):
+                            w = height
+                            h = width
+                        else:
+                            w = width
+                            h = height
+
+                        win._set_window_size(w, h)
                 except Exception as e:
-                    print(f"Metadata probe skipped or failed: {e}")
+                    print(f"Metadata probe failed: {e}")
             win.present()
         else:
             win.present()
