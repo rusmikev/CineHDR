@@ -25,7 +25,7 @@ from typing import cast
 from gettext import gettext as _
 from urllib.parse import urlparse
 from time import time
-from .save_session import restore_last_playlist
+from .save_session import save_last_playlist_file, restore_last_playlist
 import shlex
 
 from .utils import (
@@ -256,6 +256,7 @@ class CineWindow(Adw.ApplicationWindow):
         self._create_action("open-sub-menu", self._on_open_sub_menu)
         self._create_action("open-audio-menu", self._on_open_audio_menu)
         self._create_action("open-chapters-menu", self._on_open_chapters_menu)
+        self._create_action("save-session", self.on_save_session_and_close)
 
         self.app.set_accels_for_action("win.open-folder", ["<primary>i"])
         self.app.set_accels_for_action("win.open-url", ["<primary>u"])
@@ -267,6 +268,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.app.set_accels_for_action("win.open-sub-menu", ["<primary>s"])
         self.app.set_accels_for_action("win.open-audio-menu", ["<primary>a"])
         self.app.set_accels_for_action("win.open-chapters-menu", ["<primary>c"])
+        self.app.set_accels_for_action("win.save-session", ["<alt>q"])
 
         self._create_action("quit", lambda *a: self.close())
         self.app.set_accels_for_action("win.quit", ["q", "<primary>w"])
@@ -767,6 +769,11 @@ class CineWindow(Adw.ApplicationWindow):
             return
         self._show_ui()
         self.chapters_menu_button.popup()
+
+    def on_save_session_and_close(self, *args):
+        settings.set_boolean("save-session", True)
+        save_last_playlist_file(self.mpv)
+        self.close()
 
     def _on_open_url(self, *args, add=False):
         mode = "append-play" if add else "replace"

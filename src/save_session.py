@@ -28,10 +28,6 @@ from gi.repository import GLib
 def save_last_playlist_file(win_mpv):
     """Saves the current playlist to a m3u8 file."""
 
-    if win_mpv.playlist_count == 0 and os.path.exists(LAST_PLAYLIST_FILE):
-        os.remove(LAST_PLAYLIST_FILE)
-        return
-
     try:
         win_mpv["save-position-on-quit"] = True
         with open(LAST_PLAYLIST_FILE, "w", encoding="utf-8") as f:
