@@ -1860,7 +1860,7 @@ class CineWindow(Adw.ApplicationWindow):
                 if is_idle:
                     self.error_count = 0
                     self.revealer_ui.set_reveal_child(True)
-                    self.set_title(_("Cine"))
+                    self.set_title("")
                     self.hide_icon_indicator = True
                     if dialog := self.get_visible_dialog():
                         if dialog.props.name == "playlist":

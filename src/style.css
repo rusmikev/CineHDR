@@ -50,10 +50,10 @@
 }
 .start-page button {
   --accent-color: #e5e5e5;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.16);
 }
 .start-page button:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.19);
 }
 .start-page button:active {
   transform: scale(0.98);

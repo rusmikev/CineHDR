@@ -457,7 +457,8 @@ template $CineWindow: Adw.ApplicationWindow {
         Adw.StatusPage start_page {
           margin-top: 48;
           icon-name: "io.github.diegopvlk.Cine";
-          title: _("Drag and Drop Files Here");
+          title: _("Cine");
+          description: _("Drag and drop files here");
 
           styles [
             "start-page",
@@ -471,7 +472,6 @@ template $CineWindow: Adw.ApplicationWindow {
 
             Button {
               label: _("Open…");
-              halign: center;
               action-name: "win.clear-and-add";
 
               styles [
@@ -482,7 +482,6 @@ template $CineWindow: Adw.ApplicationWindow {
 
             Button {
               label: _("Open Folder");
-              halign: center;
               action-name: "win.open-folder";
 
               styles [
@@ -492,7 +491,6 @@ template $CineWindow: Adw.ApplicationWindow {
 
             Button {
               label: _("Open URL");
-              halign: center;
               action-name: "win.open-url";
 
               styles [
