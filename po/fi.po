@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-26 19:13-0300\n"
+"POT-Creation-Date: 2026-04-28 10:52-0300\n"
 "PO-Revision-Date: 2026-04-06 11:07+0000\n"
 "Last-Translator: Jiri Grönroos <jiri.gronroos@iki.fi>\n"
 "Language-Team: Finnish <https://hosted.weblate.org/projects/cine/app/fi/>\n"
@@ -18,9 +18,9 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Generator: Weblate 5.17-dev\n"
 
-#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:223 src/mpris.py:146
-#: src/mpris.py:364 src/window.py:176 src/window.py:295 src/window.py:1840
-#: src/window.blp:6
+#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:226 src/mpris.py:146
+#: src/mpris.py:364 src/window.py:181 src/window.py:300 src/window.blp:6
+#: src/window.blp:460
 msgid "Cine"
 msgstr "Cine"
 
@@ -91,7 +91,7 @@ msgid "Main Window"
 msgstr "Pääikkuna"
 
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
-#: src/main.py:233
+#: src/main.py:236
 msgid "translator-credits"
 msgstr "Jiri Grönroos"
 
@@ -103,7 +103,7 @@ msgstr "Tuntematon otsikko"
 msgid "Original"
 msgstr "Alkuperäinen"
 
-#: src/playlist.py:76 src/window.py:1260 src/window.py:1679
+#: src/playlist.py:76 src/window.py:1272 src/window.py:1702
 msgid "File Error"
 msgstr "Tiedostovirhe"
 
@@ -125,7 +125,7 @@ msgstr "Avaa kohteen sijainti"
 msgid "Remove from Playlist"
 msgstr "Poista soittolistalta"
 
-#: src/playlist.py:322 src/window.py:679 src/playlist.blp:24 src/window.blp:100
+#: src/playlist.py:322 src/window.py:691 src/playlist.blp:24 src/window.blp:100
 msgid "Add Files"
 msgstr "Lisää tiedostoja"
 
@@ -133,17 +133,17 @@ msgstr "Lisää tiedostoja"
 msgid "Playlist"
 msgstr "Soittolista"
 
-#: src/preferences.py:106 src/preferences.blp:20
+#: src/preferences.py:105 src/preferences.blp:20
 msgid "Subtitle Color"
 msgstr "Tekstityksen väri"
 
-#: src/preferences.py:120 src/preferences.blp:100
+#: src/preferences.py:119 src/preferences.blp:100
 msgid "Subtitle Background"
 msgstr "Tekstityksen tausta"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:85 src/shortcuts.py:86
-#: src/window.py:1763 src/window.blp:228
+#: src/window.py:1786 src/window.blp:228
 msgid "Volume"
 msgstr "Äänenvoimakkuus"
 
@@ -185,7 +185,7 @@ msgstr "Toissijaiset tekstitykset"
 msgid "Switch Secondary Subtitle Track"
 msgstr "Vaihda toissijaista tekstitysraitaa"
 
-#: src/shortcuts.py:40 src/shortcuts.py:41 src/window.py:706 src/window.blp:285
+#: src/shortcuts.py:40 src/shortcuts.py:41 src/window.py:718 src/window.blp:285
 msgid "Audio"
 msgstr "Ääni"
 
@@ -213,7 +213,7 @@ msgstr "Kelaa 5 s taaksepäin"
 msgid "Seek 5s Forward"
 msgstr "Kelaa 5 s eteenpäin"
 
-#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1712
+#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1735
 #: src/window.blp:381
 msgid "Fullscreen"
 msgstr "Koko näyttö"
@@ -418,85 +418,85 @@ msgstr "Toisto"
 msgid "Miscellaneous"
 msgstr "Sekalaiset"
 
-#: src/window.py:556 src/window.py:1252 src/window.blp:115
+#: src/window.py:568 src/window.py:1264 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "Lisää tekstitysraita"
 
-#: src/window.py:558 src/window.py:567
+#: src/window.py:570 src/window.py:579
 msgid "None"
 msgstr "Ei mitään"
 
-#: src/window.py:565 src/window.blp:120
+#: src/window.py:577 src/window.blp:120
 msgid "Add Audio Track"
 msgstr "Lisää ääniraita"
 
-#: src/window.py:604
+#: src/window.py:616
 msgid "Track"
 msgstr "Raita"
 
-#: src/window.py:647 src/playlist.blp:30 src/window.blp:105
+#: src/window.py:659 src/playlist.blp:30 src/window.blp:105
 msgid "Add Folder"
 msgstr "Lisää kansio"
 
-#: src/window.py:647 src/shortcuts-dialog.blp:21 src/window.blp:90
+#: src/window.py:659 src/shortcuts-dialog.blp:21 src/window.blp:90
 #: src/window.blp:484
 msgid "Open Folder"
 msgstr "Avaa kansio"
 
-#: src/window.py:676 src/shortcuts-dialog.blp:16 src/window.blp:85
+#: src/window.py:688 src/shortcuts-dialog.blp:16 src/window.blp:85
 msgid "Open Files"
 msgstr "Avaa tiedostoja"
 
-#: src/window.py:682
+#: src/window.py:694
 msgid "Add Subtitle"
 msgstr "Lisää tekstitys"
 
-#: src/window.py:685
+#: src/window.py:697
 msgid "Add Audio"
 msgstr "Lisää ääni"
 
-#: src/window.py:701
+#: src/window.py:713
 msgid "Subtitle"
 msgstr "Tekstitys"
 
-#: src/window.py:710
+#: src/window.py:722
 msgid "Media"
 msgstr "Media"
 
-#: src/window.py:782 src/playlist.blp:36 src/window.blp:110
+#: src/window.py:794 src/playlist.blp:36 src/window.blp:110
 msgid "Add URL"
 msgstr "Lisää verkko-osoite"
 
-#: src/window.py:782 src/shortcuts-dialog.blp:26 src/window.blp:95
-#: src/window.blp:494
+#: src/window.py:794 src/shortcuts-dialog.blp:26 src/window.blp:95
+#: src/window.blp:493
 msgid "Open URL"
 msgstr "Avaa verkko-osoite"
 
-#: src/window.py:795
+#: src/window.py:807
 msgid "URL"
 msgstr "Verkko-osoite"
 
-#: src/window.py:803
+#: src/window.py:815
 msgid "Add"
 msgstr "Lisää"
 
-#: src/window.py:803 src/window.blp:79
+#: src/window.py:815 src/window.blp:79
 msgid "Open"
 msgstr "Avaa"
 
-#: src/window.py:976 src/window.py:1093
+#: src/window.py:988 src/window.py:1105
 msgid "Chapter"
 msgstr "Kappale"
 
-#: src/window.py:1151
+#: src/window.py:1163
 msgid "Pause"
 msgstr "Keskeytä"
 
-#: src/window.py:1151 src/window.py:1256
+#: src/window.py:1163 src/window.py:1268
 msgid "Play"
 msgstr "Toista"
 
-#: src/window.py:1712
+#: src/window.py:1735
 msgid "Exit Fullscreen"
 msgstr "Poistu koko näytöstä"
 
@@ -638,22 +638,20 @@ msgid "Normalize Volume"
 msgstr "Normalisoi äänenvoimakkuus"
 
 #: src/preferences.blp:135
-#, fuzzy
-#| msgid "Hardware Decoding"
 msgid "Hardware Acceleration"
-msgstr "Laitteistopohjainen purku"
+msgstr "Laitteistokiihdytys"
 
 #: src/preferences.blp:136
 msgid "Use GPU for video decoding when available"
-msgstr ""
+msgstr "Käytä näytönohjainta videon purkuun, kun se on käytettävissä"
 
 #: src/preferences.blp:140
 msgid "Restore Saved Session"
-msgstr ""
+msgstr "Palauta tallennettu istunto"
 
 #: src/preferences.blp:141
 msgid "Pick up where you left off after saving from the menu"
-msgstr ""
+msgstr "Jatka siitä, mihin jäit tallennettuasi valikosta"
 
 #: src/preferences.blp:175
 msgid "Save Video Position on Close"
@@ -700,10 +698,8 @@ msgid "Close Window"
 msgstr "Sulje ikkuna"
 
 #: src/shortcuts-dialog.blp:71 src/window.blp:158
-#, fuzzy
-#| msgid "Save Session on Close"
 msgid "Save Session and Close"
-msgstr "Tallenna istunto suljettaessa"
+msgstr "Tallenna istunto ja sulje"
 
 #: src/shortcuts-dialog.blp:76
 msgid "Quit"
@@ -749,11 +745,11 @@ msgstr "Kertaa soittolista"
 msgid "Toggle Elapsed/Remaining"
 msgstr "Näytä kulunut/jäljellä"
 
-#: src/window.blp:460
-msgid "Drag and Drop Files Here"
+#: src/window.blp:461
+msgid "Drag and drop files here"
 msgstr "Vedä ja pudota tiedostot tähän"
 
-#: src/window.blp:473
+#: src/window.blp:474
 msgid "Open…"
 msgstr "Avaa…"
 
