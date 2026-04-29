@@ -8,7 +8,7 @@ msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-04-28 10:52-0300\n"
-"PO-Revision-Date: 2026-04-26 22:01+0000\n"
+"PO-Revision-Date: 2026-04-30 07:09+0000\n"
 "Last-Translator: Ahmer Jamil Khan <ahmer@khan.am>\n"
 "Language-Team: Urdu <https://hosted.weblate.org/projects/cine/app/ur/>\n"
 "Language: ur\n"
@@ -69,7 +69,8 @@ msgstr ""
 msgid ""
 "Video Controls: Easily adjust brightness, contrast, zoom, aspect ratio, etc."
 msgstr ""
-"ویڈیو کنٹرولز: روشنی، کنٹراسٹ، زوم، اسپیکٹ ریشو وغیرہ کو آسانی سے ایڈجسٹ کریں"
+"ویڈیو کنٹرولز: روشنی، کنٹراسٹ، زوم، اسپیکٹ ریشو وغیرہ کو آسانی سے ایڈجسٹ "
+"کریں."
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:42
 msgid "Video Playing"
@@ -542,124 +543,124 @@ msgstr "دائیں گھمائیں"
 
 #: src/options.blp:218
 msgid "Reset Flip"
-msgstr ""
+msgstr "پلٹاؤ بحال کریں"
 
 #: src/options.blp:228
 msgid "Flip"
-msgstr ""
+msgstr "پلٹاؤ"
 
 #: src/options.blp:254
 msgid "Flip Horizontally"
-msgstr ""
+msgstr "افقی طور پر پلٹائیں"
 
 #: src/options.blp:262
 msgid "Flip Vertically"
-msgstr ""
+msgstr "عمودی طور پر پلٹائیں"
 
 #: src/options.blp:275
 msgid "Reset Zoom"
-msgstr ""
+msgstr "زوم بحال کریں"
 
 #: src/options.blp:330
 msgid "Reset Contrast"
-msgstr ""
+msgstr "کنٹراسٹ بحال کریں"
 
 #: src/options.blp:384
 msgid "Reset Brightness"
-msgstr ""
+msgstr "روشنی بحال کریں"
 
 #: src/options.blp:438
 msgid "Reset Gamma"
-msgstr ""
+msgstr "گاما بحال کریں"
 
 #: src/options.blp:492
 msgid "Reset Saturation"
-msgstr ""
+msgstr "سیرابی بحال کریں"
 
 #: src/options.blp:546
 msgid "Reset Hue"
-msgstr ""
+msgstr "رنگت بحال کریں"
 
 #. TRANSLATORS: Do not use "Color" or "Temperature", those are different things
 #: src/options.blp:557 src/options.blp:580
 msgid "Hue"
-msgstr ""
+msgstr "رنگت"
 
 #: src/options.blp:601
 msgid "Reset Subtitle Delay"
-msgstr ""
+msgstr "سب ٹائٹل تاخیر بحال کریں"
 
 #: src/options.blp:656
 msgid "Reset Audio Delay"
-msgstr ""
+msgstr "آڈیو تاخیر بحال کریں"
 
 #: src/options.blp:721 src/options.blp:745
 msgid "Playback Speed"
-msgstr ""
+msgstr "پلے بیک رفتار"
 
 #: src/playlist.blp:98
 msgid "Add to Playlist"
-msgstr ""
+msgstr "پلے لسٹ میں شامل کریں"
 
 #: src/preferences.blp:16
 msgid "Open New Window for New Files"
-msgstr ""
+msgstr "نئی فائلوں کے لیے نئی ونڈو کھولیں"
 
 #: src/preferences.blp:33 src/preferences.blp:79
 msgid "Reset"
-msgstr ""
+msgstr "بحال کریں"
 
 #: src/preferences.blp:43
 msgid "Subtitle Font"
-msgstr ""
+msgstr "سب ٹائٹل فونٹ"
 
 #: src/preferences.blp:56
 msgid "Some fonts may not work"
-msgstr ""
+msgstr "کچھ فونٹس شاید کام نہ کریں"
 
 #: src/preferences.blp:117
 msgid "Preferred Subtitle Languages"
-msgstr ""
+msgstr "ترجیحی سب ٹائٹل زبانیں"
 
 #: src/preferences.blp:118 src/preferences.blp:123
 msgid "Example: en,es,pt"
-msgstr ""
+msgstr "مثال: en,es,pt"
 
 #: src/preferences.blp:122
 msgid "Preferred Audio Languages"
-msgstr ""
+msgstr "ترجیحی آڈیو زبانیں"
 
 #: src/preferences.blp:127
 msgid "Progress Bar Thumbnail"
-msgstr ""
+msgstr "پروگریس بار تھمب نیل"
 
 #: src/preferences.blp:131
 msgid "Normalize Volume"
-msgstr ""
+msgstr "آواز متوازن کریں"
 
 #: src/preferences.blp:135
 msgid "Hardware Acceleration"
-msgstr ""
+msgstr "ہارڈویئر ایکسیلیریشن"
 
 #: src/preferences.blp:136
 msgid "Use GPU for video decoding when available"
-msgstr ""
+msgstr "ویڈیو ڈیکوڈنگ کے لیے دستیاب ہونے پر GPU استعمال کریں"
 
 #: src/preferences.blp:140
 msgid "Restore Saved Session"
-msgstr ""
+msgstr "محفوظ شدہ سیشن بحال کریں"
 
 #: src/preferences.blp:141
 msgid "Pick up where you left off after saving from the menu"
-msgstr ""
+msgstr "مینو سے محفوظ کرنے کے بعد وہیں سے دوبارہ شروع کریں جہاں چھوڑا تھا"
 
 #: src/preferences.blp:175
 msgid "Save Video Position on Close"
-msgstr ""
+msgstr "بند کرتے وقت ویڈیو کی پوزیشن محفوظ کریں"
 
 #: src/preferences.blp:176
 msgid "Also save options like brightness, subtitle delay, etc."
-msgstr ""
+msgstr "روشنی، سب ٹائٹل تاخیر وغیرہ جیسی ترتیبات بھی محفوظ کریں."
 
 #: src/shortcuts-dialog.blp:8
 msgid "Shortcuts"
