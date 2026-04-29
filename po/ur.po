@@ -9,7 +9,7 @@ msgstr ""
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-04-28 10:52-0300\n"
 "PO-Revision-Date: 2026-04-30 07:09+0000\n"
-"Last-Translator: Ahmer Jamil Khan <ahmer@khan.am>\n"
+"Last-Translator: Diego Povliuk <diego.pvlk@gmail.com>\n"
 "Language-Team: Urdu <https://hosted.weblate.org/projects/cine/app/ur/>\n"
 "Language: ur\n"
 "MIME-Version: 1.0\n"
@@ -92,9 +92,7 @@ msgstr "مین ونڈو"
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
 #: src/main.py:236
 msgid "translator-credits"
-msgstr ""
-"Ahmer Jamil Khan - ahmer@khan.am - https://legumlawfirm.co/our-team/ahmer-"
-"jamil-khan"
+msgstr "Ahmer Jamil Khan https://legumlawfirm.co/our-team/ahmer-jamil-khan"
 
 #: src/mpris.py:153 src/mpris.py:221 src/mpris.py:356
 msgid "Unknown title"
