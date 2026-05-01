@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-28 10:52-0300\n"
+"POT-Creation-Date: 2026-05-01 12:31-0300\n"
 "PO-Revision-Date: 2026-04-03 15:09+0000\n"
 "Last-Translator: Diego Povliuk <diego.pvlk@gmail.com>\n"
 "Language-Team: Portuguese <https://hosted.weblate.org/projects/cine/app/pt/"
@@ -77,14 +77,14 @@ msgstr ""
 msgid "Video Playing"
 msgstr "Vídeo em Reprodução"
 
-#: data/io.github.diegopvlk.Cine.metainfo.xml.in:46 src/preferences.blp:5
+#: data/io.github.diegopvlk.Cine.metainfo.xml.in:46
+msgid "Video Options"
+msgstr "Opções de Vídeo"
+
+#: data/io.github.diegopvlk.Cine.metainfo.xml.in:50 src/preferences.blp:5
 #: src/window.blp:141
 msgid "Preferences"
 msgstr "Preferências"
-
-#: data/io.github.diegopvlk.Cine.metainfo.xml.in:50
-msgid "Video Options"
-msgstr "Opções de Vídeo"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:54
 msgid "Main Window"
@@ -103,7 +103,7 @@ msgstr "Título desconhecido"
 msgid "Original"
 msgstr "Original"
 
-#: src/playlist.py:76 src/window.py:1272 src/window.py:1702
+#: src/playlist.py:76 src/window.py:1271 src/window.py:1701
 msgid "File Error"
 msgstr "Erro no Ficheiro"
 
@@ -143,7 +143,7 @@ msgstr "Fundo da Legendas"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:85 src/shortcuts.py:86
-#: src/window.py:1786 src/window.blp:228
+#: src/window.py:1785 src/window.blp:228
 msgid "Volume"
 msgstr "Volume"
 
@@ -213,7 +213,7 @@ msgstr "Recuar 5s"
 msgid "Seek 5s Forward"
 msgstr "Avançar 5s"
 
-#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1735
+#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1734
 #: src/window.blp:381
 msgid "Fullscreen"
 msgstr "Ecrã Inteiro"
@@ -418,7 +418,7 @@ msgstr "Reprodução"
 msgid "Miscellaneous"
 msgstr "Diversos"
 
-#: src/window.py:568 src/window.py:1264 src/window.blp:115
+#: src/window.py:568 src/window.py:1263 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "Adicionar Faixa de Legendas"
 
@@ -484,19 +484,19 @@ msgstr "Adicionar"
 msgid "Open"
 msgstr "Abrir"
 
-#: src/window.py:988 src/window.py:1105
+#: src/window.py:992 src/window.py:1104
 msgid "Chapter"
 msgstr "Capítulo"
 
-#: src/window.py:1163
+#: src/window.py:1162
 msgid "Pause"
 msgstr "Pausar"
 
-#: src/window.py:1163 src/window.py:1268
+#: src/window.py:1162 src/window.py:1267
 msgid "Play"
 msgstr "Reproduzir"
 
-#: src/window.py:1735
+#: src/window.py:1734
 msgid "Exit Fullscreen"
 msgstr "Sair de ecrã inteiro"
 

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-28 10:52-0300\n"
+"POT-Creation-Date: 2026-05-01 12:31-0300\n"
 "PO-Revision-Date: 2026-02-28 11:40-0300\n"
 "Last-Translator: Vladimir Kosolapov\n"
 "Language-Team: \n"
@@ -73,14 +73,14 @@ msgstr ""
 msgid "Video Playing"
 msgstr "Воспроизведение видео"
 
-#: data/io.github.diegopvlk.Cine.metainfo.xml.in:46 src/preferences.blp:5
+#: data/io.github.diegopvlk.Cine.metainfo.xml.in:46
+msgid "Video Options"
+msgstr "Управление видео"
+
+#: data/io.github.diegopvlk.Cine.metainfo.xml.in:50 src/preferences.blp:5
 #: src/window.blp:141
 msgid "Preferences"
 msgstr "Параметры"
-
-#: data/io.github.diegopvlk.Cine.metainfo.xml.in:50
-msgid "Video Options"
-msgstr "Управление видео"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:54
 msgid "Main Window"
@@ -99,7 +99,7 @@ msgstr "Название неизвестно"
 msgid "Original"
 msgstr "Оригинал"
 
-#: src/playlist.py:76 src/window.py:1272 src/window.py:1702
+#: src/playlist.py:76 src/window.py:1271 src/window.py:1701
 msgid "File Error"
 msgstr "Ошибка файла"
 
@@ -138,7 +138,7 @@ msgstr "Фон субтитров"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:85 src/shortcuts.py:86
-#: src/window.py:1786 src/window.blp:228
+#: src/window.py:1785 src/window.blp:228
 msgid "Volume"
 msgstr "Громкость"
 
@@ -208,7 +208,7 @@ msgstr "Перемотка на 5 сек назад"
 msgid "Seek 5s Forward"
 msgstr "Перемотка на 5 сек вперёд"
 
-#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1735
+#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1734
 #: src/window.blp:381
 msgid "Fullscreen"
 msgstr "Полный экран"
@@ -413,7 +413,7 @@ msgstr "Воспроизведение"
 msgid "Miscellaneous"
 msgstr "Разное"
 
-#: src/window.py:568 src/window.py:1264 src/window.blp:115
+#: src/window.py:568 src/window.py:1263 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "Добавить дорожку субтитров"
 
@@ -479,19 +479,19 @@ msgstr "Добавить"
 msgid "Open"
 msgstr "Открыть"
 
-#: src/window.py:988 src/window.py:1105
+#: src/window.py:992 src/window.py:1104
 msgid "Chapter"
 msgstr "Глава"
 
-#: src/window.py:1163
+#: src/window.py:1162
 msgid "Pause"
 msgstr "Пауза"
 
-#: src/window.py:1163 src/window.py:1268
+#: src/window.py:1162 src/window.py:1267
 msgid "Play"
 msgstr "Воспроизведение"
 
-#: src/window.py:1735
+#: src/window.py:1734
 msgid "Exit Fullscreen"
 msgstr "Выйти из полноэкранного режима"
 

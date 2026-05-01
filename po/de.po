@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-28 10:52-0300\n"
+"POT-Creation-Date: 2026-05-01 12:31-0300\n"
 "PO-Revision-Date: 2026-02-28 11:40-0300\n"
 "Last-Translator: Gryfin <weblate@gryfin.de>\n"
 "Language-Team: German <https://hosted.weblate.org/projects/cine/app/de/>\n"
@@ -77,14 +77,14 @@ msgstr ""
 msgid "Video Playing"
 msgstr "Video Wiedergabe"
 
-#: data/io.github.diegopvlk.Cine.metainfo.xml.in:46 src/preferences.blp:5
+#: data/io.github.diegopvlk.Cine.metainfo.xml.in:46
+msgid "Video Options"
+msgstr "Video-Optionen"
+
+#: data/io.github.diegopvlk.Cine.metainfo.xml.in:50 src/preferences.blp:5
 #: src/window.blp:141
 msgid "Preferences"
 msgstr "Einstellungen"
-
-#: data/io.github.diegopvlk.Cine.metainfo.xml.in:50
-msgid "Video Options"
-msgstr "Video-Optionen"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:54
 msgid "Main Window"
@@ -103,7 +103,7 @@ msgstr "Unbekannter Titel"
 msgid "Original"
 msgstr "Original"
 
-#: src/playlist.py:76 src/window.py:1272 src/window.py:1702
+#: src/playlist.py:76 src/window.py:1271 src/window.py:1701
 msgid "File Error"
 msgstr "Dateifehler"
 
@@ -144,7 +144,7 @@ msgstr "Untertitel-Hintergrund"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:85 src/shortcuts.py:86
-#: src/window.py:1786 src/window.blp:228
+#: src/window.py:1785 src/window.blp:228
 msgid "Volume"
 msgstr "Lautstärke"
 
@@ -214,7 +214,7 @@ msgstr "Springe 5s rückwärts"
 msgid "Seek 5s Forward"
 msgstr "Springe 5s vorwärts"
 
-#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1735
+#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1734
 #: src/window.blp:381
 msgid "Fullscreen"
 msgstr "Vollbild"
@@ -419,7 +419,7 @@ msgstr "Wiedergabe"
 msgid "Miscellaneous"
 msgstr "Verschiedenes"
 
-#: src/window.py:568 src/window.py:1264 src/window.blp:115
+#: src/window.py:568 src/window.py:1263 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "Untertitelspur hinzufügen"
 
@@ -485,19 +485,19 @@ msgstr "Hinzufügen"
 msgid "Open"
 msgstr "Öffnen"
 
-#: src/window.py:988 src/window.py:1105
+#: src/window.py:992 src/window.py:1104
 msgid "Chapter"
 msgstr "Kapitel"
 
-#: src/window.py:1163
+#: src/window.py:1162
 msgid "Pause"
 msgstr "Pause"
 
-#: src/window.py:1163 src/window.py:1268
+#: src/window.py:1162 src/window.py:1267
 msgid "Play"
 msgstr "Abspielen"
 
-#: src/window.py:1735
+#: src/window.py:1734
 msgid "Exit Fullscreen"
 msgstr "Vollbild verlassen"
 
@@ -652,7 +652,8 @@ msgstr "Gespeicherte Sitzung wiederherstellen"
 
 #: src/preferences.blp:141
 msgid "Pick up where you left off after saving from the menu"
-msgstr "Dort fortfahren, wo Sie nach dem Speichern über das Menü aufgehört haben"
+msgstr ""
+"Dort fortfahren, wo Sie nach dem Speichern über das Menü aufgehört haben"
 
 #: src/preferences.blp:175
 msgid "Save Video Position on Close"

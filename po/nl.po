@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-28 10:52-0300\n"
+"POT-Creation-Date: 2026-05-01 12:31-0300\n"
 "PO-Revision-Date: 2026-02-28 11:40-0300\n"
 "Last-Translator: Heimen Stoffels <vistausss@fastmail.com>\n"
 "Language-Team: \n"
@@ -77,14 +77,14 @@ msgstr ""
 msgid "Video Playing"
 msgstr "Afspelen"
 
-#: data/io.github.diegopvlk.Cine.metainfo.xml.in:46 src/preferences.blp:5
+#: data/io.github.diegopvlk.Cine.metainfo.xml.in:46
+msgid "Video Options"
+msgstr "Video-opties"
+
+#: data/io.github.diegopvlk.Cine.metainfo.xml.in:50 src/preferences.blp:5
 #: src/window.blp:141
 msgid "Preferences"
 msgstr "Voorkeuren"
-
-#: data/io.github.diegopvlk.Cine.metainfo.xml.in:50
-msgid "Video Options"
-msgstr "Video-opties"
 
 #: data/io.github.diegopvlk.Cine.metainfo.xml.in:54
 msgid "Main Window"
@@ -103,7 +103,7 @@ msgstr "Onbekend"
 msgid "Original"
 msgstr "Origineel"
 
-#: src/playlist.py:76 src/window.py:1272 src/window.py:1702
+#: src/playlist.py:76 src/window.py:1271 src/window.py:1701
 msgid "File Error"
 msgstr "Bestandsfout"
 
@@ -144,7 +144,7 @@ msgstr "Ondertitelachtergrond"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:85 src/shortcuts.py:86
-#: src/window.py:1786 src/window.blp:228
+#: src/window.py:1785 src/window.blp:228
 msgid "Volume"
 msgstr "Volumeniveau"
 
@@ -214,7 +214,7 @@ msgstr "5 sec. terugspoelen"
 msgid "Seek 5s Forward"
 msgstr "5 sec. vooruitspoelen"
 
-#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1735
+#: src/shortcuts.py:46 src/shortcuts.py:47 src/window.py:1734
 #: src/window.blp:381
 msgid "Fullscreen"
 msgstr "Schermvullende weergave"
@@ -419,7 +419,7 @@ msgstr "Afspelen"
 msgid "Miscellaneous"
 msgstr "Overig"
 
-#: src/window.py:568 src/window.py:1264 src/window.blp:115
+#: src/window.py:568 src/window.py:1263 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "Ondertitelspoor toevoegen"
 
@@ -485,19 +485,19 @@ msgstr "Toevoegen"
 msgid "Open"
 msgstr "Openen"
 
-#: src/window.py:988 src/window.py:1105
+#: src/window.py:992 src/window.py:1104
 msgid "Chapter"
 msgstr "Hoofdstuk"
 
-#: src/window.py:1163
+#: src/window.py:1162
 msgid "Pause"
 msgstr "Pauzeren"
 
-#: src/window.py:1163 src/window.py:1268
+#: src/window.py:1162 src/window.py:1267
 msgid "Play"
 msgstr "Afspelen"
 
-#: src/window.py:1735
+#: src/window.py:1734
 msgid "Exit Fullscreen"
 msgstr "Schermvullende weergave verlaten"
 
