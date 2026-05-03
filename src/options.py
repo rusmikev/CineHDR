@@ -190,7 +190,7 @@ class OptionsMenuButton(Gtk.MenuButton):
         idx = dropdown.get_selected()
         model = dropdown.get_model()
         item_str = model.get_string(idx)
-        val = "-1" if item_str == _("Original") else item_str
+        val = "no" if item_str == _("Original") else item_str
         self.win.mpv.command_async("set", "video-aspect-override", val)
 
     @Gtk.Template.Callback()
