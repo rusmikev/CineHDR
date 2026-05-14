@@ -398,6 +398,7 @@ class CineWindow(Adw.ApplicationWindow):
             click_gesture.connect("pressed", self._on_click_pressed)
             click_gesture.connect("released", self._on_click_released)
             click_gesture.connect("cancel", self._cancel_click_hold)
+            click_gesture.connect("unpaired-release", self._cancel_click_hold)
             self.video_overlay.add_controller(click_gesture)
 
         self.connect(
@@ -407,7 +408,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.connect(
             "notify::is-active",
-            lambda *_: not self.is_active() and self._set_space_holding(False),
+            lambda *_: self.is_active()
+            or (self._set_space_holding(False), setattr(self, "space_holding", False)),
         )
 
         scroll_controller_overlay = Gtk.EventControllerScroll.new(
@@ -1352,6 +1354,7 @@ class CineWindow(Adw.ApplicationWindow):
 
     def _set_space_holding(self, hold):
         if hold:
+            self.space_hold_id = 0
             if self.click_holding:
                 return
             self.set_can_target(False)
@@ -1361,13 +1364,17 @@ class CineWindow(Adw.ApplicationWindow):
             new_speed = self.prev_speed * 2
             self.mpv["speed"] = new_speed
             self.mpv.show_text(f"{new_speed:g}× ⯈⯈", "100000000")
-            self.space_hold_id = 0
         else:
             self.set_can_target(True)
+
+            if self.space_hold_id:
+                GLib.source_remove(self.space_hold_id)
+                self.space_hold_id = 0
+
             if "space" in self.pressed_keys:
                 self.pressed_keys.remove("space")
                 self.mpv["speed"] = self.prev_speed
-                self.mpv.show_text(f"{self.mpv["speed"]:g}×")
+                self.mpv.show_text(f"{self.mpv['speed']:g}×")
 
     def _key_up_keys(self):
         try:
@@ -1424,13 +1431,14 @@ class CineWindow(Adw.ApplicationWindow):
             elif event_type == "keyup":
                 if self.space_hold_id:
                     GLib.source_remove(self.space_hold_id)
+                    self.space_hold_id = 0
 
                 if not self.space_holding:
                     self.mpv.command_async("keypress", "space")
                     if "space" in self.pressed_keys:
                         self.pressed_keys.remove("space")
 
-            GLib.idle_add(setattr, self, "space_holding", False)
+            self.space_holding = False
             return True
 
         try:
@@ -1476,32 +1484,31 @@ class CineWindow(Adw.ApplicationWindow):
             if self.click_hold_id:
                 GLib.source_remove(self.click_hold_id)
 
-            def on_click_hold():
-                self.click_hold_id = 0
-                try:
-                    if self.space_holding:
-                        return
-                    self.click_holding = True
-                    self.mpv.pause = False
-                    self.prev_speed = cast(float, self.mpv["speed"])
-                    new_speed = self.prev_speed * 2
-                    self.mpv["speed"] = new_speed
-                    self.mpv.show_text(f"{new_speed:g}× ⯈⯈", "100000000")
-                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-                except:
-                    pass
-
-            self.click_hold_id = GLib.timeout_add(500, on_click_hold)
+            self.click_hold_id = GLib.timeout_add(500, self._on_click_hold, gesture)
 
         self._show_ui()
         self._hide_ui_timeout()
 
+    def _on_click_hold(self, gesture):
+        self.click_hold_id = 0
+        try:
+            if self.space_holding:
+                return
+            self.click_holding = True
+            self.mpv.pause = False
+            self.prev_speed = cast(float, self.mpv["speed"])
+            new_speed = self.prev_speed * 2
+            self.mpv["speed"] = new_speed
+            self.mpv.show_text(f"{new_speed:g}× ⯈⯈", "100000000")
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        except:
+            pass
+
     def _on_click_released(self, gesture, n_press, _x, _y):
+        self._cancel_click_hold()
+
         if self.click_holding:
-            self._cancel_click_hold()
             return
-        else:
-            self._cancel_click_hold()
 
         gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
