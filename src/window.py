@@ -1359,11 +1359,14 @@ class CineWindow(Adw.ApplicationWindow):
                 return
             self.set_can_target(False)
             self.space_holding = True
-            self.mpv.pause = False
-            self.prev_speed = cast(float, self.mpv["speed"])
-            new_speed = self.prev_speed * 2
-            self.mpv["speed"] = new_speed
-            self.mpv.show_text(f"{new_speed:g}× ⯈⯈", "100000000")
+            try:
+                self.mpv.pause = False
+                self.prev_speed = cast(float, self.mpv["speed"])
+                new_speed = self.prev_speed * 2
+                self.mpv["speed"] = new_speed
+                self.mpv.show_text(f"{new_speed:g}× ⯈⯈", "100000000")
+            except mpv.ShutdownError:
+                pass
         else:
             self.set_can_target(True)
 
@@ -1373,8 +1376,11 @@ class CineWindow(Adw.ApplicationWindow):
 
             if "space" in self.pressed_keys:
                 self.pressed_keys.remove("space")
-                self.mpv["speed"] = self.prev_speed
-                self.mpv.show_text(f"{self.mpv['speed']:g}×")
+                try:
+                    self.mpv["speed"] = self.prev_speed
+                    self.mpv.show_text(f"{self.mpv['speed']:g}×")
+                except mpv.ShutdownError:
+                    pass
 
     def _key_up_keys(self):
         try:
