@@ -402,7 +402,12 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.connect(
             "notify::visible-dialog",
-            lambda *a: (self._cancel_click_hold(*a), self._hide_ui_timeout(*a)),
+            lambda *_: (self._cancel_click_hold(), self._hide_ui_timeout()),
+        )
+
+        self.connect(
+            "notify::is-active",
+            lambda *_: not self.is_active() and self._set_space_holding(False),
         )
 
         scroll_controller_overlay = Gtk.EventControllerScroll.new(
