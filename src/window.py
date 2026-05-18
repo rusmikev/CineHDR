@@ -1147,10 +1147,11 @@ class CineWindow(Adw.ApplicationWindow):
         self.mpv.chapter = chapter_index
         action.set_state(parameter)
 
-    def _sync_chapter_menu_selected(self, index):
+    @Gtk.Template.Callback()
+    def _sync_chapter_menu_selected(self, *args):
         if action := self.lookup_action("select-chapter"):
             action.set_state(  # pyright: ignore[reportAttributeAccessIssue]
-                GLib.Variant("i", index)
+                GLib.Variant("i", self.mpv.chapter)
             )
 
     def _update_play_pause_icon(self, is_paused):
@@ -1936,8 +1937,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("chapter")
         def on_chapter_change(_name, chapter_idx):
-            if chapter_idx is not None:
-                GLib.idle_add(self._sync_chapter_menu_selected, chapter_idx)
+            if chapter_idx is not None and self.chapters_menu_button.get_active():
+                GLib.idle_add(self._sync_chapter_menu_selected)
 
         @self.mpv.property_observer("pause")
         def on_pause_change(_name, paused):
