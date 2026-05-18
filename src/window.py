@@ -1111,7 +1111,7 @@ class CineWindow(Adw.ApplicationWindow):
             self.chapters_menu.append_item(item)
 
     def _on_previous_clicked(self, _):
-        pos = cast(int, self.mpv.playlist_pos)
+        pos = abs(cast(int, self.mpv.playlist_pos))
         count = cast(int, self.mpv.playlist_count)
         if pos == 0:
             self.mpv.playlist_pos = count - 1
@@ -1119,7 +1119,7 @@ class CineWindow(Adw.ApplicationWindow):
             self.mpv.playlist_prev()
 
     def _on_next_clicked(self, _):
-        pos = cast(int, self.mpv.playlist_pos)
+        pos = abs(cast(int, self.mpv.playlist_pos))
         count = cast(int, self.mpv.playlist_count)
         if pos == count - 1:
             self.mpv.playlist_pos = 0
@@ -1985,7 +1985,7 @@ class CineWindow(Adw.ApplicationWindow):
                     self.set_title(title_no_ext)
                 else:
                     self.set_title(title)
-                    pos = cast(int, self.mpv.playlist_pos)
+                    pos = abs(cast(int, self.mpv.playlist_pos))
                     if obj := cast(PlaylistItemObj, self.playlistLS.get_item(pos)):
                         obj.url_title = title
 

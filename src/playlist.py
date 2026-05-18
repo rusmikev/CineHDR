@@ -425,6 +425,13 @@ class Playlist(Adw.Dialog):
                 self.mpv.playlist_pos = index - 1
             self.mpv.command("playlist-remove", index)
 
+            GLib.timeout_add(
+                100,
+                self.playlist_list_view.scroll_to,
+                abs(index - 1),
+                Gtk.ListScrollFlags.FOCUS,
+            )
+
         menu = Gio.Menu.new()
         menu.append(_("Open Item Location"), "row.open_location")
         menu.append(_("Remove from Playlist"), "row.remove_item")
