@@ -65,17 +65,25 @@ class Playlist(Adw.Dialog):
     no_results_label: Gtk.Label = Gtk.Template.Child()
     save_playlist_btn: Gtk.Button = Gtk.Template.Child()
 
-    def __init__(self, window, **kwargs):
+    def __init__(self, win, **kwargs):
         super().__init__(**kwargs)
-        self.win = window
-        self.mpv = window.mpv
+        self.win = win
+        self.mpv = win.mpv
 
-        self.set_content_height(window.get_height())
+        ls_n_items = win.playlistLS.get_n_items()
+        shuffle_btn = win.playlist_shuffle_toggle_button
+        shuffle_changed = win.last_shuffle != shuffle_btn.props.active
+        count = self.mpv.playlist_count
+
+        if ls_n_items == 0 or ls_n_items != count or shuffle_changed:
+            win._splice_playlist()
+
+        self.set_content_height(win.get_height())
         self._set_item_count()
 
         list_filter = Gtk.CustomFilter()
         list_filter_model = Gtk.FilterListModel(
-            model=window.playlistLS, filter=list_filter
+            model=win.playlistLS, filter=list_filter
         )
 
         list_filter_model.connect(
@@ -149,17 +157,6 @@ class Playlist(Adw.Dialog):
         drop_target.connect("leave", self._on_drop_leave)
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
-
-        ls_n_items = window.playlistLS.get_n_items()
-        if (
-            ls_n_items == 0
-            or ls_n_items != self.mpv.playlist_count
-            or (
-                window.last_shuffle
-                != window.playlist_shuffle_toggle_button.props.active
-            )
-        ):
-            window._splice_playlist()
 
         self._set_save_btn_playlist()
         self._update_playing_item()
