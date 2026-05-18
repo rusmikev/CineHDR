@@ -19,6 +19,7 @@
 
 import gi
 import os
+import unicodedata
 
 gi.require_version("Adw", "1")
 gi.require_version("Gio", "2.0")
@@ -31,15 +32,19 @@ from gi.repository import Adw, Gio, Gdk, GLib, Gtk, GObject, Pango
 from gettext import gettext as _
 from .utils import is_local_path
 
+os.environ["GTK_DEBUG"] = "no-interactive"
+
 
 class PlaylistItemObj(GObject.Object):
     item = GObject.Property(type=object)
     playing = GObject.Property(type=bool, default=False)
+    position = GObject.Property(type=int, default=0)
 
-    def __init__(self, item):
+    def __init__(self, item, position):
         super().__init__()
         self.item = item
         self.playing = item.get("playing", False)
+        self.position = position
 
 
 @Gtk.Template(resource_path="/io/github/diegopvlk/Cine/playlist.ui")
@@ -52,18 +57,81 @@ class Playlist(Adw.Dialog):
     playlist_list_view: Gtk.ListView = Gtk.Template.Child()
     factory: Gtk.SignalListItemFactory = Gtk.Template.Child()
     drop_indicator_revealer: Gtk.Revealer = Gtk.Template.Child()
+    search_btn: Gtk.ToggleButton = Gtk.Template.Child()
+    search_bar: Gtk.SearchBar = Gtk.Template.Child()
+    search_entry: Gtk.SearchEntry = Gtk.Template.Child()
+    no_results_label: Gtk.Label = Gtk.Template.Child()
     save_playlist_btn: Gtk.Button = Gtk.Template.Child()
 
     def __init__(self, window, **kwargs):
         super().__init__(**kwargs)
         self.win = window
         self.mpv = window.mpv
-        uid = os.getuid()
-        self.doc_path = f"/run/user/{uid}/doc/"
 
         self.set_content_height(window.get_height())
 
-        model = Gtk.NoSelection(model=window.playlistLS)
+        list_filter = Gtk.CustomFilter()
+        list_filter_model = Gtk.FilterListModel(
+            model=window.playlistLS, filter=list_filter
+        )
+
+        list_filter_model.connect(
+            "items-changed",
+            lambda *a: self.no_results_label.set_visible(
+                not list_filter_model.get_item(0)
+            ),
+        )
+
+        def search_filter(*args):
+            def remove_diacritics(text):
+                normalized = unicodedata.normalize("NFD", text)
+                return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+
+            query = remove_diacritics(self.search_entry.props.text.strip())
+
+            def filter_func(obj):
+                try:
+                    item_name = remove_diacritics(obj.item["title"]).lower()
+                    normalized_query = remove_diacritics(query).lower()
+                    return normalized_query in item_name
+                except:
+                    return True
+
+            list_filter.set_filter_func(filter_func)
+
+        self.search_entry.connect("search-changed", search_filter)
+        self.search_entry.set_placeholder_text(_("Search") + "…")
+
+        model = Gtk.NoSelection(model=list_filter_model)
+
+        shortcut_search = Gtk.Shortcut.new(
+            trigger=Gtk.ShortcutTrigger.parse_string("<primary>f"),
+            action=Gtk.CallbackAction.new(self._set_search_mode_enabled),
+        )
+        shortcut_add_files = Gtk.Shortcut.new(
+            trigger=Gtk.ShortcutTrigger.parse_string("<shift><primary>o"),
+            action=Gtk.CallbackAction.new(self.win._on_add_playlist_dialog),
+        )
+        shortcut_add_folder = Gtk.Shortcut.new(
+            trigger=Gtk.ShortcutTrigger.parse_string("<shift><primary>i"),
+            action=Gtk.CallbackAction.new(self.win._on_open_folder_dialog),
+        )
+        shortcut_add_url = Gtk.Shortcut.new(
+            trigger=Gtk.ShortcutTrigger.parse_string("<shift><primary>u"),
+            action=Gtk.CallbackAction.new(self.win._on_add_url),
+        )
+
+        shortcut_controller = Gtk.ShortcutController()
+        shortcut_controller.add_shortcut(shortcut_search)
+        shortcut_controller.add_shortcut(shortcut_add_files)
+        shortcut_controller.add_shortcut(shortcut_add_folder)
+        shortcut_controller.add_shortcut(shortcut_add_url)
+
+        self.add_controller(shortcut_controller)
+
+        self.search_btn.connect("clicked", self._set_search_mode_enabled)
+        self.search_bar.connect("notify::search-mode-enabled", self._set_search_btn)
+
         self.playlist_list_view.set_model(model)
         self.playlist_list_view.remove_css_class("view")
 
@@ -98,9 +166,10 @@ class Playlist(Adw.Dialog):
         )
 
     @Gtk.Template.Callback()
-    def _on_list_item_activate(self, _list_view, pos):
+    def _on_list_item_activate(self, list_view, pos):
         self.mpv.pause = False
-        self.mpv.playlist_pos = pos
+        obj = list_view.get_model().get_item(pos)
+        self.mpv.playlist_pos = obj.position
         self._update_playing_item()
         self.close()
 
@@ -194,7 +263,7 @@ class Playlist(Adw.Dialog):
             icon_name = "cine-folder-symbolic"
             file_title = name_with_ext
             if not os.listdir(path):
-                row.set_sensitive(False)
+                row.set_opacity(0.5)
         elif content_type:
             if "mpegurl" in content_type:
                 icon_name = "cine-playlist-m3u-symbolic"
@@ -226,7 +295,7 @@ class Playlist(Adw.Dialog):
 
         gesture = Gtk.GestureClick.new()
         gesture.set_button(3)
-        gesture.connect("pressed", self._on_row_right_click, path, index)
+        gesture.connect("pressed", self._on_row_right_click, path, index, row)
         row.add_controller(gesture)
 
         row_drag_source = Gtk.DragSource.new()
@@ -330,7 +399,7 @@ class Playlist(Adw.Dialog):
 
         self.win._splice_playlist()
 
-    def _on_row_right_click(self, gesture, _n_press, x, y, path, idx):
+    def _on_row_right_click(self, gesture, _n_press, x, y, path, idx, row):
         def show_in_folder():
             gfile = Gio.File.new_for_path(path)
             launcher = Gtk.FileLauncher.new(gfile)
@@ -350,8 +419,6 @@ class Playlist(Adw.Dialog):
         menu = Gio.Menu.new()
         menu.append(_("Open Item Location"), "row.open_location")
         menu.append(_("Remove from Playlist"), "row.remove_item")
-
-        row = gesture.get_widget()
 
         popover = Gtk.PopoverMenu.new_from_model(menu)
         popover.set_parent(row)
@@ -378,9 +445,14 @@ class Playlist(Adw.Dialog):
         popover.set_pointing_to(rect)
         GLib.idle_add(popover.popup)
 
-    @Gtk.Template.Callback()
-    def _on_add_playlist_files(self, _button):
-        self.win._open_add_dialog(_("Add Files"), "playlist-add", from_playlist=True)
+    def _set_search_mode_enabled(self, *args):
+        self.search_bar.props.search_mode_enabled = (
+            not self.search_bar.props.search_mode_enabled
+        )
+        return True
+
+    def _set_search_btn(self, *args):
+        self.search_btn.props.active = self.search_bar.props.search_mode_enabled
 
     @Gtk.Template.Callback()
     def _on_save_playlist(self, _button):

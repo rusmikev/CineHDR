@@ -666,7 +666,7 @@ class CineWindow(Adw.ApplicationWindow):
         playlist.present(self)
 
     def _on_open_folder_dialog(self, action, *arg):
-        add_mode = True if action.props.name == "add-playlist-folder" else False
+        add_mode = False if action.props.name == "open-folder" else True
         title = _("Add Folder") if add_mode else _("Open Folder")
         dialog = Gtk.FileDialog(title=title)
         curr_path = self.mpv.path
@@ -675,7 +675,7 @@ class CineWindow(Adw.ApplicationWindow):
             folder_path = os.path.dirname(curr_path)
             dialog.set_initial_folder(Gio.File.new_for_path(folder_path))
 
-        def on_open(dialog, result):
+        def on_open_response(dialog, result):
             try:
                 folder = dialog.select_folder_finish(result)
 
@@ -688,13 +688,15 @@ class CineWindow(Adw.ApplicationWindow):
             except GLib.Error as e:
                 print(f"Dialog error: {e.message}")
 
-        dialog.select_folder(self, None, on_open)
+        dialog.select_folder(self, None, on_open_response)
+        return Gdk.EVENT_STOP  # so "<shift><primary>i" doesn't trigger inspector
 
     def _on_clear_and_add(self, _action, _param):
         self._open_add_dialog(_("Open Files"), "clear-and-add")
 
     def _on_add_playlist_dialog(self, _action, _param):
         self._open_add_dialog(_("Add Files"), "playlist-add")
+        return Gdk.EVENT_STOP
 
     def _on_add_sub_dialog(self, _action, _param):
         self._open_add_dialog(_("Add Subtitle"), "sub-add")
@@ -702,7 +704,7 @@ class CineWindow(Adw.ApplicationWindow):
     def _on_add_audio_dialog(self, _action, _param):
         self._open_add_dialog(_("Add Audio"), "audio-add")
 
-    def _open_add_dialog(self, title, mode, from_playlist=False):
+    def _open_add_dialog(self, title, mode):
         filter = Gtk.FileFilter()
         dialog = Gtk.FileDialog(title=title)
         filters_list = Gio.ListStore.new(Gtk.FileFilter)
@@ -732,13 +734,13 @@ class CineWindow(Adw.ApplicationWindow):
         dialog.open_multiple(
             self,
             None,
-            lambda d, res: self._on_open_response(d, res, mode, from_playlist),
+            lambda d, res: self._on_open_response(d, res, mode),
         )
-        if from_playlist:
-            playlist_dialog = cast(Playlist, self.get_visible_dialog())
-            playlist_dialog.spinner.set_visible(True)
 
-    def _on_open_response(self, dialog, result, mode, from_playlist=False):
+        if isinstance(dialog := self.get_visible_dialog(), Playlist):
+            dialog.spinner.set_visible(True)
+
+    def _on_open_response(self, dialog, result, mode):
         try:
             files = dialog.open_multiple_finish(result)
 
@@ -757,16 +759,11 @@ class CineWindow(Adw.ApplicationWindow):
 
             if mode == "clear-and-add":
                 self.mpv.pause = False
-
-            if from_playlist:
-                playlist_dialog = cast(Playlist, self.get_visible_dialog())
-                playlist_dialog.spinner.set_visible(False)
-
         except GLib.Error as e:
-            if from_playlist:
-                playlist_dialog = cast(Playlist, self.get_visible_dialog())
-                playlist_dialog.spinner.set_visible(False)
             print(f"Dialog error: {e.message}")
+        finally:
+            if isinstance(dialog := self.get_visible_dialog(), Playlist):
+                dialog.spinner.set_visible(False)
 
     def _on_open_sub_menu(self, *args):
         self._show_ui()
@@ -851,6 +848,7 @@ class CineWindow(Adw.ApplicationWindow):
 
     def _on_add_url(self, *args):
         self._on_open_url(add=True)
+        return Gdk.EVENT_STOP
 
     def setup_preview_player(self):
         if not self.local_path:
@@ -1727,8 +1725,8 @@ class CineWindow(Adw.ApplicationWindow):
         self.playlist_debounce_id = 0
         self.has_some_doc_path = False
         new_items = []
-        for item in cast(list, self.mpv.playlist):
-            new_items.append(PlaylistItemObj(item))
+        for idx, item in enumerate(cast(list, self.mpv.playlist)):
+            new_items.append(PlaylistItemObj(item, idx))
 
             if (
                 self.has_some_doc_path
