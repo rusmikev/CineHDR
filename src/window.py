@@ -215,6 +215,7 @@ class CineWindow(Adw.ApplicationWindow):
             keep_open=True,
             keep_open_pause=False,
             ytdl=True,
+            ytdl_raw_options="yes-playlist=",
             cursor_autohide_fs_only=True,
         )
 
