@@ -38,12 +38,14 @@ os.environ["GTK_DEBUG"] = "no-interactive"
 class PlaylistItemObj(GObject.Object):
     item = GObject.Property(type=object)
     playing = GObject.Property(type=bool, default=False)
+    url_title = GObject.Property(type=str, default="")
     position = GObject.Property(type=int, default=0)
 
     def __init__(self, item, position):
         super().__init__()
         self.item = item
         self.playing = item.get("playing", False)
+        self.url_title = item.get("title", "")
         self.position = position
 
 
@@ -229,13 +231,28 @@ class Playlist(Adw.Dialog):
         inner_box.append(list_item.title)
         row.append(inner_box)
         row.append(list_item.playing_icon)
+
+        gesture = Gtk.GestureClick.new()
+        gesture.set_button(3)
+        gesture.connect("pressed", self._on_row_right_click, list_item, row)
+        row.add_controller(gesture)
+
+        row_drag_source = Gtk.DragSource.new()
+        row_drag_source.set_actions(Gdk.DragAction.MOVE)
+        row_drag_source.connect("prepare", self._on_row_drag_prepare, list_item)
+        row_drag_source.connect("drag-begin", self._on_row_drag_begin)
+        row.add_controller(row_drag_source)
+
+        row_drop_target = Gtk.DropTarget.new(GObject.TYPE_INT, Gdk.DragAction.MOVE)
+        row_drop_target.connect("drop", self._on_row_drop, list_item)
+        row.add_controller(row_drop_target)
+
         list_item.set_child(row)
 
     def _on_factory_bind(self, _factory, list_item):
         obj = list_item.get_item()
         item = list_item.get_item().item
         row = list_item.get_child()
-        index = list_item.get_position()
 
         path = item.get("filename")
         name_with_ext = os.path.basename(path)
@@ -249,7 +266,7 @@ class Playlist(Adw.Dialog):
 
         if not is_local_path(path):
             content_type = "mpv-url"
-            file_title = item.get("title") or file_title
+            file_title = item.get("title") or obj.url_title or file_title
         else:
             try:
                 info = Gio.File.new_for_path(path).query_info(
@@ -265,12 +282,12 @@ class Playlist(Adw.Dialog):
             if not os.listdir(path):
                 row.set_opacity(0.5)
         elif content_type:
-            if "mpegurl" in content_type:
+            if "video" in content_type:
+                icon_name = "cine-video-x-generic-symbolic"
+            elif "mpegurl" in content_type:
                 icon_name = "cine-playlist-m3u-symbolic"
             elif "audio" in content_type:
                 icon_name = "cine-audio-x-generic-symbolic"
-            elif "video" in content_type:
-                icon_name = "cine-video-x-generic-symbolic"
             elif "image" in content_type:
                 icon_name = "cine-image-x-generic-symbolic"
             elif content_type == "mpv-url":
@@ -292,21 +309,6 @@ class Playlist(Adw.Dialog):
         set_playing_item(obj, None)
 
         list_item.handler_id = obj.connect("notify::playing", set_playing_item)
-
-        gesture = Gtk.GestureClick.new()
-        gesture.set_button(3)
-        gesture.connect("pressed", self._on_row_right_click, path, index, row)
-        row.add_controller(gesture)
-
-        row_drag_source = Gtk.DragSource.new()
-        row_drag_source.set_actions(Gdk.DragAction.MOVE)
-        row_drag_source.connect("prepare", self._on_row_drag_prepare, index)
-        row_drag_source.connect("drag-begin", self._on_row_drag_begin)
-        row.add_controller(row_drag_source)
-
-        row_drop_target = Gtk.DropTarget.new(GObject.TYPE_INT, Gdk.DragAction.MOVE)
-        row_drop_target.connect("drop", self._on_row_drop, index)
-        row.add_controller(row_drop_target)
 
     def _on_factory_unbind(self, _factory, list_item):
         obj = list_item.get_item()
@@ -382,13 +384,15 @@ class Playlist(Adw.Dialog):
 
         self.spinner.set_visible(False)
 
-    def _on_row_drag_prepare(self, _source, _x, _y, index):
+    def _on_row_drag_prepare(self, _source, _x, _y, list_item):
+        index = list_item.get_item().position
         return Gdk.ContentProvider.new_for_value(index)
 
     def _on_row_drag_begin(self, source, _drag):
         source.set_icon(Gtk.WidgetPaintable.new(source.get_widget()), 0, 0)
 
-    def _on_row_drop(self, _target, source_index, _x, _y, dest_index):
+    def _on_row_drop(self, _target, source_index, _x, _y, list_item):
+        dest_index = list_item.get_item().position
         if source_index == dest_index:
             return
 
@@ -399,7 +403,10 @@ class Playlist(Adw.Dialog):
 
         self.win._splice_playlist()
 
-    def _on_row_right_click(self, gesture, _n_press, x, y, path, idx, row):
+    def _on_row_right_click(self, gesture, _n_press, x, y, list_item, row):
+        idx = list_item.get_item().position
+        path = list_item.get_item().item["filename"]
+
         def show_in_folder():
             gfile = Gio.File.new_for_path(path)
             launcher = Gtk.FileLauncher.new(gfile)
@@ -424,7 +431,7 @@ class Playlist(Adw.Dialog):
         popover.set_parent(row)
         popover.set_has_arrow(False)
         popover.set_autohide(True)
-        row.connect("destroy", lambda *_: (popover.unrealize(), popover.unparent()))
+        row.connect("unrealize", lambda *_: (popover.unrealize(), popover.unparent()))
 
         action_group = Gio.SimpleActionGroup.new()
 
@@ -443,7 +450,7 @@ class Playlist(Adw.Dialog):
         rect.x = x
         rect.y = y
         popover.set_pointing_to(rect)
-        GLib.idle_add(popover.popup)
+        popover.popup()
 
     def _set_search_mode_enabled(self, *args):
         self.search_bar.props.search_mode_enabled = (

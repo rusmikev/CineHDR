@@ -197,42 +197,52 @@ statuspage box {
 }
 
 .playlist-list-view {
-  background: transparent;
+  background-color: unset;
   padding-bottom: 22px;
 }
 .playlist-list-view row {
   border-color: rgba(0, 0, 0, 0.6);
-  transition: all 200ms ease-in-out;
-  background: rgba(255, 255, 255, 0.12);
+  background-color: unset;
   margin-right: 12px;
   margin-left: 12px;
   padding: 0;
 }
-.playlist-list-view row:hover {
-  background: rgba(255, 255, 255, 0.2);
+.playlist-list-view row > box {
+  transition: background-color 200ms ease-in-out;
+  background-color: rgba(255, 255, 255, 0.12);
 }
-.playlist-list-view row:active {
-  background: rgba(255, 255, 255, 0.28);
+.playlist-list-view row > box:hover {
+  background-color: rgba(255, 255, 255, 0.18);
 }
-.playlist-list-view row:first-child,
-.playlist-list-view row:first-child box {
+.playlist-list-view row > box:active {
+  background-color: rgba(255, 255, 255, 0.23);
+}
+.playlist-list-view row:first-child > box {
   border-top-left-radius: 12px;
   border-top-right-radius: 12px;
 }
-.playlist-list-view row:last-child,
-.playlist-list-view row:last-child box {
+.playlist-list-view row:last-child > box {
   border-bottom-left-radius: 12px;
   border-bottom-right-radius: 12px;
 }
 
 .playing-item-playlist {
-  background-color: rgb(from var(--accent-color) r g b / calc(alpha * 0.25));
+  background-image: linear-gradient(
+    rgba(255, 255, 255, 0.17),
+    rgba(255, 255, 255, 0.17)
+  );
 }
 .playing-item-playlist:hover {
-  background-color: rgb(from var(--accent-color) r g b / calc(alpha * 0.3));
+  background-image: linear-gradient(
+    rgba(255, 255, 255, 0.22),
+    rgba(255, 255, 255, 0.22)
+  );
 }
 .playing-item-playlist:active {
-  background-color: rgb(from var(--accent-color) r g b / calc(alpha * 0.35));
+  background-image: linear-gradient(
+    rgba(255, 255, 255, 0.27),
+    rgba(255, 255, 255, 0.27)
+  );
 }
 
 @media (prefers-contrast: more) {

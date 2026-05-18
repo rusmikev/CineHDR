@@ -1976,6 +1976,9 @@ class CineWindow(Adw.ApplicationWindow):
                     self.set_title(title_no_ext)
                 else:
                     self.set_title(title)
+                    pos = cast(int, self.mpv.playlist_pos)
+                    if obj := cast(PlaylistItemObj, self.playlistLS.get_item(pos)):
+                        obj.url_title = title
 
                 self.hide_icon_indicator = False
 
