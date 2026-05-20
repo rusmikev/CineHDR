@@ -1144,7 +1144,7 @@ class CineWindow(Adw.ApplicationWindow):
         btn_icon = play if paused else pause
         self.play_pause_btn.set_icon_name(btn_icon)
 
-        text = _("Pause") if paused else _("Play")
+        text = _("Play") if paused else _("Pause")
         self.play_pause_btn.update_property([Gtk.AccessibleProperty.LABEL], [text])
 
         self.icon_indicator.props.icon_name = pause if paused else play
