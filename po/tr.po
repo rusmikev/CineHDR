@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-14 20:05-0300\n"
+"POT-Creation-Date: 2026-05-20 20:28-0300\n"
 "PO-Revision-Date: 2026-02-28 11:40-0300\n"
 "Last-Translator: Sabri Ünal <yakushabb@gmail.com>\n"
 "Language-Team: Turkish <takim@gnome.org.tr>\n"
@@ -19,9 +19,9 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Generator: Poedit 3.8\n"
 
-#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:226 src/mpris.py:146
-#: src/mpris.py:364 src/window.py:181 src/window.py:300 src/window.blp:6
-#: src/window.blp:460
+#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:227 src/mpris.py:147
+#: src/mpris.py:365 src/window.py:185 src/window.py:304 src/window.blp:6
+#: src/window.blp:461
 msgid "Cine"
 msgstr "Cine"
 
@@ -91,11 +91,11 @@ msgid "Main Window"
 msgstr "Ana Pencere"
 
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
-#: src/main.py:236
+#: src/main.py:237
 msgid "translator-credits"
 msgstr "Sabri Ünal <yakushabb@gmail.com>, 2026"
 
-#: src/mpris.py:153 src/mpris.py:221 src/mpris.py:356
+#: src/mpris.py:154 src/mpris.py:222 src/mpris.py:357
 msgid "Unknown title"
 msgstr "Bilinmeyen başlık"
 
@@ -103,34 +103,41 @@ msgstr "Bilinmeyen başlık"
 msgid "Original"
 msgstr "Özgün"
 
-#: src/playlist.py:76 src/window.py:1278 src/window.py:1782
-msgid "File Error"
-msgstr "Dosya Hatası"
+#: src/playlist.py:116 src/playlist.blp:49
+msgid "Search"
+msgstr "Ara"
 
-#: src/playlist.py:148 src/playlist.py:327 src/playlist.blp:43
+#: src/playlist.py:182 src/playlist.py:190 src/playlist.py:475
+#: src/playlist.blp:56
 msgid "Save Playlist"
 msgstr "Oynatma Listesini Kaydet"
 
-#: src/playlist.py:151 src/preferences.blp:157 src/preferences.blp:192
+#: src/playlist.py:185 src/preferences.blp:157 src/preferences.blp:192
 msgid ""
 "Requires flatpak permission to read the folder where the video is stored"
 msgstr "Videonun saklandığı klasörü okumak için flatpak izni gerektirir"
 
-#: src/playlist.py:257
+#: src/playlist.py:332 src/window.py:1270 src/window.py:1794
+msgid "File Error"
+msgstr "Dosya Hatası"
+
+#: src/playlist.py:435
 msgid "Open Item Location"
 msgstr "Öge Konumunu Aç"
 
-#: src/playlist.py:258
+#: src/playlist.py:436
 msgid "Remove from Playlist"
 msgstr "Oynatma Listesinden Kaldır"
 
-#: src/playlist.py:322 src/window.py:698 src/playlist.blp:24 src/window.blp:100
-msgid "Add Files"
-msgstr "Dosya Ekle"
-
-#: src/playlist.py:328 src/playlist.blp:5 src/window.blp:365
+#: src/playlist.py:476 src/playlist.blp:20 src/window.blp:366
 msgid "Playlist"
 msgstr "Oynatma Listesi"
+
+#: src/playlist.py:496
+#, python-brace-format
+msgid "{n} item"
+msgid_plural "{n} items"
+msgstr[0] "{n} öğe"
 
 #: src/preferences.py:105 src/preferences.blp:20
 msgid "Subtitle Color"
@@ -142,7 +149,7 @@ msgstr "Alt Yazı Arka Planı"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:87 src/shortcuts.py:88
-#: src/window.py:1866 src/window.blp:228
+#: src/window.py:1888 src/window.blp:228
 msgid "Volume"
 msgstr "Ses"
 
@@ -188,7 +195,7 @@ msgstr "Sonraki İkincil Altyazı Parçası"
 msgid "Previous Secondary Subtitle Track"
 msgstr "Önceki İkincil Altyazı Parçası"
 
-#: src/shortcuts.py:41 src/shortcuts.py:42 src/window.py:725 src/window.blp:285
+#: src/shortcuts.py:41 src/shortcuts.py:42 src/window.py:722 src/window.blp:285
 msgid "Audio"
 msgstr "Ses"
 
@@ -216,12 +223,12 @@ msgstr "5 sn Geri Sar"
 msgid "Seek 5s Forward"
 msgstr "5 sn İleri Sar"
 
-#: src/shortcuts.py:47 src/shortcuts.py:48 src/window.py:1815
-#: src/window.blp:381
+#: src/shortcuts.py:47 src/shortcuts.py:48 src/window.py:1837
+#: src/window.blp:382
 msgid "Fullscreen"
 msgstr "Tam Ekran"
 
-#: src/shortcuts.py:49 src/window.py:1815
+#: src/shortcuts.py:49 src/window.py:1837
 msgid "Exit Fullscreen"
 msgstr "Tam Ekrandan Çık"
 
@@ -333,7 +340,7 @@ msgstr "A-B Döngü Noktalarını Ayarla/Temizle"
 msgid "Loop"
 msgstr "Döngü"
 
-#: src/shortcuts.py:95 src/window.blp:354
+#: src/shortcuts.py:95 src/window.blp:355
 msgid "Loop File"
 msgstr "Dosya Döngüsü"
 
@@ -425,7 +432,7 @@ msgstr "Oynatma"
 msgid "Miscellaneous"
 msgstr "Çeşitli"
 
-#: src/window.py:575 src/window.py:1270 src/window.blp:115
+#: src/window.py:575 src/window.py:1262 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "Alt Yazı Parçası Ekle"
 
@@ -441,67 +448,71 @@ msgstr "Ses Parçası Ekle"
 msgid "Track"
 msgstr "Parça"
 
-#: src/window.py:666 src/playlist.blp:30 src/window.blp:105
+#: src/window.py:666 src/playlist.blp:35 src/window.blp:105
 msgid "Add Folder"
 msgstr "Klasör Ekle"
 
 #: src/window.py:666 src/shortcuts-dialog.blp:21 src/window.blp:90
-#: src/window.blp:484
+#: src/window.blp:485
 msgid "Open Folder"
 msgstr "Klasör Aç"
 
-#: src/window.py:695 src/shortcuts-dialog.blp:16 src/window.blp:85
+#: src/window.py:691 src/shortcuts-dialog.blp:16 src/window.blp:85
 msgid "Open Files"
 msgstr "Dosya Aç"
 
-#: src/window.py:701
+#: src/window.py:694 src/playlist.blp:30 src/window.blp:100
+msgid "Add Files"
+msgstr "Dosya Ekle"
+
+#: src/window.py:698
 msgid "Add Subtitle"
 msgstr "Alt Yazı Ekle"
 
-#: src/window.py:704
+#: src/window.py:701
 msgid "Add Audio"
 msgstr "Ses Ekle"
 
-#: src/window.py:720
+#: src/window.py:717
 msgid "Subtitle"
 msgstr "Alt Yazı"
 
-#: src/window.py:729
+#: src/window.py:726
 msgid "Media"
 msgstr "Ortam"
 
-#: src/window.py:801 src/playlist.blp:36 src/window.blp:110
+#: src/window.py:787 src/playlist.blp:40 src/window.blp:110
 msgid "Add URL"
 msgstr "URL Ekle"
 
-#: src/window.py:801 src/shortcuts-dialog.blp:26 src/window.blp:95
-#: src/window.blp:493
+#: src/window.py:787 src/shortcuts-dialog.blp:26 src/window.blp:95
+#: src/window.blp:494
 msgid "Open URL"
 msgstr "URL Aç"
 
-#: src/window.py:814
+#: src/window.py:800
 msgid "URL"
 msgstr "URL"
 
-#: src/window.py:822
+#: src/window.py:808 src/playlist.blp:26
 msgid "Add"
 msgstr "Ekle"
 
-#: src/window.py:822 src/window.blp:79
+#: src/window.py:808 src/window.blp:79
 msgid "Open"
 msgstr "Aç"
 
-#: src/window.py:999 src/window.py:1111
+#: src/window.py:996 src/window.py:1104
 msgid "Chapter"
 msgstr "Bölüme"
 
-#: src/window.py:1169
-msgid "Pause"
-msgstr "Duraklat"
-
-#: src/window.py:1169 src/window.py:1274
+#: src/window.py:1160 src/window.py:1266
 msgid "Play"
 msgstr "Oynat"
+
+#: src/window.py:1160
+msgid "Pause"
+msgstr "Duraklat"
 
 #: src/options.blp:14
 msgid "Options"
@@ -600,7 +611,11 @@ msgstr "Ses Gecikmesini Sıfırla"
 msgid "Playback Speed"
 msgstr "Oynatma Hızı"
 
-#: src/playlist.blp:98
+#: src/playlist.blp:97
+msgid "No Results Found"
+msgstr "Sonuç Bulunamadı"
+
+#: src/playlist.blp:131
 msgid "Add to Playlist"
 msgstr "Oynatma Listesine Ekle"
 
@@ -732,27 +747,27 @@ msgstr "Sonraki"
 msgid "Video"
 msgstr "Video"
 
-#: src/window.blp:313
+#: src/window.blp:314
 msgid "Chapters"
 msgstr "Bölümler"
 
-#: src/window.blp:330
+#: src/window.blp:331
 msgid "Shuffle Playlist"
 msgstr "Oynatma Listesini Karıştır"
 
-#: src/window.blp:342
+#: src/window.blp:343
 msgid "Loop Playlist"
 msgstr "Oynatma Listesi Döngüsü"
 
-#: src/window.blp:414
+#: src/window.blp:415
 msgid "Toggle Elapsed/Remaining"
 msgstr "Geçen/Kalan Süre Değiştir"
 
-#: src/window.blp:461
+#: src/window.blp:462
 msgid "Drag and drop files here"
 msgstr "Dosyaları buraya sürükleyip bırak"
 
-#: src/window.blp:474
+#: src/window.blp:475
 msgid "Open…"
 msgstr "Aç…"
 

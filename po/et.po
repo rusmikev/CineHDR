@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-14 20:05-0300\n"
+"POT-Creation-Date: 2026-05-20 20:28-0300\n"
 "PO-Revision-Date: 2026-04-28 06:09+0000\n"
 "Last-Translator: Priit Jõerüüt <jrthwlate@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Estonian <https://hosted.weblate.org/projects/cine/app/et/>\n"
@@ -18,9 +18,9 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Generator: Weblate 5.17.1-dev\n"
 
-#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:226 src/mpris.py:146
-#: src/mpris.py:364 src/window.py:181 src/window.py:300 src/window.blp:6
-#: src/window.blp:460
+#: data/io.github.diegopvlk.Cine.desktop.in:2 src/main.py:227 src/mpris.py:147
+#: src/mpris.py:365 src/window.py:185 src/window.py:304 src/window.blp:6
+#: src/window.blp:461
 msgid "Cine"
 msgstr "Cine"
 
@@ -89,11 +89,11 @@ msgid "Main Window"
 msgstr "Põhivaade"
 
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
-#: src/main.py:236
+#: src/main.py:237
 msgid "translator-credits"
 msgstr "Priit Jõerüüt 2026"
 
-#: src/mpris.py:153 src/mpris.py:221 src/mpris.py:356
+#: src/mpris.py:154 src/mpris.py:222 src/mpris.py:357
 msgid "Unknown title"
 msgstr "Teadmata pealkiri"
 
@@ -101,34 +101,42 @@ msgstr "Teadmata pealkiri"
 msgid "Original"
 msgstr "Algne"
 
-#: src/playlist.py:76 src/window.py:1278 src/window.py:1782
-msgid "File Error"
-msgstr "Failiviga"
+#: src/playlist.py:116 src/playlist.blp:49
+msgid "Search"
+msgstr "Otsi"
 
-#: src/playlist.py:148 src/playlist.py:327 src/playlist.blp:43
+#: src/playlist.py:182 src/playlist.py:190 src/playlist.py:475
+#: src/playlist.blp:56
 msgid "Save Playlist"
 msgstr "Salvesta esitlusloend"
 
-#: src/playlist.py:151 src/preferences.blp:157 src/preferences.blp:192
+#: src/playlist.py:185 src/preferences.blp:157 src/preferences.blp:192
 msgid ""
 "Requires flatpak permission to read the folder where the video is stored"
 msgstr "Eeldab flatpaki õiguse lugemaks kausta, kus video on salvestatud"
 
-#: src/playlist.py:257
+#: src/playlist.py:332 src/window.py:1270 src/window.py:1794
+msgid "File Error"
+msgstr "Failiviga"
+
+#: src/playlist.py:435
 msgid "Open Item Location"
 msgstr "Ava objekti asukoht"
 
-#: src/playlist.py:258
+#: src/playlist.py:436
 msgid "Remove from Playlist"
 msgstr "Eemalda esitusloendist"
 
-#: src/playlist.py:322 src/window.py:698 src/playlist.blp:24 src/window.blp:100
-msgid "Add Files"
-msgstr "Lisa faile"
-
-#: src/playlist.py:328 src/playlist.blp:5 src/window.blp:365
+#: src/playlist.py:476 src/playlist.blp:20 src/window.blp:366
 msgid "Playlist"
 msgstr "Esitusloend"
+
+#: src/playlist.py:496
+#, python-brace-format
+msgid "{n} item"
+msgid_plural "{n} items"
+msgstr[0] "{n} üksus"
+msgstr[1] "{n} üksust"
 
 #: src/preferences.py:105 src/preferences.blp:20
 msgid "Subtitle Color"
@@ -140,7 +148,7 @@ msgstr "Subtiitrite taust"
 
 #: src/shortcuts.py:29 src/shortcuts.py:30 src/shortcuts.py:31
 #: src/shortcuts.py:32 src/shortcuts.py:87 src/shortcuts.py:88
-#: src/window.py:1866 src/window.blp:228
+#: src/window.py:1888 src/window.blp:228
 msgid "Volume"
 msgstr "Helivaljus"
 
@@ -186,7 +194,7 @@ msgstr "Järgmine teisene subtiitrirada"
 msgid "Previous Secondary Subtitle Track"
 msgstr "Eelmine teisene subtiitrirada"
 
-#: src/shortcuts.py:41 src/shortcuts.py:42 src/window.py:725 src/window.blp:285
+#: src/shortcuts.py:41 src/shortcuts.py:42 src/window.py:722 src/window.blp:285
 msgid "Audio"
 msgstr "Heli"
 
@@ -214,12 +222,12 @@ msgstr "Keri 5 sekundit tagasi"
 msgid "Seek 5s Forward"
 msgstr "Keri 5 sekundit edasi"
 
-#: src/shortcuts.py:47 src/shortcuts.py:48 src/window.py:1815
-#: src/window.blp:381
+#: src/shortcuts.py:47 src/shortcuts.py:48 src/window.py:1837
+#: src/window.blp:382
 msgid "Fullscreen"
 msgstr "Täisekraanivaade"
 
-#: src/shortcuts.py:49 src/window.py:1815
+#: src/shortcuts.py:49 src/window.py:1837
 msgid "Exit Fullscreen"
 msgstr "Välju täisekraanivaatest"
 
@@ -331,7 +339,7 @@ msgstr "Lisa või eemalda korduse A->B otspunktid"
 msgid "Loop"
 msgstr "Kordus"
 
-#: src/shortcuts.py:95 src/window.blp:354
+#: src/shortcuts.py:95 src/window.blp:355
 msgid "Loop File"
 msgstr "Korda faili"
 
@@ -423,7 +431,7 @@ msgstr "Taasesitus"
 msgid "Miscellaneous"
 msgstr "Varia"
 
-#: src/window.py:575 src/window.py:1270 src/window.blp:115
+#: src/window.py:575 src/window.py:1262 src/window.blp:115
 msgid "Add Subtitle Track"
 msgstr "Lisa subtiitrite riba"
 
@@ -439,67 +447,71 @@ msgstr "Lisa heliriba"
 msgid "Track"
 msgstr "Riba"
 
-#: src/window.py:666 src/playlist.blp:30 src/window.blp:105
+#: src/window.py:666 src/playlist.blp:35 src/window.blp:105
 msgid "Add Folder"
 msgstr "Lisa kaust"
 
 #: src/window.py:666 src/shortcuts-dialog.blp:21 src/window.blp:90
-#: src/window.blp:484
+#: src/window.blp:485
 msgid "Open Folder"
 msgstr "Ava kaust"
 
-#: src/window.py:695 src/shortcuts-dialog.blp:16 src/window.blp:85
+#: src/window.py:691 src/shortcuts-dialog.blp:16 src/window.blp:85
 msgid "Open Files"
 msgstr "Ava faile"
 
-#: src/window.py:701
+#: src/window.py:694 src/playlist.blp:30 src/window.blp:100
+msgid "Add Files"
+msgstr "Lisa faile"
+
+#: src/window.py:698
 msgid "Add Subtitle"
 msgstr "Lisa subtiitrid"
 
-#: src/window.py:704
+#: src/window.py:701
 msgid "Add Audio"
 msgstr "Lisa heli"
 
-#: src/window.py:720
+#: src/window.py:717
 msgid "Subtitle"
 msgstr "Subtiiter"
 
-#: src/window.py:729
+#: src/window.py:726
 msgid "Media"
 msgstr "Meedium"
 
-#: src/window.py:801 src/playlist.blp:36 src/window.blp:110
+#: src/window.py:787 src/playlist.blp:40 src/window.blp:110
 msgid "Add URL"
 msgstr "Lisa võrguaadress"
 
-#: src/window.py:801 src/shortcuts-dialog.blp:26 src/window.blp:95
-#: src/window.blp:493
+#: src/window.py:787 src/shortcuts-dialog.blp:26 src/window.blp:95
+#: src/window.blp:494
 msgid "Open URL"
 msgstr "Ava võrguaadress"
 
-#: src/window.py:814
+#: src/window.py:800
 msgid "URL"
 msgstr "Võrguaadress"
 
-#: src/window.py:822
+#: src/window.py:808 src/playlist.blp:26
 msgid "Add"
 msgstr "Lisa"
 
-#: src/window.py:822 src/window.blp:79
+#: src/window.py:808 src/window.blp:79
 msgid "Open"
 msgstr "Ava"
 
-#: src/window.py:999 src/window.py:1111
+#: src/window.py:996 src/window.py:1104
 msgid "Chapter"
 msgstr "Peatükk"
 
-#: src/window.py:1169
-msgid "Pause"
-msgstr "Peata esitus"
-
-#: src/window.py:1169 src/window.py:1274
+#: src/window.py:1160 src/window.py:1266
 msgid "Play"
 msgstr "Esita"
+
+#: src/window.py:1160
+msgid "Pause"
+msgstr "Peata esitus"
 
 #: src/options.blp:14
 msgid "Options"
@@ -598,7 +610,11 @@ msgstr "Lähtesta heliviivitus"
 msgid "Playback Speed"
 msgstr "Taasesituse kiirus"
 
-#: src/playlist.blp:98
+#: src/playlist.blp:97
+msgid "No Results Found"
+msgstr "Tulemusi ei leitud"
+
+#: src/playlist.blp:131
 msgid "Add to Playlist"
 msgstr "Lisa esitusloendisse"
 
@@ -730,27 +746,27 @@ msgstr "Järgmine"
 msgid "Video"
 msgstr "Video"
 
-#: src/window.blp:313
+#: src/window.blp:314
 msgid "Chapters"
 msgstr "Peatükid"
 
-#: src/window.blp:330
+#: src/window.blp:331
 msgid "Shuffle Playlist"
 msgstr "Sega esitusloend"
 
-#: src/window.blp:342
+#: src/window.blp:343
 msgid "Loop Playlist"
 msgstr "Korda esitusloendit"
 
-#: src/window.blp:414
+#: src/window.blp:415
 msgid "Toggle Elapsed/Remaining"
 msgstr "Vaheta jäänud aeg ja kulunud aeg"
 
-#: src/window.blp:461
+#: src/window.blp:462
 msgid "Drag and drop files here"
 msgstr "Lohista failid siia"
 
-#: src/window.blp:474
+#: src/window.blp:475
 msgid "Open…"
 msgstr "Ava…"
 
