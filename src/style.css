@@ -257,6 +257,19 @@ statuspage box {
         rgba(0, 0, 0, 0) 35%
       );
   }
+  #playlist sheet {
+    background: rgba(0, 0, 0, 0.85);
+  }
+  .playlist-list-view row > box {
+    transition: background-color 200ms ease-in-out;
+    background-color: rgba(145, 145, 155, 0.28);
+  }
+  .playlist-list-view row > box:hover {
+    background-color: rgba(145, 145, 155, 0.4);
+  }
+  .playlist-list-view row > box:active {
+    background-color: rgba(145, 145, 155, 0.5);
+  }
   .playlist-list-view row > box {
     box-shadow: 0 0 0 1px var(--border-color);
   }
