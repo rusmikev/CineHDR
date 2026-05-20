@@ -81,6 +81,12 @@
     inset 0 0 31px 0 white,
     0 0 0px 1px white;
 }
+.osd.controls button.flat.toggle:checked:active {
+  box-shadow:
+    0 1px 3px 0 rgba(0, 0, 0, 1),
+    inset 0 0 31px #c2c2c2,
+    0 0 0px 1px #c2c2c2;
+}
 
 .osd.controls button.flat.toggle:focus-visible:checked {
   outline: 2px solid rgba(0, 0, 0, 0.45);
