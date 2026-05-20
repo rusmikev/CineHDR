@@ -125,7 +125,7 @@ class OptionsMenuButton(Gtk.MenuButton):
                 try:
                     num, den = map(float, item_str.split(":"))
                     mapped_val = num / den
-                except:
+                except Exception:
                     mapped_val = -1.0
 
             if abs(mapped_val - target_val) < 0.001:
@@ -165,7 +165,7 @@ class OptionsMenuButton(Gtk.MenuButton):
                 if i > 0 and abs(current_ratio - r) < 0.01:
                     self.crop_dropdown.set_selected(i)
                     break
-        except:
+        except Exception:
             self.crop_dropdown.set_selected(0)
 
     @Gtk.Template.Callback()

@@ -29,6 +29,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("GObject", "2.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Adw, Gio, Gdk, GLib, Gtk, GObject, Pango
+
 from gettext import gettext as _
 from gettext import ngettext
 from .utils import is_local_path
@@ -70,8 +71,8 @@ class Playlist(Adw.Dialog):
         self.win = win
         self.mpv = win.mpv
 
-        ls_n_items = win.playlistLS.get_n_items()
-        shuffle_btn = win.playlist_shuffle_toggle_button
+        ls_n_items = win.playlist_ls.get_n_items()
+        shuffle_btn = win.shuffle_toggle_btn
         shuffle_changed = win.last_shuffle != shuffle_btn.props.active
         count = self.mpv.playlist_count
 
@@ -83,7 +84,7 @@ class Playlist(Adw.Dialog):
 
         list_filter = Gtk.CustomFilter()
         list_filter_model = Gtk.FilterListModel(
-            model=win.playlistLS, filter=list_filter
+            model=win.playlist_ls, filter=list_filter
         )
 
         list_filter_model.connect(
@@ -105,7 +106,7 @@ class Playlist(Adw.Dialog):
                     item_name = remove_diacritics(obj.item["title"]).lower()
                     normalized_query = remove_diacritics(query).lower()
                     return normalized_query in item_name
-                except:
+                except Exception:
                     return True
 
             list_filter.set_filter_func(filter_func)
@@ -190,8 +191,8 @@ class Playlist(Adw.Dialog):
             btn.set_sensitive(True)
 
     def _update_playing_item(self):
-        for i in range(self.win.playlistLS.get_n_items()):
-            obj = self.win.playlistLS.get_item(i)
+        for i in range(self.win.playlist_ls.get_n_items()):
+            obj = self.win.playlist_ls.get_item(i)
             is_playing = i == self.mpv.playlist_pos
             if obj.playing != is_playing:
                 obj.playing = is_playing
@@ -272,7 +273,7 @@ class Playlist(Adw.Dialog):
                     "standard::content-type", Gio.FileQueryInfoFlags.NONE, None
                 )
                 content_type = info.get_content_type()
-            except:
+            except Exception:
                 content_type = "error"
 
         if content_type == "inode/directory":
@@ -341,11 +342,12 @@ class Playlist(Adw.Dialog):
         GLib.timeout_add(10, self.drop_indicator_revealer.set_reveal_child, False)
 
     def _on_drop(self, _target, value, _x, _y):
-        items: list[Gio.File] | list[str] = (
-            value.get_files()
-            if isinstance(value, Gdk.FileList)
-            else [value] if isinstance(value, str) else []
-        )
+        items: list[Gio.File] | list[str] = []
+
+        if isinstance(value, Gdk.FileList):
+            items = value.get_files()
+        elif isinstance(value, str):
+            items = [value]
 
         for item in items:
             if isinstance(item, Gio.File):
@@ -375,9 +377,7 @@ class Playlist(Adw.Dialog):
                     self.mpv.loadfile(path, "append-play")
 
                 GLib.idle_add(
-                    lambda *a: self.win._on_shuffle_toggled(
-                        self.win.playlist_shuffle_toggle_button
-                    )
+                    lambda *a: self.win._on_shuffle_toggled(self.win.shuffle_toggle_btn)
                 )
 
             elif isinstance(item, str):  # URL string

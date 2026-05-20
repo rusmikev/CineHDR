@@ -74,7 +74,7 @@ template $CineWindow: Adw.ApplicationWindow {
               ]
 
               [start]
-              MenuButton open_menu_button {
+              MenuButton open_menu_btn {
                 valign: center;
                 label: _("Open");
                 visible: bind start_page.visible inverted;
@@ -124,7 +124,7 @@ template $CineWindow: Adw.ApplicationWindow {
               }
 
               [end]
-              MenuButton primary_menu_button {
+              MenuButton primary_menu_btn {
                 valign: center;
                 primary: true;
                 icon-name: "open-menu-symbolic";
@@ -189,7 +189,7 @@ template $CineWindow: Adw.ApplicationWindow {
                 justify: spread;
                 justify-last-line: true;
 
-                Button previous_button {
+                Button previous_btn {
                   styles [
                     "circular",
                     "flat",
@@ -199,7 +199,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   tooltip-text: _("Previous");
                 }
 
-                Button play_pause_button {
+                Button play_pause_btn {
                   styles [
                     "circular",
                     "flat",
@@ -210,7 +210,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   halign: center;
                 }
 
-                Button next_button {
+                Button next_btn {
                   styles [
                     "circular",
                     "flat",
@@ -221,7 +221,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   halign: center;
                 }
 
-                MenuButton volume_menu_button {
+                MenuButton volume_menu_btn {
                   halign: center;
                   icon-name: "cine-volume-max-symbolic";
                   direction: up;
@@ -234,7 +234,7 @@ template $CineWindow: Adw.ApplicationWindow {
 
                   popover: Popover {
                     Box volume_box {
-                      ToggleButton mute_toggle_button {
+                      ToggleButton mute_toggle_btn {
                         icon-name: "cine-volume-mute-symbolic";
                         tooltip-text: _("Mute/Unmute");
 
@@ -247,7 +247,7 @@ template $CineWindow: Adw.ApplicationWindow {
                       Scale volume_scale {
                         width-request: 180;
 
-                        adjustment: Adjustment volume_scale_adjustment {
+                        adjustment: Adjustment volume_scale_adj {
                           lower: 0;
                           upper: 130;
                           value: 0;
@@ -257,7 +257,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   };
                 }
 
-                MenuButton subtitles_menu_button {
+                MenuButton subtitles_menu_btn {
                   styles [
                     "circular",
                     "flat",
@@ -272,7 +272,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   menu-model: menu subtitles_menu {};
                 }
 
-                MenuButton audio_tracks_menu_button {
+                MenuButton audio_tracks_menu_btn {
                   styles [
                     "circular",
                     "flat",
@@ -287,7 +287,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   menu-model: menu audio_tracks_menu {};
                 }
 
-                MenuButton video_tracks_menu_button {
+                MenuButton video_tracks_menu_btn {
                   styles [
                     "circular",
                     "flat",
@@ -301,7 +301,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   menu-model: menu video_tracks_menu {};
                 }
 
-                MenuButton chapters_menu_button {
+                MenuButton chapters_menu_btn {
                   styles [
                     "circular",
                     "flat",
@@ -321,7 +321,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   opacity: 0;
                 }
 
-                ToggleButton playlist_shuffle_toggle_button {
+                ToggleButton shuffle_toggle_btn {
                   styles [
                     "circular",
                     "flat",
@@ -333,7 +333,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   halign: center;
                 }
 
-                ToggleButton playlist_loop_toggle_button {
+                ToggleButton loop_toggle_btn {
                   styles [
                     "circular",
                     "flat",
@@ -345,7 +345,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   halign: center;
                 }
 
-                ToggleButton loop_file_toggle_button {
+                ToggleButton loop_file_toggle_btn {
                   styles [
                     "circular",
                     "flat",
@@ -370,9 +370,9 @@ template $CineWindow: Adw.ApplicationWindow {
                   action-name: "win.open-playlist-dialog";
                 }
 
-                $OptionsMenuButton options_menu_button {}
+                $OptionsMenuButton options_menu_btn {}
 
-                Button fullscreen_button {
+                Button fullscreen_btn {
                   styles [
                     "circular",
                     "flat",
@@ -400,7 +400,7 @@ template $CineWindow: Adw.ApplicationWindow {
                     margin-start: 8;
                     margin-end: 3;
 
-                    adjustment: Adjustment video_progress_adjustment {
+                    adjustment: Adjustment video_progress_adj {
                       lower: 0;
                       upper: 100;
                       value: 0;

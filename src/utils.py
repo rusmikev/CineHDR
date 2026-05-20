@@ -20,7 +20,6 @@
 import gi
 import os
 import ctypes
-from gettext import gettext as _
 from urllib.parse import urlparse
 
 gi.require_version("GLib", "2.0")

@@ -18,12 +18,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import gi
+from gettext import gettext as _
 
 gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
-from gettext import gettext as _
+
 
 APP_ID = "io.github.diegopvlk.Cine"
 
@@ -412,7 +413,7 @@ class MPRIS:
                 p._shuffle = new_shuffle
                 win = self._app.props.active_window
                 if win:
-                    btn = win.playlist_shuffle_toggle_button  # type: ignore
+                    btn = win.shuffle_toggle_btn  # type: ignore
                     btn.props.active = new_shuffle
                 self.emit_properties_changed(
                     "org.mpris.MediaPlayer2.Player",

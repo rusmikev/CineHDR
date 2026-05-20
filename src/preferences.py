@@ -18,14 +18,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import gi
+from gettext import gettext as _
 
 gi.require_version("Adw", "1")
 gi.require_version("Gdk", "4.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "4.0")
-from gi.repository import Adw, Gdk, GLib, Gio, Gtk
-from gettext import gettext as _
+from gi.repository import Adw, Gdk, Gio, Gtk
 from .utils import has_host_permission
 
 settings = Gio.Settings.new("io.github.diegopvlk.Cine")

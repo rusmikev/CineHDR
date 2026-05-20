@@ -29,6 +29,7 @@ gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, GLib, Gtk
+
 from .window import CineWindow
 from .preferences import Preferences, settings
 from .mpris import MPRIS
@@ -118,7 +119,7 @@ class CineApplication(Adw.Application):
 
                         try:
                             rotation = int(parts[2]) if len(parts) > 2 else 0
-                        except:
+                        except Exception:
                             rotation = 0
 
                         if abs(rotation) in (90, 270):
