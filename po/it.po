@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-20 20:28-0300\n"
+"POT-Creation-Date: 2026-05-20 23:23-0300\n"
 "PO-Revision-Date: 2026-04-30 07:09+0000\n"
 "Last-Translator: Diego Povliuk <diego.pvlk@gmail.com>\n"
 "Language-Team: Italian <https://hosted.weblate.org/projects/cine/app/it/>\n"
@@ -685,8 +685,8 @@ msgstr ""
 "Salva anche le opzioni come la luminosità, il ritardo dei sottotitoli, ecc."
 
 #: src/shortcuts-dialog.blp:8
-msgid "Shortcuts"
-msgstr "Scorciatoie da tastiera"
+msgid "General"
+msgstr "Generali"
 
 #: src/shortcuts-dialog.blp:31
 msgid "Add Files to Playlist"
@@ -775,6 +775,9 @@ msgstr "Trascina i file qui"
 #: src/window.blp:475
 msgid "Open…"
 msgstr "Apri…"
+
+#~ msgid "Shortcuts"
+#~ msgstr "Scorciatoie da tastiera"
 
 #~ msgid "Switch to Next Subtitle Track"
 #~ msgstr "Traccia sottotitoli successiva"

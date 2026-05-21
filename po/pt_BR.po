@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-20 20:28-0300\n"
+"POT-Creation-Date: 2026-05-20 23:23-0300\n"
 "PO-Revision-Date: 2026-02-28 11:40-0300\n"
 "Last-Translator: Diego Povliuk <diegopvlk@gmail.com>\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -680,8 +680,8 @@ msgid "Also save options like brightness, subtitle delay, etc."
 msgstr "Também salva opções como brilho, atraso de legenda, etc."
 
 #: src/shortcuts-dialog.blp:8
-msgid "Shortcuts"
-msgstr "Atalhos"
+msgid "General"
+msgstr "Geral"
 
 #: src/shortcuts-dialog.blp:31
 msgid "Add Files to Playlist"
@@ -770,6 +770,9 @@ msgstr "Arraste e solte arquivos aqui"
 #: src/window.blp:475
 msgid "Open…"
 msgstr "Abrir…"
+
+#~ msgid "Shortcuts"
+#~ msgstr "Atalhos"
 
 #~ msgid "Switch to Next Subtitle Track"
 #~ msgstr "Próxima Legenda"

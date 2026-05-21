@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-20 20:28-0300\n"
+"POT-Creation-Date: 2026-05-20 23:23-0300\n"
 "PO-Revision-Date: 2026-05-03 13:21+0000\n"
 "Last-Translator: Ahmer Jamil Khan <ahmer@khan.am>\n"
 "Language-Team: Urdu <https://hosted.weblate.org/projects/cine/app/ur/>\n"
@@ -681,8 +681,8 @@ msgid "Also save options like brightness, subtitle delay, etc."
 msgstr "روشنی، سب ٹائٹل تاخیر وغیرہ جیسی ترتیبات بھی محفوظ کریں۔"
 
 #: src/shortcuts-dialog.blp:8
-msgid "Shortcuts"
-msgstr "شارٹ کٹس"
+msgid "General"
+msgstr "عام"
 
 #: src/shortcuts-dialog.blp:31
 msgid "Add Files to Playlist"
@@ -771,6 +771,9 @@ msgstr "فائلیں یہاں گھسیٹ کر چھوڑیں"
 #: src/window.blp:475
 msgid "Open…"
 msgstr "کھولیں…"
+
+#~ msgid "Shortcuts"
+#~ msgstr "شارٹ کٹس"
 
 #~ msgid "Switch to Next Subtitle Track"
 #~ msgstr "اگلے سب ٹائٹل ٹریک پر جائیں"

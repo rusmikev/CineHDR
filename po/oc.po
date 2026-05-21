@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-20 20:28-0300\n"
+"POT-Creation-Date: 2026-05-20 23:23-0300\n"
 "PO-Revision-Date: 2026-04-08 23:12+0000\n"
 "Last-Translator: Diego Povliuk <diego.pvlk@gmail.com>\n"
 "Language-Team: Occitan <https://hosted.weblate.org/projects/cine/app/oc/>\n"
@@ -687,8 +687,8 @@ msgstr ""
 "sostítols, etc."
 
 #: src/shortcuts-dialog.blp:8
-msgid "Shortcuts"
-msgstr "Acorchis"
+msgid "General"
+msgstr "General"
 
 #: src/shortcuts-dialog.blp:31
 msgid "Add Files to Playlist"
@@ -777,6 +777,9 @@ msgstr "Lisatz e depausatz de fichièrs aicí"
 #: src/window.blp:475
 msgid "Open…"
 msgstr "Dobrir…"
+
+#~ msgid "Shortcuts"
+#~ msgstr "Acorchis"
 
 #~ msgid "Switch to Next Subtitle Track"
 #~ msgstr "Passar a la pista de sostítols seguenta"

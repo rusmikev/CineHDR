@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-20 20:28-0300\n"
+"POT-Creation-Date: 2026-05-20 23:23-0300\n"
 "PO-Revision-Date: 2026-04-03 15:09+0000\n"
 "Last-Translator: Danial Behzadi <dani.behzi@ubuntu.com>\n"
 "Language-Team: Persian <https://hosted.weblate.org/projects/cine/app/fa/>\n"
@@ -681,8 +681,8 @@ msgid "Also save options like brightness, subtitle delay, etc."
 msgstr "همچنین ذخیره گزینه‌هایی مانند روشنایی، تأخیر زیرنویس و..."
 
 #: src/shortcuts-dialog.blp:8
-msgid "Shortcuts"
-msgstr "میان‌برها"
+msgid "General"
+msgstr "عمومی"
 
 #: src/shortcuts-dialog.blp:31
 msgid "Add Files to Playlist"
@@ -771,6 +771,9 @@ msgstr "کشیدن و رها کردن پرونده‌ها در این‌جا"
 #: src/window.blp:475
 msgid "Open…"
 msgstr "گشودن…"
+
+#~ msgid "Shortcuts"
+#~ msgstr "میان‌برها"
 
 #~ msgid "Switch to Next Subtitle Track"
 #~ msgstr "تعویض به زیرنویس بعدی"

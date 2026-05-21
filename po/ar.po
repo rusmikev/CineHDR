@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-20 20:28-0300\n"
+"POT-Creation-Date: 2026-05-20 23:23-0300\n"
 "PO-Revision-Date: 2026-04-23 00:12+0000\n"
 "Last-Translator: Ahmer Jamil Khan <ahmer@khan.am>\n"
 "Language-Team: Arabic <https://hosted.weblate.org/projects/cine/app/ar/>\n"
@@ -684,8 +684,8 @@ msgid "Also save options like brightness, subtitle delay, etc."
 msgstr "يحفظ أيضًا الخيارات كالسطوع، تأخير الترجمة، إلخ."
 
 #: src/shortcuts-dialog.blp:8
-msgid "Shortcuts"
-msgstr "الاختصارات"
+msgid "General"
+msgstr "عامّ"
 
 #: src/shortcuts-dialog.blp:31
 msgid "Add Files to Playlist"
@@ -774,6 +774,9 @@ msgstr "اسحب وأفلت الملفات هنا"
 #: src/window.blp:475
 msgid "Open…"
 msgstr "افتح…"
+
+#~ msgid "Shortcuts"
+#~ msgstr "الاختصارات"
 
 #~ msgid "Switch to Next Subtitle Track"
 #~ msgstr "التبديل إلى مقطوعة الترجمة التالية"
