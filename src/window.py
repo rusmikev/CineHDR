@@ -286,7 +286,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.app.set_accels_for_action("win.custom-shortcuts", ["<primary>question"])
         self.app.set_accels_for_action("app.shortcuts", [])
 
-    def _present_shortcuts(self, *a):
+    def _present_shortcuts(self, *args):
         builder = Gtk.Builder.new_from_resource(
             "/io/github/diegopvlk/Cine/shortcuts-dialog.ui"
         )
@@ -331,14 +331,12 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.fullscreen_btn.connect(
             "clicked",
-            lambda _btn: setattr(self.mpv, "fullscreen", not self.is_fs),
+            lambda *a: setattr(self.mpv, "fullscreen", not self.is_fs),
         )
 
         self.volume_handler_id = self.volume_scale.connect(
             "value-changed",
-            lambda _scale: setattr(
-                self.mpv, "volume", self.volume_scale_adj.props.value
-            ),
+            lambda *a: setattr(self.mpv, "volume", self.volume_scale_adj.props.value),
         )
 
         if max_vol > 100:
@@ -463,7 +461,7 @@ class CineWindow(Adw.ApplicationWindow):
 
             if btn in (self.primary_menu_btn, self.open_menu_btn):
 
-                def on_popv_closed(*_):
+                def on_popv_closed(*args):
                     if is_same_playlist(self.mpv.playlist):
                         self.mpv.write_watch_later_config()
 
@@ -491,7 +489,7 @@ class CineWindow(Adw.ApplicationWindow):
             for btn in buttons:
                 btn.connect(
                     "notify::active",
-                    lambda *_, lim=limit: (
+                    lambda *a, lim=limit: (
                         self.motion_header.set_propagation_limit(lim),
                         self.motion_controls.set_propagation_limit(lim),
                     ),
@@ -661,7 +659,7 @@ class CineWindow(Adw.ApplicationWindow):
         playlist = Playlist(self)
         playlist.present(self)
 
-    def _on_open_folder_dialog(self, action, *arg):
+    def _on_open_folder_dialog(self, action, *args):
         add_mode = False if action.props.name == "open-folder" else True
         title = _("Add Folder") if add_mode else _("Open Folder")
         dialog = Gtk.FileDialog(title=title)
@@ -829,7 +827,7 @@ class CineWindow(Adw.ApplicationWindow):
                 return True
             return False
 
-        def on_text_changed(*_):
+        def on_text_changed(*args):
             is_valid = is_valid_input(entry_row.get_text())
             btn_open.set_sensitive(is_valid)
 
