@@ -37,6 +37,12 @@
     );
 }
 
+#io-github-diegopvlk-Cine:backdrop .controls button,
+#io-github-diegopvlk-Cine:backdrop .controls .heading,
+#io-github-diegopvlk-Cine:backdrop scale {
+  opacity: 0.66;
+}
+
 .start-page {
   color: #e5e5e5;
   background: linear-gradient(180deg, transparent 0%, #0c0c0e 100%);
