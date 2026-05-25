@@ -69,6 +69,11 @@ class Preferences(Adw.Dialog):
     cmd_label: Gtk.Label = Gtk.Template.Child()
     copy_cmd_button: Gtk.Button = Gtk.Template.Child()
     open_new_row: Adw.SwitchRow = Gtk.Template.Child()
+    thumb_preview_row: Adw.SwitchRow = Gtk.Template.Child()
+    hwdec_row: Adw.SwitchRow = Gtk.Template.Child()
+    normalize_volume_row: Adw.SwitchRow = Gtk.Template.Child()
+    save_session_switch: Gtk.Switch = Gtk.Template.Child()
+    save_position_switch: Gtk.Switch = Gtk.Template.Child()
     sub_color_row: Adw.ActionRow = Gtk.Template.Child()
     reset_sub_color: Gtk.Button = Gtk.Template.Child()
     reset_sub_font: Gtk.Button = Gtk.Template.Child()
@@ -77,14 +82,11 @@ class Preferences(Adw.Dialog):
     subtitle_scale_row: Adw.SpinRow = Gtk.Template.Child()
     sub_color_btn: Gtk.ColorDialogButton = Gtk.Template.Child()
     sub_bg_color_btn: Gtk.ColorDialogButton = Gtk.Template.Child()
+    left_click_row: Adw.ComboRow = Gtk.Template.Child()
+    right_click_row: Adw.ComboRow = Gtk.Template.Child()
     subtitle_bg_switch: Gtk.Switch = Gtk.Template.Child()
     subtitle_lang_row: Adw.EntryRow = Gtk.Template.Child()
     audio_lang_row: Adw.EntryRow = Gtk.Template.Child()
-    thumb_preview_row: Adw.SwitchRow = Gtk.Template.Child()
-    hwdec_row: Adw.SwitchRow = Gtk.Template.Child()
-    normalize_volume_row: Adw.SwitchRow = Gtk.Template.Child()
-    save_session_switch: Gtk.Switch = Gtk.Template.Child()
-    save_position_switch: Gtk.Switch = Gtk.Template.Child()
 
     def __init__(self, window, **kwargs):
         super().__init__(**kwargs)
@@ -133,36 +135,6 @@ class Preferences(Adw.Dialog):
             Gio.SettingsBindFlags.DEFAULT,
         )
         settings.bind(
-            "subtitle-scale",
-            self.subtitle_scale_row,
-            "value",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "subtitle-bg",
-            self.subtitle_bg_switch,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "subtitle-languages",
-            self.subtitle_lang_row,
-            "text",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "audio-languages",
-            self.audio_lang_row,
-            "text",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "hwdec",
-            self.hwdec_row,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
             "thumbnail-preview",
             self.thumb_preview_row,
             "active",
@@ -171,6 +143,12 @@ class Preferences(Adw.Dialog):
         settings.bind(
             "normalize-volume",
             self.normalize_volume_row,
+            "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        settings.bind(
+            "hwdec",
+            self.hwdec_row,
             "active",
             Gio.SettingsBindFlags.DEFAULT,
         )
@@ -184,6 +162,42 @@ class Preferences(Adw.Dialog):
             "save-video-position",
             self.save_position_switch,
             "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        settings.bind(
+            "subtitle-scale",
+            self.subtitle_scale_row,
+            "value",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        settings.bind(
+            "subtitle-bg",
+            self.subtitle_bg_switch,
+            "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        settings.bind(
+            "left-click",
+            self.left_click_row,
+            "selected",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        settings.bind(
+            "right-click",
+            self.right_click_row,
+            "selected",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        settings.bind(
+            "subtitle-languages",
+            self.subtitle_lang_row,
+            "text",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        settings.bind(
+            "audio-languages",
+            self.audio_lang_row,
+            "text",
             Gio.SettingsBindFlags.DEFAULT,
         )
 

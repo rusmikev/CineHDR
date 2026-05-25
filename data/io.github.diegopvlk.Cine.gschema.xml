@@ -49,5 +49,11 @@
 		<key name="is-maximized" type="b">
 			<default>false</default>
 		</key>
+		<key name="left-click" type="i">
+			<default>2</default>
+		</key>
+		<key name="right-click" type="i">
+			<default>0</default>
+		</key>
 	</schema>
 </schemalist>

@@ -47,10 +47,9 @@ RIGHT            seek 5 exact; show-text "⯈⯈" #{_("Seek 5s Forward")}
 F11              cycle fullscreen; #{_("Fullscreen")}
 f                cycle fullscreen; #{_("Fullscreen")}
 ESC              set fullscreen no; #{_("Exit Fullscreen")}
-MBTN_LEFT        cycle pause
 MBTN_LEFT_DBL    cycle fullscreen
 MBTN_MID         cycle fullscreen
-MBTN_RIGHT       cycle pause
+MBTN_RIGHT       ignore
 MBTN_BACK        playlist-prev; 
 MBTN_FORWARD     playlist-next; 
 WHEEL_LEFT       seek -10; show-text "⯇⯇"

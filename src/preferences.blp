@@ -3,6 +3,7 @@ using Adw 1;
 
 template $Preferences: Adw.Dialog {
 	title: _("Preferences");
+	name: "preferences";
 	content-width: 491;
 
 	Adw.ToolbarView {
@@ -71,11 +72,100 @@ template $Preferences: Adw.Dialog {
 		}
 
 		content: Adw.PreferencesPage prefs_page {
+			title: _("Preferences");
+
 			Adw.PreferencesGroup {
 				Adw.SwitchRow open_new_row {
 					title: _("Open New Window for New Files");
 				}
 
+				Adw.SwitchRow thumb_preview_row {
+					title: _("Progress Bar Thumbnail");
+				}
+
+				Adw.SwitchRow normalize_volume_row {
+					title: _("Normalize Volume");
+				}
+
+				Adw.SwitchRow hwdec_row {
+					title: _("Hardware Acceleration");
+					subtitle: _("Use GPU for video decoding when available");
+				}
+
+				Adw.ActionRow {
+					title: _("Restore Saved Session");
+					subtitle: _("Pick up where you left off after saving from the menu");
+					activatable-widget: save_session_switch;
+
+					[suffix]
+					MenuButton {
+						map => $_on_btn_warning_map();
+						icon-name: "info-outline-symbolic";
+						valign: center;
+
+						styles [
+							"warning",
+							"flat",
+						]
+
+						popover: Popover {
+							Label {
+								max-width-chars: 35;
+								label: _("Requires flatpak permission to read the folder where the video is stored");
+								wrap: true;
+								justify: center;
+
+								styles [
+									"warning",
+								]
+							}
+						};
+					}
+
+					[suffix]
+					Switch save_session_switch {
+						valign: center;
+					}
+				}
+
+				Adw.ActionRow {
+					title: _("Save Video Position on Close");
+					subtitle: _("Also save options like brightness, subtitle delay, etc.");
+					activatable-widget: save_position_switch;
+
+					[suffix]
+					MenuButton {
+						map => $_on_btn_warning_map();
+						icon-name: "info-outline-symbolic";
+						valign: center;
+
+						styles [
+							"warning",
+							"flat",
+						]
+
+						popover: Popover {
+							Label {
+								max-width-chars: 35;
+								label: _("Requires flatpak permission to read the folder where the video is stored");
+								wrap: true;
+								justify: center;
+
+								styles [
+									"warning",
+								]
+							}
+						};
+					}
+
+					[suffix]
+					Switch save_position_switch {
+						valign: center;
+					}
+				}
+			}
+
+			Adw.PreferencesGroup {
 				Adw.ActionRow sub_color_row {
 					title: _("Subtitle Color");
 					activatable: true;
@@ -172,7 +262,35 @@ template $Preferences: Adw.Dialog {
 						margin-start: 8;
 					}
 				}
+			}
 
+			Adw.PreferencesGroup {
+				Adw.ComboRow left_click_row {
+					title: _("Left Click");
+
+					model: StringList {
+						strings [
+							_("Play/Pause"),
+							_("Focus/Play/Pause"),
+							_("Disabled"),
+						]
+					};
+				}
+
+				Adw.ComboRow right_click_row {
+					title: _("Right Click");
+
+					model: StringList {
+						strings [
+							_("Play/Pause"),
+							_("Window Menu"),
+							_("Disabled"),
+						]
+					};
+				}
+			}
+
+			Adw.PreferencesGroup {
 				Adw.EntryRow subtitle_lang_row {
 					title: _("Preferred Subtitle Languages");
 					tooltip-text: _("Example: en,es,pt");
@@ -181,91 +299,6 @@ template $Preferences: Adw.Dialog {
 				Adw.EntryRow audio_lang_row {
 					title: _("Preferred Audio Languages");
 					tooltip-text: _("Example: en,es,pt");
-				}
-
-				Adw.SwitchRow thumb_preview_row {
-					title: _("Progress Bar Thumbnail");
-				}
-
-				Adw.SwitchRow normalize_volume_row {
-					title: _("Normalize Volume");
-				}
-
-				Adw.SwitchRow hwdec_row {
-					title: _("Hardware Acceleration");
-					subtitle: _("Use GPU for video decoding when available");
-				}
-
-				Adw.ActionRow {
-					title: _("Restore Saved Session");
-					subtitle: _("Pick up where you left off after saving from the menu");
-					activatable-widget: save_session_switch;
-
-					[suffix]
-					MenuButton {
-						map => $_on_btn_warning_map();
-						icon-name: "info-outline-symbolic";
-						valign: center;
-
-						styles [
-							"warning",
-							"flat",
-						]
-
-						popover: Popover {
-							Label {
-								max-width-chars: 35;
-								label: _("Requires flatpak permission to read the folder where the video is stored");
-								wrap: true;
-								justify: center;
-
-								styles [
-									"warning",
-								]
-							}
-						};
-					}
-
-					[suffix]
-					Switch save_session_switch {
-						valign: center;
-					}
-				}
-
-				Adw.ActionRow {
-					title: _("Save Video Position on Close");
-					subtitle: _("Also save options like brightness, subtitle delay, etc.");
-					activatable-widget: save_position_switch;
-
-					[suffix]
-					MenuButton {
-						map => $_on_btn_warning_map();
-						icon-name: "info-outline-symbolic";
-						valign: center;
-
-						styles [
-							"warning",
-							"flat",
-						]
-
-						popover: Popover {
-							Label {
-								max-width-chars: 35;
-								label: _("Requires flatpak permission to read the folder where the video is stored");
-								wrap: true;
-								justify: center;
-
-								styles [
-									"warning",
-								]
-							}
-						};
-					}
-
-					[suffix]
-					Switch save_position_switch {
-						valign: center;
-					}
 				}
 			}
 		};

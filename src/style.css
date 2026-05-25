@@ -175,6 +175,10 @@ dialog:not(.shortcuts) preferencespage scrolledwindow viewport clamp {
   margin-top: -22px;
 }
 
+#preferences preferencesgroup:not(:last-child) {
+  margin-bottom: -14px;
+}
+
 statuspage box {
   margin-top: 0px;
 }
