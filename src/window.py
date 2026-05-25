@@ -76,6 +76,7 @@ libgl = ctypes.CDLL("libGL.so.1")
 glGetIntegerv = libgl.glGetIntegerv
 glGetIntegerv.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_int)]
 
+gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
 gtk = ctypes.CDLL("libgtk-4.so.1")
 display = Gdk.Display.get_default()
 
@@ -162,6 +163,9 @@ class CineWindow(Adw.ApplicationWindow):
         self.startup: bool = True
         self.space_hold_id: int = 0
         self.space_holding: bool = False
+        self.click_delay_id: int = 0
+        ck_time: int = gtk_setts.props.gtk_double_click_time if gtk_setts else 400
+        self.click_time: int = max(ck_time, min(200, 425))
         self.click_hold_id: int = 0
         self.click_holding: bool = False
         self.prev_speed: float = 1.0
@@ -499,7 +503,6 @@ class CineWindow(Adw.ApplicationWindow):
 
     def _set_fs_state(self, _window, _gparam):
         is_fullscreen = self.props.fullscreened
-        settings: Gtk.Settings | None = Gtk.Settings.get_default()
 
         try:
             if not is_fullscreen:
@@ -507,8 +510,8 @@ class CineWindow(Adw.ApplicationWindow):
         except mpv.ShutdownError:
             pass
 
-        if settings:
-            layout = settings.get_property("gtk-decoration-layout")
+        if gtk_setts:
+            layout = gtk_setts.get_property("gtk-decoration-layout")
 
             if is_fullscreen:
                 left_side, _, _right_side = layout.partition(":")
@@ -1458,8 +1461,7 @@ class CineWindow(Adw.ApplicationWindow):
             pass
 
     def _on_click_pressed(self, gesture, n_press, _x, _y):
-        gtk_button = gesture.get_button()
-        button = MBTN_MAP.get(gtk_button)
+        button = MBTN_MAP.get(gesture.get_button())
 
         if button != "MBTN_LEFT":
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
@@ -1467,12 +1469,10 @@ class CineWindow(Adw.ApplicationWindow):
         controls_hover = self.motion_controls.props.contains_pointer
         header_hover = self.motion_header.props.contains_pointer
         separator_hover = self.motion_controls_separator.props.contains_pointer
+        ignored_btn = not button or button in ("MBTN_BACK", "MBTN_FORWARD")
+        hovering = (controls_hover or header_hover) and not separator_hover
 
-        if not button or (
-            button != "MBTN_RIGHT"
-            and (controls_hover or header_hover)
-            and not separator_hover
-        ):
+        if ignored_btn or hovering:
             return
 
         # Back and forward dont trigger _on_click_released when video is playing (??)
@@ -1506,23 +1506,22 @@ class CineWindow(Adw.ApplicationWindow):
             pass
 
     def _on_click_released(self, gesture, n_press, _x, _y):
-        self._cancel_click_hold()
-
-        if self.click_holding:
-            return
-
         gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
-        gtk_button = gesture.get_button()
-        button = MBTN_MAP.get(gtk_button)
+        button = MBTN_MAP.get(gesture.get_button())
 
-        if not button or button in ("MBTN_BACK", "MBTN_FORWARD"):
+        controls_hover = self.motion_controls.props.contains_pointer
+        header_hover = self.motion_header.props.contains_pointer
+        separator_hover = self.motion_controls_separator.props.contains_pointer
+        ignored_btn = not button or button in ("MBTN_BACK", "MBTN_FORWARD")
+        hovering = (controls_hover or header_hover) and not separator_hover
+
+        if ignored_btn or hovering:
             return
 
-        if n_press == 2:
-            button = f"{button}_DBL"
-
-        command_str = self.mouse_bindings.get(button)
+        if self.click_delay_id > 0:
+            GLib.source_remove(self.click_delay_id)
+            self.click_delay_id = 0
 
         def run_command(cmd):
             try:
@@ -1532,10 +1531,25 @@ class CineWindow(Adw.ApplicationWindow):
             except Exception:
                 pass
 
-        run_command(command_str)
-        if "_DBL" in button:
-            button = button.replace("_DBL", "")
-            run_command(self.mouse_bindings.get(button))
+        if n_press == 1:
+            cmd_str = str(self.mouse_bindings.get(button))
+            is_pause = "cycle pause" in cmd_str
+
+            if button == "MBTN_LEFT" and is_pause and not self.click_holding:
+
+                def click():
+                    run_command(cmd_str)
+                    self.click_delay_id = 0
+
+                self.click_delay_id = GLib.timeout_add(self.click_time, click)
+
+            elif not self.click_holding:
+                run_command(cmd_str)
+
+        elif n_press == 2:
+            button_dbl = f"{button}_DBL"
+            cmd_str = self.mouse_bindings.get(button_dbl)
+            run_command(cmd_str)
 
     def _cancel_click_hold(self, *args):
         if self.click_hold_id:
@@ -1544,8 +1558,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         if self.click_holding:
             self.mpv["speed"] = self.prev_speed
-            self.click_holding = False
             self.mpv.show_text(f"{self.mpv['speed']:g}×")
+            GLib.timeout_add(self.click_time, setattr, self, "click_holding", False)
 
     def _on_mouse_scroll(self, controller, dx, dy):
         event: Gdk.ScrollEvent = controller.get_current_event()
@@ -1705,7 +1719,7 @@ class CineWindow(Adw.ApplicationWindow):
             self.inhibit_id = 0
 
     def _show_icon_indicator(self):
-        if self.mpv.idle_active:
+        if self.mpv.idle_active or self.click_delay_id:
             return
 
         if not self.hide_icon_indicator:
