@@ -1525,14 +1525,11 @@ class CineWindow(Adw.ApplicationWindow):
         command_str = self.mouse_bindings.get(button)
 
         def run_command(cmd):
-            if cmd == "ignore":
-                return
-
             try:
-                sub_cmd = cmd.split(";")[0]
-                args = shlex.split(sub_cmd.strip())
-                self.mpv.command_async(*args)
-            except mpv.ShutdownError:
+                for sub_cmd in cmd.split(";"):
+                    args = shlex.split(sub_cmd.strip())
+                    self.mpv.command_async(*args)
+            except Exception:
                 pass
 
         run_command(command_str)
