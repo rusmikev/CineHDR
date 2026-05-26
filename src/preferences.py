@@ -49,6 +49,7 @@ def sync_mpv_with_settings(window):
     mpv["sub-back-color"] = (
         settings.get_string("subtitle-bg-color") if sub_bg else "#97000000"
     )
+    mpv["sub-border-color"] = mpv["sub-back-color"]
 
     if hwdec_enabled:
         mpv.command_async("vf", "remove", "@hflip")
@@ -231,6 +232,7 @@ class Preferences(Adw.Dialog):
     def _on_sub_bg_color_changed(self, _settings, key):
         if settings.get_boolean("subtitle-bg"):
             self.mpv["sub-back-color"] = settings.get_string(key)
+            self.mpv["sub-border-color"] = settings.get_string(key)
 
     def _on_sub_scale_changed(self, settings, key):
         self.mpv["sub-scale"] = settings.get_double(key)
@@ -244,6 +246,7 @@ class Preferences(Adw.Dialog):
             self.mpv["sub-shadow-offset"] = 8
             self.mpv["sub-border-style"] = "background-box"
             self.mpv["sub-back-color"] = settings.get_string("subtitle-bg-color")
+            self.mpv["sub-border-color"] = settings.get_string("subtitle-bg-color")
         else:
             self.mpv["sub-shadow-offset"] = 0.6
             self.mpv["sub-border-style"] = "outline-and-shadow"
