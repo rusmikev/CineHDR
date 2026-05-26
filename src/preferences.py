@@ -374,6 +374,9 @@ class Preferences(Adw.Dialog):
             if not has_host_permission:
                 l7 = _(
                     "Use Flatseal for granular folder control, or run this command to grant access to all folders in the system:"
+                ).replace(
+                    "Flatseal",
+                    '<a href="https://flathub.org/apps/com.github.tchx84.Flatseal">Flatseal</a>',
                 )
             else:
                 l7 = _("Extra permission enabled.")
@@ -382,7 +385,7 @@ class Preferences(Adw.Dialog):
                 self.cmd_label.set_visible(False)
                 self.copy_cmd_button.set_visible(False)
 
-            self.about_permissions_label.set_text(l1 + l2 + l3 + l4 + l5 + l6 + l7)
+            self.about_permissions_label.set_markup(l1 + l2 + l3 + l4 + l5 + l6 + l7)
 
         button.set_visible(is_flatpak)
 
