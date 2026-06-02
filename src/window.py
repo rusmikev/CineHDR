@@ -687,6 +687,7 @@ class CineWindow(Adw.ApplicationWindow):
 
                 if not add_mode:
                     self.mpv.stop()
+                    self.shuffle_toggle_btn.set_active(False)
 
                 path = folder.get_path()
                 self.mpv.loadfile(path, "append-play")
@@ -752,6 +753,7 @@ class CineWindow(Adw.ApplicationWindow):
 
             if mode == "clear-and-add":
                 self.mpv.stop()
+                self.shuffle_toggle_btn.set_active(False)
 
             for file in files:
                 path = file.get_path() or file.get_uri()
@@ -847,6 +849,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         def open_url(*args):
             self.mpv.loadfile(self.url, mode)
+            if mode == "replace":
+                self.shuffle_toggle_btn.set_active(False)
             dialog.close()
 
         def on_clipboard_read(clipboard, result):
@@ -1821,6 +1825,7 @@ class CineWindow(Adw.ApplicationWindow):
 
                 if self.error_count == 20:
                     self.mpv.stop()
+                    self.shuffle_toggle_btn.set_active(False)
                     self.error_count = 0
 
         @self.mpv.property_observer("path")
