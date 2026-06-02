@@ -979,7 +979,7 @@ class CineWindow(Adw.ApplicationWindow):
         if self.late_preview_id > 0:
             GLib.source_remove(self.late_preview_id)
 
-        self.late_preview_id = GLib.timeout_add(135, self._late_update_preview)
+        self.late_preview_id = GLib.timeout_add(120, self._late_update_preview)
 
         width = self.video_progress_scale.get_width()
         duration = self.video_progress_adj.props.upper
@@ -1022,7 +1022,7 @@ class CineWindow(Adw.ApplicationWindow):
 
         curr_time = time()
 
-        if curr_time - self.last_preview_update > 0.35:
+        if curr_time - self.last_preview_update > 0.3:
             self.last_preview_update = curr_time
             GLib.idle_add(self._update_video_preview)
 
