@@ -182,6 +182,11 @@ class MPRIS:
         win = self._app.props.active_window
         return getattr(win, "can_go_next", False) if win else False
 
+    @property
+    def shuffle(self):
+        win = self._app.props.active_window
+        return win.shuffle_toggle_btn.props.active if win else False  # type: ignore
+
     def _get_loop_status(self):
         p = self.player
         if not p:
@@ -251,7 +256,7 @@ class MPRIS:
             )
             self._last_can_prev = can_prev
 
-        current_shuffle = getattr(p, "_shuffle", False)
+        current_shuffle = self.shuffle
         if current_shuffle != self._last_shuffle:
             self.emit_properties_changed(
                 "org.mpris.MediaPlayer2.Player",
@@ -357,8 +362,7 @@ class MPRIS:
                 title = getattr(p, "media_title") or _("Unknown title")
                 return self._get_metadata_variant(title)
             if prop == "Shuffle":
-                _shuffle = getattr(p, "_shuffle", False) if p else False
-                return GLib.Variant("b", _shuffle)
+                return GLib.Variant("b", self.shuffle)
 
         if interface == "org.mpris.MediaPlayer2":
             if prop == "Identity":
