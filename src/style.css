@@ -223,7 +223,7 @@ statuspage box {
 }
 
 #playlist sheet {
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.78);
 }
 .playlist-list-view {
   background-color: transparent;
@@ -231,7 +231,6 @@ statuspage box {
   padding-bottom: 22px;
 }
 .playlist-list-view row {
-  border-bottom: 1px solid transparent;
   background-color: transparent;
   margin-right: 12px;
   margin-left: 12px;
@@ -239,13 +238,15 @@ statuspage box {
 }
 .playlist-list-view row > box {
   transition: background-color 200ms ease-in-out;
-  background-color: rgba(249, 249, 255, 0.12);
+  background-color: rgba(55, 55, 56, 0.75);
+  margin-bottom: -1px;
+  border: 1px solid rgba(0, 0, 0, 0.66);
 }
 .playlist-list-view row > box:hover {
-  background-color: rgba(249, 249, 255, 0.2);
+  background-color: rgba(70, 70, 72, 0.78);
 }
 .playlist-list-view row > box:active {
-  background-color: rgba(249, 249, 255, 0.25);
+  background-color: rgba(85, 85, 87, 0.78);
 }
 .playlist-list-view row:first-child,
 .playlist-list-view row:first-child > box {
@@ -306,16 +307,6 @@ statuspage box {
     background: rgba(0, 0, 0, 0.85);
   }
   .playlist-list-view row > box {
-    transition: background-color 200ms ease-in-out;
-    background-color: rgba(150, 150, 156, 0.28);
-  }
-  .playlist-list-view row > box:hover {
-    background-color: rgba(150, 150, 156, 0.4);
-  }
-  .playlist-list-view row > box:active {
-    background-color: rgba(150, 150, 156, 0.5);
-  }
-  .playlist-list-view row > box {
-    box-shadow: 0 0 0 1px var(--border-color);
+    border: 1px solid var(--border-color);
   }
 }
