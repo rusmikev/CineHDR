@@ -173,6 +173,8 @@ class CineWindow(Adw.ApplicationWindow):
         self.click_hold_id: int = 0
         self.click_holding: bool = False
         self.prev_speed: float = 1.0
+        self.wheel_accum_x: float = 0.0
+        self.wheel_accum_y: float = 0.0
         self.hide_icon_indicator: bool = True
         self.preview_player: mpv.MPV | None = None
         self.late_preview_id: int = 0
@@ -1574,6 +1576,15 @@ class CineWindow(Adw.ApplicationWindow):
 
     def _on_mouse_scroll(self, controller, dx, dy):
         event: Gdk.ScrollEvent = controller.get_current_event()
+
+        if event.get_unit() == Gdk.ScrollUnit.SURFACE:  # Touchpad
+            # Scale it down so it doesn't fire rapidly
+            dx *= 0.1
+            dy *= 0.1
+
+        self.wheel_accum_x += dx
+        self.wheel_accum_y += dy
+
         rel_dir: Gdk.ScrollRelativeDirection = event.get_relative_direction()  # type: ignore
         is_natural: bool = rel_dir == Gdk.ScrollRelativeDirection.INVERTED  # type: ignore
         UP: str = "WHEEL_DOWN" if is_natural else "WHEEL_UP"
@@ -1593,15 +1604,18 @@ class CineWindow(Adw.ApplicationWindow):
             mods.append("shift")
 
         # Only trigger if scrolled a full 'unit'
-        if abs(dy) >= 1:
-            wheel = UP if dy < 0 else DOWN
-        elif abs(dx) >= 1:
-            wheel = RIGHT if dx > 0 else LEFT
+        if abs(self.wheel_accum_y) >= 1:
+            wheel = UP if self.wheel_accum_y < 0 else DOWN
+            self.wheel_accum_y = 0.0
+        elif abs(self.wheel_accum_x) >= 1:
+            wheel = RIGHT if self.wheel_accum_x > 0 else LEFT
+            self.wheel_accum_x = 0.0
 
         if wheel:
             combo = "+".join(mods + [wheel])
-            GLib.idle_add(lambda: self.mpv.keypress(combo))
-            return True
+            self.mpv.command_async("keypress", combo)
+
+        return True
 
     def _on_mouse_scroll_volume(self, controller, _dx, dy):
         event: Gdk.ScrollEvent = controller.get_current_event()
