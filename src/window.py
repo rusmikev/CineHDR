@@ -250,9 +250,7 @@ class CineWindow(Adw.ApplicationWindow):
         self._setup_observers()
 
         self.mpv.command("load-input-conf", f"memory://{INTERNAL_BINDINGS}")
-
-        if os.path.exists(INPUT_CONF):
-            self.mpv.command("load-input-conf", INPUT_CONF)
+        self.mpv.command("load-input-conf", INPUT_CONF)
 
         self.bindings = cast(dict, self.mpv._get_property("input-bindings"))
         self.mouse_bindings: dict = get_mouse_bindings(self.bindings)

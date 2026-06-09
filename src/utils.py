@@ -31,6 +31,11 @@ SCREENSHOT_DIR = os.path.join(xdg_pictures, "Cine Screenshots") if xdg_pictures 
 base_config = GLib.get_user_config_dir()
 CONFIG_DIR = os.path.join(base_config, "cine")
 INPUT_CONF = os.path.join(CONFIG_DIR, "input.conf")
+MPV_CONF = os.path.join(CONFIG_DIR, "mpv.conf")
+
+for file in [INPUT_CONF, MPV_CONF]:
+    if not os.path.exists(file):
+        open(file, "w").close()
 
 old_last_pl_file = os.path.join(CONFIG_DIR, "last-playlist.m3u8")
 playlist_dir = os.path.join(CONFIG_DIR, "last-playlist")
