@@ -97,6 +97,7 @@ class CineWindow(Adw.ApplicationWindow):
     controls_box: Gtk.Box = Gtk.Template.Child()
     controls_wrap_box: Adw.WrapBox = Gtk.Template.Child()
     controls_separator: Gtk.Separator = Gtk.Template.Child()
+    audio_only_icon: Gtk.Image = Gtk.Template.Child()
     revealer_ui: Gtk.Revealer = Gtk.Template.Child()
     revealer_drop_indicator: Gtk.Revealer = Gtk.Template.Child()
     drop_label: Gtk.Label = Gtk.Template.Child()
@@ -2085,6 +2086,13 @@ class CineWindow(Adw.ApplicationWindow):
                     pass
 
             GLib.idle_add(set_icon)
+
+        @self.mpv.property_observer("vid")
+        def on_vid_change(_name, value):
+            GLib.idle_add(self.audio_only_icon.set_visible, not bool(value))
+            if not value:
+                # clear the last frame, which sometimes can still be present
+                GLib.idle_add(self.gl_area.queue_render)
 
         @self.mpv.event_callback("shutdown")
         def on_quit(_event):
