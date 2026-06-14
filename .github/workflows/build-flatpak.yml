@@ -24,6 +24,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       # Docker is required by the docker/setup-qemu-action which enables emulation
       - name: Install deps
         if: ${{ matrix.arch != 'x86_64' }}
