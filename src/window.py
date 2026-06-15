@@ -39,6 +39,8 @@ from .utils import (
     is_local_path,
     get_gpu_vendor,
     format_time,
+    get_display_param,
+    display,
     has_host_permission,
     MBTN_MAP,
     KEY_REMAP,
@@ -59,14 +61,8 @@ gi.require_version("Gio", "2.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
-gi.require_version("GdkWayland", "4.0")
-gi.require_version("GdkX11", "4.0")
 gi.require_version("GObject", "2.0")
 from gi.repository import Adw, Gio, Gdk, GLib, Gtk, GObject
-from gi.repository import (
-    GdkWayland,  # pyright: ignore[reportAttributeAccessIssue]
-    GdkX11,
-)
 
 libegl = ctypes.CDLL("libEGL.so.1")
 egl_get_proc_address = libegl.eglGetProcAddress
@@ -79,8 +75,6 @@ glGetIntegerv = libgl.glGetIntegerv
 glGetIntegerv.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_int)]
 
 gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
-gtk = ctypes.CDLL("libgtk-4.so.1")
-display = Gdk.Display.get_default()
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1120, 630
 
@@ -1640,34 +1634,6 @@ class CineWindow(Adw.ApplicationWindow):
 
         return True
 
-    def _get_display_param(self):
-        param = {}
-
-        # see https://gist.github.com/omnp/6ac3385e2b3f6cab987d84e6477e636a
-
-        def get_pointer(display):
-            ctypes.pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p
-            ctypes.pythonapi.PyCapsule_GetPointer.argtypes = (ctypes.py_object,)
-            return ctypes.pythonapi.PyCapsule_GetPointer(display.__gpointer__, None)
-
-        try:
-            if isinstance(display, GdkWayland.WaylandDisplay):
-                gtk.gdk_wayland_display_get_wl_display.restype = ctypes.c_void_p
-                gtk.gdk_wayland_display_get_wl_display.argtypes = [ctypes.c_void_p]
-                ptr = gtk.gdk_wayland_display_get_wl_display(get_pointer(display))
-                if ptr:
-                    param["wl_display"] = ptr
-            elif isinstance(display, GdkX11.X11Display):
-                gtk.gdk_x11_display_get_xdisplay.restype = ctypes.c_void_p
-                gtk.gdk_x11_display_get_xdisplay.argtypes = [ctypes.c_void_p]
-                ptr = gtk.gdk_x11_display_get_xdisplay(get_pointer(display))
-                if ptr:
-                    param["x11_display"] = ptr
-        except Exception as e:
-            print(f"Error getting display param: {e}")
-
-        return param
-
     def _on_realize_area(self, area):
         area.make_current()
 
@@ -1675,7 +1641,7 @@ class CineWindow(Adw.ApplicationWindow):
             lambda _inst, name: egl_get_proc_address(name)
         )
 
-        display_param = self._get_display_param()
+        display_param = get_display_param()
 
         self.mpv_ctx = mpv.MpvRenderContext(
             self.mpv,

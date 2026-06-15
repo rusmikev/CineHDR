@@ -22,8 +22,18 @@ import os
 import ctypes
 from urllib.parse import urlparse
 
+gi.require_version("Gdk", "4.0")
 gi.require_version("GLib", "2.0")
-from gi.repository import GLib
+gi.require_version("GdkX11", "4.0")
+gi.require_version("GdkWayland", "4.0")
+from gi.repository import Gdk, GLib
+from gi.repository import (
+    GdkX11,
+    GdkWayland,  # pyright: ignore[reportAttributeAccessIssue]
+)
+
+gtk = ctypes.CDLL("libgtk-4.so.1")
+display = Gdk.Display.get_default()
 
 xdg_pictures = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
 SCREENSHOT_DIR = os.path.join(xdg_pictures, "Cine Screenshots") if xdg_pictures else ""
@@ -123,6 +133,35 @@ def get_gpu_vendor(display, libgl):
     except Exception as e:
         print(f"get_gpu_vendor error: {e}")
         return None
+
+
+def get_display_param():
+    param = {}
+
+    # see https://gist.github.com/omnp/6ac3385e2b3f6cab987d84e6477e636a
+
+    def get_pointer(display):
+        ctypes.pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p
+        ctypes.pythonapi.PyCapsule_GetPointer.argtypes = (ctypes.py_object,)
+        return ctypes.pythonapi.PyCapsule_GetPointer(display.__gpointer__, None)
+
+    try:
+        if isinstance(display, GdkWayland.WaylandDisplay):
+            gtk.gdk_wayland_display_get_wl_display.restype = ctypes.c_void_p
+            gtk.gdk_wayland_display_get_wl_display.argtypes = [ctypes.c_void_p]
+            ptr = gtk.gdk_wayland_display_get_wl_display(get_pointer(display))
+            if ptr:
+                param["wl_display"] = ptr
+        elif isinstance(display, GdkX11.X11Display):
+            gtk.gdk_x11_display_get_xdisplay.restype = ctypes.c_void_p
+            gtk.gdk_x11_display_get_xdisplay.argtypes = [ctypes.c_void_p]
+            ptr = gtk.gdk_x11_display_get_xdisplay(get_pointer(display))
+            if ptr:
+                param["x11_display"] = ptr
+    except Exception as e:
+        print(f"Error getting display param: {e}")
+
+    return param
 
 
 def format_time(seconds):

@@ -26,7 +26,7 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, Gtk
-from .utils import has_host_permission, is_flatpak
+from .utils import display, has_host_permission, is_flatpak
 
 settings = Gio.Settings.new("io.github.diegopvlk.Cine")
 
@@ -391,7 +391,6 @@ class Preferences(Adw.Dialog):
 
     @Gtk.Template.Callback()
     def _on_copy_cmd_btn_clicked(self, button: Gtk.Button):
-        display = Gdk.Display.get_default()
         if display and (clipboard := display.get_clipboard()):
             button.remove_css_class("suggested-action")
             button.set_label(_("Copied"))
