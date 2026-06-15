@@ -180,7 +180,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.last_preview_seek: int = 0
         self.error_count: int = 0
         self.pressed_combos: set[str] = set()
-        self.key_state: Gdk.ModifierType
+        self.key_state: Gdk.ModifierType = Gdk.ModifierType.NO_MODIFIER_MASK
         self.hide_timeout_id: int = 0
         self.is_fs: bool = False
         self.is_inactive: bool = False
@@ -575,9 +575,13 @@ class CineWindow(Adw.ApplicationWindow):
             if (x, y) == self.prev_motion_xy or self.click_holding:
                 return
 
+            if self.key_state & Gdk.ModifierType.CONTROL_MASK:
+                mpv_x = int(x * self.props.scale_factor)
+                mpv_y = int(y * self.props.scale_factor)
+                self.mpv.command_async("mouse", mpv_x, mpv_y)
+
             self.prev_motion_xy = (x, y)
             self._show_ui()
-
             self._hide_ui_timeout()
 
     def _update_track_menus(self, track_list):
@@ -2078,6 +2082,12 @@ class CineWindow(Adw.ApplicationWindow):
             if not value:
                 # clear the last frame, which sometimes can still be present
                 GLib.idle_add(self.gl_area.queue_render)
+
+        @self.mpv.property_observer("video-zoom")
+        def on_zoom_change(_name, value):
+            if round(value, 2) == 0.00:
+                self.mpv["video-align-x"] = 0
+                self.mpv["video-align-y"] = 0
 
         @self.mpv.event_callback("shutdown")
         def on_quit(_event):
