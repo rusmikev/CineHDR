@@ -45,6 +45,7 @@ class PlaylistItemObj(GObject.Object):
         self.item = item
         self.playing = item.get("playing", False)
         self.position = position
+        self.title = None
 
 
 @Gtk.Template(resource_path="/io/github/diegopvlk/Cine/playlist.ui")
@@ -91,24 +92,28 @@ class Playlist(Adw.Dialog):
             ),
         )
 
+        def remove_diacritics(text):
+            normalized = unicodedata.normalize("NFD", text)
+            return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+
+        def filter_func(obj):
+            query_txt = self.search_entry.props.text.strip()
+            query = remove_diacritics(query_txt).lower()
+
+            path = obj.item.get("filename")
+            name_with_ext = os.path.basename(path)
+            file_title = os.path.splitext(name_with_ext)[0]
+            file_title = GLib.markup_escape_text(file_title)
+            title = obj.item.get("title") or obj.title or file_title
+            title = remove_diacritics(title).lower()
+
+            return query in title
+
         def search_filter(*args):
-            def remove_diacritics(text):
-                normalized = unicodedata.normalize("NFD", text)
-                return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
-
-            query = remove_diacritics(self.search_entry.props.text.strip())
-
-            def filter_func(obj):
-                try:
-                    item_name = remove_diacritics(obj.item["title"]).lower()
-                    normalized_query = remove_diacritics(query).lower()
-                    return normalized_query in item_name
-                except Exception:
-                    return True
-
-            list_filter.set_filter_func(filter_func)
+            list_filter.changed(Gtk.FilterChange.DIFFERENT)
             self._set_item_count(list_amt=list_filter_model.get_n_items())
 
+        list_filter.set_filter_func(filter_func)
         self.search_entry.connect("search-changed", search_filter)
         self.search_entry.set_placeholder_text(_("Search") + "…")
 
@@ -274,6 +279,7 @@ class Playlist(Adw.Dialog):
             file_title = GLib.markup_escape_text(file_title)
             list_item.title.set_tooltip_markup(f"<b>{dir}</b>\n{file_title}")
             list_item.icon.set_from_icon_name(icon_name)
+            obj.title = file_title
 
         def set_playing_item(obj, _pspec):
             list_item.playing_icon.props.visible = obj.playing
