@@ -339,7 +339,7 @@ class MPRIS:
         if not p:
             return False
 
-        if interface == "org.mpris.MediaPlayer2.Player":
+        if interface == MEDIAPLAYER2_PLAYER:
             if prop == "Volume":
                 new_vol = value.get_double()
                 p.volume = new_vol * 100.0
