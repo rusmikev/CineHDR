@@ -113,7 +113,7 @@ class MPRIS:
         except Exception as e:
             print(f"MPRIS Bus Error: {e}")
 
-    def emit_props_changed(self, changed_props):
+    def _emit_props_changed(self, changed_props):
         if not self._con:
             return
 
@@ -130,19 +130,20 @@ class MPRIS:
         if not self._con:
             return
 
-        self.emit_props_changed(
+        self._emit_props_changed(
             {
                 "Identity": GLib.Variant("s", _("Cine")),
                 "DesktopEntry": GLib.Variant("s", APP_ID),
             },
         )
 
-        if self.player:
-            status = "Paused" if self.player.pause else "Playing"
+        if self._mpv:
+            status = "Paused" if self._mpv.pause else "Playing"
+            vol = self._mpv.volume
             loop = self._get_loop_status()
-            not_idle = not self.player.idle_active
+            not_idle = not self._mpv.idle_active
 
-            self.emit_props_changed(
+            self._emit_props_changed(
                 {
                     "PlaybackStatus": GLib.Variant("s", status),
                     "LoopStatus": GLib.Variant("s", loop),
@@ -151,31 +152,35 @@ class MPRIS:
                     "CanPause": GLib.Variant("b", not_idle),
                     "CanSeek": GLib.Variant("b", not_idle),
                     "CanControl": GLib.Variant("b", not_idle),
+                    "Volume": GLib.Variant("d", float(vol / 100.0)),
+                    "CanGoPrevious": GLib.Variant("b", self._can_go_prev),
+                    "CanGoNext": GLib.Variant("b", self._can_go_next),
+                    "Shuffle": GLib.Variant("b", self._shuffle),
                 },
             )
 
     @property
-    def player(self):
+    def _mpv(self):
         win = self._app.props.active_window
         return getattr(win, "mpv", None) if win else None
 
     @property
-    def can_go_prev(self):
+    def _can_go_prev(self):
         win = self._app.props.active_window
         return getattr(win, "can_go_prev", False) if win else False
 
     @property
-    def can_go_next(self):
+    def _can_go_next(self):
         win = self._app.props.active_window
         return getattr(win, "can_go_next", False) if win else False
 
     @property
-    def shuffle(self):
+    def _shuffle(self):
         win = self._app.props.active_window
         return win.shuffle_toggle_btn.props.active if win else False  # type: ignore
 
     def _get_loop_status(self):
-        p = self.player
+        p = self._mpv
         if not p:
             return "None"
 
@@ -191,45 +196,45 @@ class MPRIS:
 
     def _update_play_pause(self, paused):
         status = "Paused" if paused else "Playing"
-        self.emit_props_changed({"PlaybackStatus": GLib.Variant("s", status)})
+        self._emit_props_changed({"PlaybackStatus": GLib.Variant("s", status)})
 
     def _update_volume(self, value):
         vol = value / 100.0
-        self.emit_props_changed({"Volume": GLib.Variant("d", float(vol))})
+        self._emit_props_changed({"Volume": GLib.Variant("d", float(vol))})
 
     def _update_metadata(self):
         metadata = self._get_metadata_variant()
-        self.emit_props_changed({"Metadata": metadata})
+        self._emit_props_changed({"Metadata": metadata})
 
     def _update_loop(self):
         current_loop = self._get_loop_status()
-        self.emit_props_changed({"LoopStatus": GLib.Variant("s", current_loop)})
+        self._emit_props_changed({"LoopStatus": GLib.Variant("s", current_loop)})
 
     def _update_can_prev_next(self, can_prev, can_next):
-        self.emit_props_changed({"CanGoPrevious": GLib.Variant("b", can_prev)})
-        self.emit_props_changed({"CanGoNext": GLib.Variant("b", can_next)})
+        self._emit_props_changed({"CanGoPrevious": GLib.Variant("b", can_prev)})
+        self._emit_props_changed({"CanGoNext": GLib.Variant("b", can_next)})
 
     def _update_shuffle(self, shuffle_active):
-        self.emit_props_changed({"Shuffle": GLib.Variant("b", shuffle_active)})
+        self._emit_props_changed({"Shuffle": GLib.Variant("b", shuffle_active)})
 
     def _update_position(self):
         # this is enough to update 'Position'
-        self.emit_props_changed({"CanSeek": GLib.Variant("b", True)})
+        self._emit_props_changed({"CanSeek": GLib.Variant("b", True)})
 
     def _get_metadata_variant(self):
         """Constructs the MPRIS Metadata dictionary."""
 
-        duration = getattr(self.player, "duration") or 0
+        duration = getattr(self._mpv, "duration") or 0
 
         metadata = {
             "mpris:trackid": GLib.Variant("o", "/org/mpris/MediaPlayer2/Track/0"),
             "mpris:length": GLib.Variant("x", int(duration * 1_000_000)),
         }
 
-        if title := getattr(self.player, "media_title"):
+        if title := getattr(self._mpv, "media_title"):
             metadata["xesam:title"] = GLib.Variant("s", str(title))
 
-        md = self.player.metadata if self.player else {}
+        md = self._mpv.metadata if self._mpv else {}
 
         if artist := (md or {}).get("artist"):
             metadata["xesam:artist"] = GLib.Variant("as", [str(artist)])
@@ -243,7 +248,7 @@ class MPRIS:
         invocation.return_value(None)
 
     def _handle_method(self, method, params):
-        p = self.player
+        p = self._mpv
         if not p:
             return
 
@@ -281,9 +286,9 @@ class MPRIS:
             self._app.quit()
 
     def _emit_seeked(self):
-        if not self._con or not self.player:
+        if not self._con or not self._mpv:
             return
-        raw_pos = getattr(self.player, "time_pos", 0) or 0
+        raw_pos = getattr(self._mpv, "time_pos", 0) or 0
         pos_usec = int(raw_pos * 1_000_000)
         self._con.emit_signal(
             None,
@@ -294,13 +299,13 @@ class MPRIS:
         )
 
     def _on_get_property(self, _con, _sender, _path, interface, prop):
-        p = self.player
+        p = self._mpv
 
         if interface == MEDIAPLAYER2_PLAYER:
             if prop == "CanGoPrevious":
-                return GLib.Variant("b", self.can_go_prev)
+                return GLib.Variant("b", self._can_go_prev)
             elif prop == "CanGoNext":
-                return GLib.Variant("b", self.can_go_next)
+                return GLib.Variant("b", self._can_go_next)
             elif prop in ["CanPlay", "CanPause", "CanControl"]:
                 return GLib.Variant("b", True)
             elif prop == "Volume":
@@ -318,7 +323,7 @@ class MPRIS:
             elif prop == "Metadata":
                 return self._get_metadata_variant()
             elif prop == "Shuffle":
-                return GLib.Variant("b", self.shuffle)
+                return GLib.Variant("b", self._shuffle)
 
         elif interface == "org.mpris.MediaPlayer2":
             if prop == "Identity":
@@ -335,7 +340,7 @@ class MPRIS:
         return None
 
     def _on_set_property(self, _con, _sender, _path, interface, prop, value):
-        p = self.player
+        p = self._mpv
         if not p:
             return False
 
@@ -343,7 +348,7 @@ class MPRIS:
             if prop == "Volume":
                 new_vol = value.get_double()
                 p.volume = new_vol * 100.0
-                self.emit_props_changed({"Volume": GLib.Variant("d", float(new_vol))})
+                self._emit_props_changed({"Volume": GLib.Variant("d", float(new_vol))})
                 return True
 
             if prop == "LoopStatus":
@@ -359,7 +364,7 @@ class MPRIS:
                     p.loop_file = "no"
                     p.loop_playlist = "inf"
 
-                self.emit_props_changed({"LoopStatus": GLib.Variant("s", new_loop)})
+                self._emit_props_changed({"LoopStatus": GLib.Variant("s", new_loop)})
                 return True
 
             if prop == "Shuffle":
@@ -369,7 +374,7 @@ class MPRIS:
                 if win:
                     btn = win.shuffle_toggle_btn  # type: ignore
                     btn.props.active = new_shuffle
-                self.emit_props_changed({"Shuffle": GLib.Variant("b", new_shuffle)})
+                self._emit_props_changed({"Shuffle": GLib.Variant("b", new_shuffle)})
                 return True
 
         return False

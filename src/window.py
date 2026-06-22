@@ -1774,6 +1774,8 @@ class CineWindow(Adw.ApplicationWindow):
                         self.preview_player.terminate()
                         self.preview_player = None
 
+                self.app_mpris._update_metadata()
+
             GLib.idle_add(set)
             self.error_count = 0
 
@@ -1878,8 +1880,6 @@ class CineWindow(Adw.ApplicationWindow):
         @self.mpv.property_observer("duration")
         def on_duration_change(_name, value):
             GLib.idle_add(self._update_duration, float(value or 0))
-            if value:
-                GLib.idle_add(self.app_mpris._update_metadata)
 
         @self.mpv.property_observer("mute")
         def on_mute_change(_name, muted):
