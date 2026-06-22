@@ -231,7 +231,11 @@ class MPRIS:
             "mpris:length": GLib.Variant("x", int(duration * 1_000_000)),
         }
 
-        if title := getattr(self._mpv, "media_title"):
+        win = self._app.props.active_window
+        window_title = win.props.title if win else None
+        title = window_title or getattr(self._mpv, "media_title", None)
+
+        if title:
             metadata["xesam:title"] = GLib.Variant("s", str(title))
 
         md = self._mpv.metadata if self._mpv else {}
