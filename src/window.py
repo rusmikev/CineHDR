@@ -1481,10 +1481,9 @@ class CineWindow(Adw.ApplicationWindow):
         controls_hover = self.motion_controls.props.contains_pointer
         header_hover = self.motion_header.props.contains_pointer
         separator_hover = self.motion_controls_separator.props.contains_pointer
-        ignored_btn = not button or button in ("MBTN_BACK", "MBTN_FORWARD")
         hovering = (controls_hover or header_hover) and not separator_hover
 
-        if ignored_btn or hovering:
+        if not button or hovering:
             return
 
         # Back and forward dont trigger _on_click_released when video is playing (??)
