@@ -163,8 +163,13 @@ template $CineWindow: Adw.ApplicationWindow {
 
                   section {
                     item {
-                      label: _("Save Session and Close");
+                      label: _("Save Session");
                       action: "win.save-session";
+                    }
+
+                    item {
+                      label: _("Save Session and Close");
+                      action: "win.save-session-close";
                     }
                   }
                 };

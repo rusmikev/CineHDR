@@ -275,7 +275,10 @@ class CineWindow(Adw.ApplicationWindow):
         self._create_action("open-sub-menu", self._on_open_sub_menu)
         self._create_action("open-audio-menu", self._on_open_audio_menu)
         self._create_action("open-chapters-menu", self._on_open_chapters_menu)
-        self._create_action("save-session", self._on_save_session_and_close)
+        self._create_action("save-session", self._on_save_session)
+        self._create_action(
+            "save-session-close", lambda *a: self._on_save_session(close=True)
+        )
 
         self.app.set_accels_for_action("win.open-folder", ["<primary>i"])
         self.app.set_accels_for_action("win.open-url", ["<primary>u"])
@@ -287,7 +290,8 @@ class CineWindow(Adw.ApplicationWindow):
         self.app.set_accels_for_action("win.open-sub-menu", ["<primary>s"])
         self.app.set_accels_for_action("win.open-audio-menu", ["<primary>a"])
         self.app.set_accels_for_action("win.open-chapters-menu", ["<primary>c"])
-        self.app.set_accels_for_action("win.save-session", ["<shift>q"])
+        self.app.set_accels_for_action("win.save-session", ["<shift><primary>s"])
+        self.app.set_accels_for_action("win.save-session-close", ["<shift>q"])
 
         self._create_action("quit", lambda *a: self.close())
         self.app.set_accels_for_action("win.quit", ["q", "<primary>w"])
@@ -791,10 +795,15 @@ class CineWindow(Adw.ApplicationWindow):
         self._show_ui()
         self.chapters_menu_btn.popup()
 
-    def _on_save_session_and_close(self, *args):
+    def _on_save_session(self, *args, close=False):
         settings.set_boolean("save-session", True)
         save_last_playlist_file(self.mpv)
-        self.close()
+        if close:
+            self.close()
+        else:
+            toast = Adw.Toast(title=_("Session Saved"), timeout=2)
+            self.toast_overlay.dismiss_all()
+            self.toast_overlay.add_toast(toast)
 
     def _on_open_url(self, *args, add=False):
         mode = "append-play" if add else "replace"
