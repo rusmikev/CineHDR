@@ -801,9 +801,7 @@ class CineWindow(Adw.ApplicationWindow):
         if close:
             self.close()
         else:
-            toast = Adw.Toast(title=_("Session Saved"), timeout=2)
-            self.toast_overlay.dismiss_all()
-            self.toast_overlay.add_toast(toast)
+            GLib.idle_add(self._show_toast, _("Session Saved"))
 
     def _on_open_url(self, *args, add=False):
         mode = "append-play" if add else "replace"
@@ -1295,8 +1293,7 @@ class CineWindow(Adw.ApplicationWindow):
 
             except GLib.Error as e:
                 print(f"File error path: {self.loaded_path}")
-                toast = Adw.Toast.new(_("File Error") + f": {e.message}")
-                self.toast_overlay.add_toast(toast)
+                GLib.idle_add(self._show_toast, _("File Error") + f": {e.message}")
                 self.spinner.set_visible(False)
                 return
 
@@ -1335,11 +1332,16 @@ class CineWindow(Adw.ApplicationWindow):
                     first_file = False
                     continue
                 else:
-                    info = item.query_info(
-                        "standard::content-type,standard::type",
-                        Gio.FileQueryInfoFlags.NONE,
-                        None,
-                    )
+                    try:
+                        info = item.query_info(
+                            "standard::content-type,standard::type",
+                            Gio.FileQueryInfoFlags.NONE,
+                            None,
+                        )
+                    except Exception as e:
+                        print("Drop error:", repr(e))
+                        GLib.idle_add(self._show_toast, str(e))
+                        return
 
                 file_type = info.get_file_type()
                 mime_type = info.get_content_type() or ""
@@ -1758,14 +1760,19 @@ class CineWindow(Adw.ApplicationWindow):
         self.last_shuffle = self.shuffle_toggle_btn.props.active
         self.playlist_changed = False
 
+    def _show_toast(self, label: str):
+        toast = Adw.Toast(title=label, timeout=2)
+        self.toast_overlay.dismiss_all()
+        self.toast_overlay.add_toast(toast)
+
     def _setup_observers(self):
         @self.mpv.event_callback("start-file")
-        def on_start_file(event):
+        def on_start_file(_event):
             GLib.idle_add(self.spinner.set_visible, True)
             self.loaded_path = str(self.mpv.path)
 
         @self.mpv.event_callback("file-loaded")
-        def on_files_loaded(event):
+        def on_files_loaded(_event):
             def set():
                 self.spinner.set_visible(False)
                 self.local_path = is_local_path(self.mpv.path)
@@ -1783,29 +1790,26 @@ class CineWindow(Adw.ApplicationWindow):
                 self.app_mpris._update_metadata()
 
             GLib.idle_add(set)
-            self.error_count = 0
+            GLib.timeout_add_seconds(5, setattr, self, "error_count", 0)
 
         @self.mpv.event_callback("end-file")
         def on_end_file(event):
             GLib.idle_add(self.spinner.set_visible, False)
             GLib.idle_add(self.start_page.set_sensitive, True)
+            curr_pos = self.mpv.playlist_pos
             info = event.as_dict()
             reason = info["reason"]
 
             if reason == b"error":
                 # Avoid stopping playback on last file/folder error
-                current_pos = self.mpv.playlist_pos
-                playlist_count = len(cast(list, self.mpv.playlist))
-                if current_pos == playlist_count - 1:
+                playlist_count = cast(int, self.mpv.playlist_count)
+                if curr_pos == playlist_count - 1:
                     self.mpv.playlist_pos = 0
 
-                print(f"File error path: {self.loaded_path}")
                 self.error_count += 1
-
-                if self.error_count in (1, 20):
-                    error = info["file_error"].decode("utf-8")
-                    toast = Adw.Toast.new(_("File Error") + f": {error}")
-                    self.toast_overlay.add_toast(toast)
+                print(f"File error path: {self.loaded_path}")
+                error = info["file_error"].decode("utf-8")
+                GLib.idle_add(self._show_toast, _("File Error") + f": {error}")
 
                 if self.error_count == 20:
                     self.mpv.stop()
