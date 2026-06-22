@@ -301,6 +301,14 @@ template $Preferences: Adw.Dialog {
 					tooltip-text: _("Example: en,es,pt");
 				}
 			}
+
+			Adw.PreferencesGroup {
+				Adw.ButtonRow open_config_row {
+					title: _("Open Config Folder");
+					end-icon-name: "pan-end-symbolic";
+					activated => $_on_open_config_dir();
+				}
+			}
 		};
 	}
 }

@@ -26,7 +26,7 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, Gtk
-from .utils import display, has_host_permission, is_flatpak
+from .utils import CONFIG_DIR, display, has_host_permission, is_flatpak
 
 settings = Gio.Settings.new("io.github.diegopvlk.Cine")
 
@@ -356,6 +356,17 @@ class Preferences(Adw.Dialog):
         default_font = "Adwaita Sans SemiBold"
         settings.set_string("subtitle-font", default_font)
         self.font_label.set_label(default_font)
+
+    @Gtk.Template.Callback()
+    def _on_open_config_dir(self, _button):
+        def on_launch_finished(launcher, task, *args):
+            try:
+                launcher.launch_finish(task)
+            except Exception as e:
+                print(f"Failed to open folder: {e}")
+
+        f_launcher = Gtk.FileLauncher.new(Gio.File.new_for_path(CONFIG_DIR))
+        f_launcher.launch(self.win, None, on_launch_finished, None)
 
     @Gtk.Template.Callback()
     def _on_btn_warning_map(self, button):
