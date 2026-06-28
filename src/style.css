@@ -337,15 +337,17 @@ sheet {
 @media (prefers-contrast: no-preference) {
   floating-sheet sheet {
     box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.05),
-      0 0 14px 2px rgba(0, 0, 6, 0.03),
-      0 0 5px 2px rgba(0, 0, 6, 0.1);
+      inset 0 0 0 1px rgba(245, 245, 255, 0.08),
+      0 0 12px 2px rgba(245, 245, 255, 0.1),
+      0 0 6px 2px rgba(0, 0, 6, 0.25);
   }
   bottom-sheet sheet outline {
     box-shadow:
-      1px 0 rgba(255, 255, 255, 0.12) inset,
-      -1px 0 rgba(255, 255, 255, 0.12) inset,
-      0 1px rgba(255, 255, 255, 0.12) inset;
+      1px 0 rgba(255, 255, 255, 0.13) inset,
+      -1px 0 rgba(255, 255, 255, 0.13) inset,
+      0 1px rgba(255, 255, 255, 0.13) inset,
+      0 0 12px 2px rgba(245, 245, 255, 0.1),
+      0 0 6px 2px rgba(0, 0, 6, 0.25);
   }
 }
 
@@ -354,9 +356,13 @@ sheet {
   popover > arrow,
   .chapter-popover > contents label {
     border: 1px solid var(--border-color);
+    background: rgba(25, 25, 27, 1);
   }
   .chapter-popover > contents picture {
     border: 1px solid rgba(255, 255, 255, 0.9);
+  }
+  sheet {
+    background: rgba(5, 5, 6, 1);
   }
   .header-and-controls {
     background:
