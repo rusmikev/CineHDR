@@ -163,11 +163,13 @@ class Playlist(Adw.Dialog):
 
         self._set_save_btn_playlist()
 
-        GLib.idle_add(
-            self.playlist_list_view.scroll_to,
-            max(0, self.mpv.playlist_pos),
-            Gtk.ListScrollFlags.FOCUS,
-        )
+        pos = self.mpv.playlist_pos
+        if pos > 0:
+            GLib.idle_add(
+                self.playlist_list_view.scroll_to,
+                pos,
+                Gtk.ListScrollFlags.FOCUS,
+            )
 
     @Gtk.Template.Callback()
     def _on_list_item_activate(self, list_view, pos):
@@ -383,7 +385,7 @@ class Playlist(Adw.Dialog):
 
         self.win._splice_playlist()
 
-    def _on_row_right_click(self, gesture, _n_press, x, y, list_item, row):
+    def _on_row_right_click(self, _gesture, _n_press, x, y, list_item, row):
         idx = list_item.get_item().position
         path = list_item.get_item().item["filename"]
 
@@ -408,12 +410,13 @@ class Playlist(Adw.Dialog):
 
             self.mpv.command("playlist-remove", index)
 
-            GLib.timeout_add(
-                100,
-                self.playlist_list_view.scroll_to,
-                max(0, index - 1),
-                Gtk.ListScrollFlags.FOCUS,
-            )
+            if index > 0:
+                GLib.timeout_add(
+                    100,
+                    self.playlist_list_view.scroll_to,
+                    index,
+                    Gtk.ListScrollFlags.FOCUS,
+                )
 
         menu = Gio.Menu.new()
         menu.append(_("Open Item Location"), "row.open_location")
