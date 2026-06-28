@@ -2116,6 +2116,14 @@ class CineWindow(Adw.ApplicationWindow):
                 self.mpv["video-align-x"] = 0
                 self.mpv["video-align-y"] = 0
 
+        @self.mpv.property_observer("vo")
+        def on_vo_change(_name, vo_list):
+            try:
+                if vo_list[0].get("name") != "libmpv":
+                    self.mpv["vo"] = "libmpv"
+            except mpv.ShutdownError:
+                pass
+
         @self.mpv.event_callback("shutdown")
         def on_quit(_event):
             GLib.idle_add(self.close)
