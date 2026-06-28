@@ -46,11 +46,11 @@
       <caption>Video Options</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/diegopvlk/Cine/4cd6b0e086dccdedbe1dcfb11dc87f2434ffac70/screenshots/preferences.png</image>
+      <image>https://raw.githubusercontent.com/diegopvlk/Cine/da6be9875623b347fe72bdbb4a7bedc898808409/screenshots/preferences.png</image>
       <caption>Preferences</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/diegopvlk/Cine/eedf30ef798707f391df7904af124def524da8c4/screenshots/window.png</image>
+      <image>https://raw.githubusercontent.com/diegopvlk/Cine/da6be9875623b347fe72bdbb4a7bedc898808409/screenshots/window.png</image>
       <caption>Main Window</caption>
     </screenshot>
   </screenshots>
@@ -72,6 +72,19 @@
   </requires>
 
   <releases>
+    <release version="1.7.0" date="2026-06-28">
+      <description translate="no">
+        <ul>
+          <li>New: Added Watch History</li>
+          <li>Updated visual styles of all dialogs</li>
+          <li>Fixed errors when closing the app</li>
+          <li>Fixed empty title on some taskbars</li>
+          <li>Fixed app not unpausing when opening new files</li>
+          <li>Added Ukranian and Tamil translations</li>
+          <li>Plus minor fixes and improvements</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.6.0" date="2026-06-22">
       <description translate="no">
         <ul>
