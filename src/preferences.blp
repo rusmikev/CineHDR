@@ -26,20 +26,19 @@ template $Preferences: Adw.Dialog {
 					ScrolledWindow {
 						propagate-natural-width: true;
 						propagate-natural-height: true;
-						margin-top: 10;
-						margin-start: 10;
-						margin-end: 10;
+						margin-top: 6;
+						margin-start: 6;
+						margin-end: 6;
 
 						Box {
 							orientation: vertical;
 							halign: center;
-							valign: center;
 							spacing: 8;
 
 							Label about_permissions_label {
 								halign: start;
 								justify: fill;
-								max-width-chars: 40;
+								max-width-chars: 58;
 								wrap: true;
 								natural-wrap-mode: none;
 								wrap-mode: word_char;
@@ -48,6 +47,7 @@ template $Preferences: Adw.Dialog {
 							Label cmd_label {
 								label: "flatpak override --filesystem=host io.github.diegopvlk.Cine --user";
 								max-width-chars: 66;
+								wrap: true;
 
 								styles [
 									"warning-command",
@@ -59,7 +59,7 @@ template $Preferences: Adw.Dialog {
 								halign: center;
 								valign: center;
 								margin-top: 4;
-								margin-bottom: 10;
+								margin-bottom: 6;
 
 								styles [
 									"suggested-action",
