@@ -1,6 +1,6 @@
 window {
   --card-bg-color: rgba(60, 60, 62, 0.66);
-  --accent-color: #e5e5e5;
+  --cine-grey: #e5e5e5;
 }
 
 label.link {
@@ -54,7 +54,7 @@ window:backdrop scale {
 
 button.pill.suggested-action,
 button.circular.suggested-action {
-  background: var(--accent-color);
+  background: var(--cine-grey);
   color: black;
 }
 button.pill.suggested-action:hover,
@@ -66,8 +66,19 @@ button.pill:active,
   transform: scale(0.98);
 }
 
+dialog:not(#playlist),
+#playlist headerbar,
+#playlist searchbar,
+#playlist listview,
+.start-page button {
+  --accent-color: var(--cine-grey);
+}
+#playlist:drop(active) {
+  box-shadow: none;
+}
+
 .start-page {
-  color: var(--accent-color);
+  color: var(--cine-grey);
   background: linear-gradient(180deg, transparent 0%, #0c0c0e 100%);
 }
 .start-page button {
