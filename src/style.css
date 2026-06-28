@@ -62,8 +62,27 @@
   background: rgba(255, 255, 255, 0.18);
 }
 .start-page button:active {
-  transform: scale(0.98);
+  transform: scale(0.975);
 }
+.start-page button.watch-history {
+  min-width: 44px;
+}
+
+#history preferencesgroup .header.single-line {
+  margin-top: -6px;
+  margin-bottom: -4px;
+}
+#history .row-history .header {
+  margin-top: -4px;
+  margin-bottom: -4px;
+}
+#history .row-history:dir(ltr) button {
+  margin-right: -8px;
+}
+#history .row-history:dir(rtl) button {
+  margin-left: -8px;
+}
+
 .osd button:hover:not(.close):not(.maximize):not(.minimize) {
   background: rgba(255, 255, 255, 0.17);
 }

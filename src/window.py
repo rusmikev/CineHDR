@@ -48,8 +48,10 @@ from .utils import (
     SCREENSHOT_DIR,
     CONFIG_DIR,
     INPUT_CONF,
+    WATCH_HISTORY_JSONL,
 )
 
+from .history import HistoryDialog
 from .options import OptionsMenuButton
 from .playlist import Playlist, PlaylistItemObj
 from .preferences import settings, sync_mpv_with_settings
@@ -227,6 +229,8 @@ class CineWindow(Adw.ApplicationWindow):
             cursor_autohide_fs_only=True,
             directory_filter_types="video,audio",
             autocreate_playlist="filter",
+            save_watch_history=True,
+            watch_history_path=WATCH_HISTORY_JSONL,
         )
 
         if self.mpv["window-maximized"] or settings.get_boolean("is-maximized"):
@@ -271,6 +275,7 @@ class CineWindow(Adw.ApplicationWindow):
         self._create_action("open-folder", self._on_open_folder_dialog)
         self._create_action("open-url", self._on_open_url)
         self._create_action("add-url", self._on_add_url)
+        self._create_action("open-history", self._present_history)
         self._create_action("add-playlist-folder", self._on_open_folder_dialog)
         self._create_action("open-playlist-dialog", self._on_open_playlist)
         self._create_action("open-sub-menu", self._on_open_sub_menu)
@@ -284,6 +289,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.app.set_accels_for_action("win.open-folder", ["<primary>i"])
         self.app.set_accels_for_action("win.open-url", ["<primary>u"])
         self.app.set_accels_for_action("win.add-url", ["<shift><primary>u"])
+        self.app.set_accels_for_action("win.open-history", ["<primary>h"])
         self.app.set_accels_for_action("win.add-playlist-folder", ["<shift><primary>i"])
         self.app.set_accels_for_action("win.open-playlist-dialog", ["<primary>p"])
         self.app.set_accels_for_action("win.clear-and-add", ["<primary>o"])
@@ -311,6 +317,10 @@ class CineWindow(Adw.ApplicationWindow):
         )
         populate_shortcuts_dialog_mpv(self.shortcuts_dialog, self.bindings)
         self.shortcuts_dialog.present(self)
+
+    def _present_history(self, *args):
+        history_dialog = HistoryDialog(self)
+        history_dialog.present(self)
 
     def _setup_elements(self):
         self.set_default_size(DEFAULT_WIDTH, DEFAULT_HEIGHT)

@@ -2,6 +2,8 @@
 # Please keep this file sorted alphabetically.
 data/io.github.diegopvlk.Cine.desktop.in
 data/io.github.diegopvlk.Cine.metainfo.xml.in
+src/history.blp
+src/history.py
 src/main.py
 src/mpris.py
 src/options.blp

@@ -380,28 +380,31 @@ class Preferences(Adw.Dialog):
     @Gtk.Template.Callback()
     def _on_warning_header_btn_map(self, button):
         if is_flatpak:
-            l1 = _("Some features require extra permission to work:") + "\n\n"
+            l1 = _("Some features require extra permission to work properly:") + "\n\n"
             l2 = "• " + _("Auto load subtitle file") + "\n"
             l3 = "• " + _("Auto add files from the same folder to playlist") + "\n"
             l4 = "• " + _("Save Playlist").capitalize() + "\n"
             l5 = "• " + _("Restore Saved Session").capitalize() + "\n"
-            l6 = "• " + _("Save Video Position on Close").capitalize() + "\n\n"
+            l6 = "• " + _("Save Video Position on Close").capitalize() + "\n"
+            l7 = "• " + _("Watch History").capitalize() + "\n\n"
 
             if not has_host_permission:
-                l7 = _(
+                l8 = _(
                     "If you wish to use those features, install Flatseal for granular folder control, or run this command to grant access to all folders in the system:"
                 ).replace(
                     "Flatseal",
                     '<a href="https://flathub.org/apps/com.github.tchx84.Flatseal">Flatseal</a>',
                 )
             else:
-                l7 = _("Extra permission enabled.")
+                l8 = _("Extra permission enabled.")
                 self.warning_header_btn.remove_css_class("warning-header-btn")
                 self.about_permissions_label.set_margin_bottom(10)
                 self.cmd_label.set_visible(False)
                 self.copy_cmd_button.set_visible(False)
 
-            self.about_permissions_label.set_markup(l1 + l2 + l3 + l4 + l5 + l6 + l7)
+            self.about_permissions_label.set_markup(
+                l1 + l2 + l3 + l4 + l5 + l6 + l7 + l8
+            )
 
         button.set_visible(is_flatpak)
 

@@ -42,6 +42,7 @@ base_config = GLib.get_user_config_dir()
 CONFIG_DIR = os.path.join(base_config, "cine")
 INPUT_CONF = os.path.join(CONFIG_DIR, "input.conf")
 MPV_CONF = os.path.join(CONFIG_DIR, "mpv.conf")
+WATCH_HISTORY_JSONL = os.path.join(CONFIG_DIR, "watch_history.jsonl")
 
 old_last_pl_file = os.path.join(CONFIG_DIR, "last-playlist.m3u8")
 playlist_dir = os.path.join(CONFIG_DIR, "last-playlist")
@@ -50,7 +51,11 @@ LAST_PLAYLIST_FILE = os.path.join(playlist_dir, "last-playlist.m3u8")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(playlist_dir, exist_ok=True)
 
-for file in [INPUT_CONF, MPV_CONF]:
+for file in [
+    INPUT_CONF,
+    MPV_CONF,
+    WATCH_HISTORY_JSONL,
+]:
     if not os.path.exists(file):
         open(file, "w").close()
 

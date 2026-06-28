@@ -132,6 +132,13 @@ template $CineWindow: Adw.ApplicationWindow {
                     label: _("Add Audio Track");
                     action: "win.add-audio-tracks";
                   }
+
+                  section {
+                    item {
+                      label: _("Watch History");
+                      action: "win.open-history";
+                    }
+                  }
                 };
               }
 
@@ -488,14 +495,35 @@ template $CineWindow: Adw.ApplicationWindow {
             valign: center;
             orientation: vertical;
 
-            Button {
-              label: _("Open…");
-              action-name: "win.clear-and-add";
+            Box {
+              spacing: 5;
 
               styles [
-                "suggested-action",
-                "pill",
+                "open-btns-box",
               ]
+
+              Button {
+                label: _("Open…");
+                action-name: "win.clear-and-add";
+                hexpand: true;
+
+                styles [
+                  "suggested-action",
+                  "pill",
+                ]
+              }
+
+              Button {
+                tooltip-text: _("Watch History");
+                icon-name: "document-open-recent-symbolic";
+                action-name: "win.open-history";
+
+                styles [
+                  "suggested-action",
+                  "circular",
+                  "watch-history",
+                ]
+              }
             }
 
             Button {

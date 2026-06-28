@@ -4,6 +4,7 @@ gnome = import('gnome')
 
 blueprints = custom_target('blueprints',
   input: files(
+    'history.blp',
     'playlist.blp',
     'preferences.blp',
     'options.blp',
@@ -41,6 +42,7 @@ configure_file(
 
 cine_sources = [
   '__init__.py',
+  'history.py',
   'main.py',
   'mpris.py',
   'options.py',
