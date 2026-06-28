@@ -245,6 +245,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.mpv.command("change-list", "watch-later-options", "remove", "vid")
         self.mpv.command("change-list", "watch-later-options", "remove", "aid")
         self.mpv.command("change-list", "watch-later-options", "remove", "volume")
+        self.mpv.command("change-list", "watch-later-options", "remove", "sub-scale")
 
         self._setup_actions()
         self._setup_elements()
