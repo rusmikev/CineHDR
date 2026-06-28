@@ -40,6 +40,7 @@ def sync_mpv_with_settings(window):
     mpv["slang"] = settings.get_string("subtitle-languages")
     mpv["alang"] = settings.get_string("audio-languages")
     mpv["volume"] = settings.get_int("volume")
+    mpv["save-position-on-quit"] = settings.get_boolean("save-video-position")
     hwdec_enabled = settings.get_boolean("hwdec")
     norm_enabled = settings.get_boolean("normalize-volume")
 
@@ -215,6 +216,7 @@ class Preferences(Adw.Dialog):
             "thumbnail-preview": self._on_thumb_preview_changed,
             "hwdec": self._on_hwdec_changed,
             "normalize-volume": self._on_norm_volume_changed,
+            "save-video-position": self._on_save_pos_changed,
         }
 
         self._setting_ids = [
@@ -275,6 +277,9 @@ class Preferences(Adw.Dialog):
             self.mpv["hwdec"] = self.win.conf_hwdec + ["auto"]
         else:
             self.mpv["hwdec"] = "no"
+
+    def _on_save_pos_changed(self, settings, _key):
+        self.mpv["save-position-on-quit"] = settings.get_boolean("save-video-position")
 
     def _on_norm_volume_changed(self, settings, key):
         norm_enabled = settings.get_boolean(key)
