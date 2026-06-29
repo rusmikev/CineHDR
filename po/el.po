@@ -8,7 +8,7 @@ msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-06-27 21:01-0300\n"
-"PO-Revision-Date: 2026-06-29 16:01+0000\n"
+"PO-Revision-Date: 2026-06-30 00:38+0000\n"
 "Last-Translator: Hazel L <hazeltwink@gmail.com>\n"
 "Language-Team: Greek <https://hosted.weblate.org/projects/cine/app/el/>\n"
 "Language: el\n"
@@ -116,7 +116,7 @@ msgstr "Καθαρισμός όλων"
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
 #: src/main.py:239
 msgid "translator-credits"
-msgstr ""
+msgstr "Φουντουκιά (Hazel) Λεβέντη <hazeltwink@gmail.com>"
 
 #: src/options.py:193 src/options.blp:79 src/options.blp:137
 msgid "Original"
@@ -397,7 +397,7 @@ msgstr "Επικάλυψη στατιστικών"
 
 #: src/shortcuts.py:84
 msgid "Set/Clear A-B Loop Points"
-msgstr "Ορισμός/εκκαθάριση σημείων επανάληψης Α-Β"
+msgstr "Ορισμός/καθαρισμός σημείων Α-Β επανάληψης"
 
 #: src/shortcuts.py:85
 msgid "Loop"
@@ -696,7 +696,7 @@ msgstr "Άνοιγμα νέου παραθύρου για νέα αρχεία"
 
 #: src/preferences.blp:85
 msgid "Progress Bar Thumbnail"
-msgstr ""
+msgstr "Μικρογραφία γραμμής προόδου"
 
 #: src/preferences.blp:89
 msgid "Normalize Volume"
