@@ -19,7 +19,7 @@
 
 import gi
 import re
-from gettext import gettext as _, gettext as gt
+from gettext import gettext as _
 from .utils import KEY_REMAP
 
 gi.require_version("Adw", "1")
@@ -210,7 +210,7 @@ def populate_shortcuts_dialog_mpv(dialog, mpv_bindings):
         cmd = b.get("cmd", "")
         gtk_accel = translate_mpv_to_gtk(key)
 
-        success, _, _ = Gtk.accelerator_parse(gtk_accel)
+        success, _key, _mods = Gtk.accelerator_parse(gtk_accel)
         if not success:
             continue
 
@@ -230,16 +230,16 @@ def populate_shortcuts_dialog_mpv(dialog, mpv_bindings):
         grouped_bindings[group_key].append(gtk_accel)
 
     sections = {
-        gt("Subtitles"): [],
-        gt("Audio & Volume"): [],
-        gt("Navigation"): [],
-        gt("Display & Video"): [],
-        gt("Playback"): [],
-        gt("Miscellaneous"): [],
+        _("Subtitles"): [],
+        _("Audio & Volume"): [],
+        _("Navigation"): [],
+        _("Display & Video"): [],
+        _("Playback"): [],
+        _("Miscellaneous"): [],
     }
 
     for (label, title), accels in grouped_bindings.items():
-        target = title if title in sections else gt("Miscellaneous")
+        target = title if title in sections else _("Miscellaneous")
         # Allows space-separated accelerators
         # e.g. "<Control>q q" shows both shortcuts for the same item
         sections[target].append((label, " ".join(accels)))

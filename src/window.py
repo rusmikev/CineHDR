@@ -181,7 +181,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.hide_icon_indicator: bool = True
         self.preview_player: mpv.MPV | None = None
         self.late_preview_id: int = 0
-        self.local_path: bool = True
+        self.is_local_path: bool = True
         self.last_preview_update: float = 0
         self.last_preview_seek: int = 0
         self.error_count: int = 0
@@ -900,7 +900,7 @@ class CineWindow(Adw.ApplicationWindow):
         return Gdk.EVENT_STOP
 
     def setup_preview_player(self):
-        if not self.local_path:
+        if not self.is_local_path:
             self.thumb_preview.props.visible = False
             return
 
@@ -1050,7 +1050,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.chapter_popover.set_pointing_to(rect)
         self.chapter_popover.popup()
 
-        if not settings.get_boolean("thumbnail-preview") or not self.local_path:
+        if not settings.get_boolean("thumbnail-preview") or not self.is_local_path:
             return
 
         curr_time = time()
@@ -1810,10 +1810,10 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.event_callback("file-loaded")
         def on_files_loaded(_event):
-            def set():
+            def update():
                 try:
                     self.spinner.set_visible(False)
-                    self.local_path = is_local_path(self.mpv.path)
+                    self.is_local_path = is_local_path(self.mpv.path)
                     self.start_page.set_sensitive(True)
 
                     if settings.get_boolean("thumbnail-preview"):
@@ -1829,7 +1829,7 @@ class CineWindow(Adw.ApplicationWindow):
                 except mpv.ShutdownError:
                     pass
 
-            GLib.idle_add(set)
+            GLib.idle_add(update)
             GLib.timeout_add_seconds(5, setattr, self, "error_count", 0)
 
         @self.mpv.event_callback("end-file")
@@ -2009,10 +2009,7 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("playlist-pos")
         def on_pl_pos_change(_name, _value):
-            def update():
-                self._update_playlist_nav_sensitivity()
-
-            GLib.idle_add(update)
+            GLib.idle_add(self._update_playlist_nav_sensitivity)
 
         @self.mpv.property_observer("chapter-list")
         def on_chapter_list_change(_name, chapters):
