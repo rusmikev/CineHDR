@@ -32,7 +32,7 @@ from gi.repository import Adw, Gio, Gdk, GLib, Gtk, GObject, Pango
 
 from gettext import gettext as _
 from gettext import ngettext
-from .utils import is_local_path
+from .utils import is_local_path, idle_add_once
 
 
 class PlaylistItemObj(GObject.Object):
@@ -165,7 +165,7 @@ class Playlist(Adw.Dialog):
 
         pos = self.mpv.playlist_pos
         if pos > 0:
-            GLib.idle_add(
+            idle_add_once(
                 self.playlist_list_view.scroll_to,
                 pos,
                 Gtk.ListScrollFlags.FOCUS,

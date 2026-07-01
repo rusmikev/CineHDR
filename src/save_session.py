@@ -18,12 +18,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
-import gi
-from .utils import LAST_PLAYLIST_FILE, is_local_path
+from .utils import LAST_PLAYLIST_FILE, is_local_path, idle_add_once
 from .preferences import settings
-
-gi.require_version("GLib", "2.0")
-from gi.repository import GLib
 
 
 def save_last_playlist_file(win_mpv):
@@ -57,7 +53,7 @@ def restore_last_playlist(window, app, win_mpv):
 
     if os.path.exists(LAST_PLAYLIST_FILE):
         window.start_page.set_sensitive(False)
-        GLib.idle_add(win_mpv.loadfile, LAST_PLAYLIST_FILE, "replace")
+        idle_add_once(win_mpv.loadfile, LAST_PLAYLIST_FILE, "replace")
 
 
 def is_same_playlist(mpv_playlist):

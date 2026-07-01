@@ -20,6 +20,7 @@
 import gi
 import mpv
 from gettext import gettext as _
+from .utils import idle_add_once
 
 gi.require_version("Adw", "1")
 gi.require_version("Gio", "2.0")
@@ -115,7 +116,7 @@ class MPRIS:
         # Without idle_add some gnome mpris extensions can freeze the
         # whole shell for about a minute. Not unique to cine, it can also
         # happen with other players that uses mpris.
-        GLib.idle_add(register)
+        idle_add_once(register)
 
     def _emit_props_changed(self, changed_props):
         if not self._con:
@@ -260,7 +261,7 @@ class MPRIS:
     def _on_method_call(
         self, _con, _sender, _path, interface, method, params, invocation
     ):
-        GLib.idle_add(self._handle_method, method, params)
+        idle_add_once(self._handle_method, method, params)
         invocation.return_value(None)
 
     def _handle_method(self, method, params):

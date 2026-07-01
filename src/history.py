@@ -22,7 +22,7 @@ import os
 import json
 import datetime
 from gettext import gettext as _
-from .utils import is_local_path
+from .utils import is_local_path, idle_add_once
 
 gi.require_version("Adw", "1")
 gi.require_version("Gio", "2.0")
@@ -163,14 +163,14 @@ class HistoryDialog(Adw.Dialog):
                             f.write(json.dumps(item, ensure_ascii=False) + "\n")
                 except Exception as e:
                     print(f"Failed to save history file: {e}")
-                    GLib.idle_add(self._show_toast, f"{repr(e)}")
+                    idle_add_once(self._show_toast, f"{repr(e)}")
 
             for day_key in sorted(created_groups.keys(), reverse=True):
                 group = created_groups[day_key]
                 self._groups[day_key] = group
 
                 if load_all:
-                    GLib.idle_add(self.history_prefs_page.add, group)
+                    idle_add_once(self.history_prefs_page.add, group)
                 else:
                     self.history_prefs_page.add(group)
 
@@ -185,7 +185,7 @@ class HistoryDialog(Adw.Dialog):
             if self.history_prefs_page.get_group(0):  # type: ignore
                 self.history_prefs_page.remove(self._load_all_group)
 
-        GLib.idle_add(self.spinner.set_visible, False)
+        idle_add_once(self.spinner.set_visible, False)
 
     def _on_row_right_click(self, _gesture, _n_press, x, y, row, path):
         def on_launch_finished(launcher, result):
@@ -193,7 +193,7 @@ class HistoryDialog(Adw.Dialog):
                 launcher.open_containing_folder_finish(result)
             except Exception as e:
                 print("Error opening location:", repr(e))
-                GLib.idle_add(self._show_toast, f"{repr(e)}")
+                idle_add_once(self._show_toast, f"{repr(e)}")
 
         def show_in_folder():
             gfile = Gio.File.new_for_path(path)
@@ -230,7 +230,7 @@ class HistoryDialog(Adw.Dialog):
             self.close()
         except Exception as e:
             print(f"Error playing {file_path}: {e}")
-            GLib.idle_add(self._show_toast, f"{repr(e)}")
+            idle_add_once(self._show_toast, f"{repr(e)}")
 
     def _rm_entry_from_hist(self, row, file_path, day_key, timestamp):
         try:
@@ -281,7 +281,7 @@ class HistoryDialog(Adw.Dialog):
 
         except Exception as e:
             print(f"Failed to remove item from history: {e}")
-            GLib.idle_add(self._show_toast, f"{repr(e)}")
+            idle_add_once(self._show_toast, f"{repr(e)}")
 
     def _show_toast(self, label: str):
         toast = Adw.Toast(title=label)

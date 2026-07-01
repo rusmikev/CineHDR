@@ -40,6 +40,7 @@ from .utils import (
     get_gpu_vendor,
     format_time,
     get_display_param,
+    idle_add_once,
     display,
     has_host_permission,
     MBTN_MAP,
@@ -821,7 +822,7 @@ class CineWindow(Adw.ApplicationWindow):
         if close:
             self.close()
         else:
-            GLib.idle_add(self._show_toast, _("Session Saved"))
+            idle_add_once(self._show_toast, _("Session Saved"))
 
     def _on_open_url(self, *args, add=False):
         mode = "append-play" if add else "replace"
@@ -1060,12 +1061,12 @@ class CineWindow(Adw.ApplicationWindow):
 
         if curr_time - self.last_preview_update > 0.3:
             self.last_preview_update = curr_time
-            GLib.idle_add(self._update_video_preview)
+            idle_add_once(self._update_video_preview)
 
     def _late_update_preview(self):
         """Update preview when the cursor is stopped"""
         self.late_preview_id = 0
-        GLib.idle_add(self._update_video_preview)
+        idle_add_once(self._update_video_preview)
 
     def _on_progress_scroll(self, controller, _dx, dy):
         event: Gdk.ScrollEvent = controller.get_current_event()
@@ -1251,7 +1252,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.app_mpris._update_shuffle(button.props.active)
 
         if isinstance(self.visible_dialog, Playlist):
-            GLib.idle_add(self._splice_playlist)
+            idle_add_once(self._splice_playlist)
 
     def _on_loop_playlist_toggled(self, button):
         if button.props.active:
@@ -1318,7 +1319,7 @@ class CineWindow(Adw.ApplicationWindow):
 
             except GLib.Error as e:
                 print(f"File error path: {self.loaded_path}")
-                GLib.idle_add(self._show_toast, _("File Error") + f": {e.message}")
+                idle_add_once(self._show_toast, _("File Error") + f": {e.message}")
                 self.spinner.set_visible(False)
                 return
 
@@ -1368,7 +1369,7 @@ class CineWindow(Adw.ApplicationWindow):
                         )
                     except Exception as e:
                         print("Drop error:", repr(e))
-                        GLib.idle_add(self._show_toast, str(e))
+                        idle_add_once(self._show_toast, str(e))
                         return
 
                 file_type = info.get_file_type()
@@ -1694,7 +1695,7 @@ class CineWindow(Adw.ApplicationWindow):
             **display_param,
         )
 
-        self.mpv_ctx.update_cb = lambda: GLib.idle_add(self.gl_area.queue_render)
+        self.mpv_ctx.update_cb = lambda: idle_add_once(self.gl_area.queue_render)
 
         self.fbo = ctypes.c_int()
 
@@ -1808,7 +1809,7 @@ class CineWindow(Adw.ApplicationWindow):
     def _setup_observers(self):
         @self.mpv.event_callback("start-file")
         def on_start_file(_event):
-            GLib.idle_add(self.spinner.set_visible, True)
+            idle_add_once(self.spinner.set_visible, True)
             self.loaded_path = str(self.mpv.path)
 
         @self.mpv.event_callback("file-loaded")
@@ -1832,13 +1833,13 @@ class CineWindow(Adw.ApplicationWindow):
                 except mpv.ShutdownError:
                     pass
 
-            GLib.idle_add(update)
+            idle_add_once(update)
             GLib.timeout_add_seconds(5, setattr, self, "error_count", 0)
 
         @self.mpv.event_callback("end-file")
         def on_end_file(event):
-            GLib.idle_add(self.spinner.set_visible, False)
-            GLib.idle_add(self.start_page.set_sensitive, True)
+            idle_add_once(self.spinner.set_visible, False)
+            idle_add_once(self.start_page.set_sensitive, True)
 
             try:
                 curr_pos = self.mpv.playlist_pos
@@ -1854,7 +1855,7 @@ class CineWindow(Adw.ApplicationWindow):
                     self.error_count += 1
                     print(f"File error path: {self.loaded_path}")
                     error = info["file_error"].decode("utf-8")
-                    GLib.idle_add(self._show_toast, _("File Error") + f": {error}")
+                    idle_add_once(self._show_toast, _("File Error") + f": {error}")
 
                     if self.error_count == 20:
                         self.mpv.stop()
@@ -1863,14 +1864,14 @@ class CineWindow(Adw.ApplicationWindow):
                 elif (
                     not self.mpv.keep_open and self.mpv.idle_active and not self.startup
                 ):
-                    GLib.idle_add(self.close)
+                    idle_add_once(self.close)
             except mpv.ShutdownError:
                 pass
 
         @self.mpv.property_observer("path")
         def on_path_change(_name, has_file):
             if has_file:
-                GLib.idle_add(self.play_pause_btn.set_sensitive, has_file)
+                idle_add_once(self.play_pause_btn.set_sensitive, has_file)
 
         @self.mpv.property_observer("playlist-count")
         def on_playlist_count_change(_name, _count):
@@ -1880,7 +1881,7 @@ class CineWindow(Adw.ApplicationWindow):
                     GLib.source_remove(self.playlist_debounce_id)
                     self.playlist_debounce_id = 0
                 self.playlist_debounce_id = GLib.timeout_add(75, self._splice_playlist)
-            GLib.idle_add(self._update_playlist_nav_sensitivity)
+            idle_add_once(self._update_playlist_nav_sensitivity)
 
         @self.mpv.property_observer("playlist-pos")
         def on_playlist_pos_changed(_name, pos):
@@ -1896,7 +1897,7 @@ class CineWindow(Adw.ApplicationWindow):
                 finally:
                     self.playlist_prev_pos = pos
 
-            GLib.idle_add(update_playing_item)
+            idle_add_once(update_playing_item)
 
         @self.mpv.property_observer("loop-playlist")
         def on_loop_playlist_change(_name, value):
@@ -1905,7 +1906,7 @@ class CineWindow(Adw.ApplicationWindow):
                 self._update_playlist_nav_sensitivity()
                 self.app_mpris._update_loop()
 
-            GLib.idle_add(update)
+            idle_add_once(update)
 
         @self.mpv.property_observer("loop-file")
         def on_loop_file_change(_name, value):
@@ -1913,7 +1914,7 @@ class CineWindow(Adw.ApplicationWindow):
                 self.loop_file_toggle_btn.set_active(value == "inf")
                 self.app_mpris._update_loop()
 
-            GLib.idle_add(update)
+            idle_add_once(update)
 
         @self.mpv.property_observer("fullscreen")
         def on_fs_change(_name, value):
@@ -1928,19 +1929,19 @@ class CineWindow(Adw.ApplicationWindow):
                 self.fullscreen_btn.set_icon_name(icon)
                 self._sync_fullscreen(value)
 
-            GLib.idle_add(update)
+            idle_add_once(update)
 
         @self.mpv.property_observer("time-pos")
         def on_time_change(_name, value):
-            GLib.idle_add(self._update_progress, float(value or 0))
+            idle_add_once(self._update_progress, float(value or 0))
 
         @self.mpv.property_observer("seeking")
         def on_seeking_change(_name, _is_seeking):
-            GLib.idle_add(self.app_mpris._emit_seeked)
+            idle_add_once(self.app_mpris._emit_seeked)
 
         @self.mpv.property_observer("duration")
         def on_duration_change(_name, value):
-            GLib.idle_add(self._update_duration, float(value or 0))
+            idle_add_once(self._update_duration, float(value or 0))
 
         @self.mpv.property_observer("mute")
         def on_mute_change(_name, muted):
@@ -1963,7 +1964,7 @@ class CineWindow(Adw.ApplicationWindow):
                     self._show_icon_indicator()
                     self.mpv._set_property("user-data/show-icon", None)
 
-            GLib.idle_add(update_mute)
+            idle_add_once(update_mute)
 
         @self.mpv.property_observer("volume")
         def on_volume_change(_name, value):
@@ -1984,7 +1985,7 @@ class CineWindow(Adw.ApplicationWindow):
                 settings.set_int("volume", vol)
                 self.app_mpris._update_volume(vol)
 
-            GLib.idle_add(update_icon_and_vol_adj)
+            idle_add_once(update_icon_and_vol_adj)
 
         track_map = {
             "sid": "select-subtitle",
@@ -2001,38 +2002,38 @@ class CineWindow(Adw.ApplicationWindow):
                         GLib.Variant("i", val)
                     )
 
-            GLib.idle_add(set_track)
+            idle_add_once(set_track)
 
         for prop in track_map.keys():
             self.mpv.property_observer(prop)(on_track_change)
 
         @self.mpv.property_observer("track-list")
         def on_track_list_change(_name, track_list):
-            GLib.idle_add(self._update_track_menus, track_list)
+            idle_add_once(self._update_track_menus, track_list)
 
         @self.mpv.property_observer("playlist-pos")
         def on_pl_pos_change(_name, _value):
-            GLib.idle_add(self._update_playlist_nav_sensitivity)
+            idle_add_once(self._update_playlist_nav_sensitivity)
 
         @self.mpv.property_observer("chapter-list")
         def on_chapter_list_change(_name, chapters):
             self.current_chapters = (
                 sorted(chapters, key=lambda c: c.get("time", 0)) if chapters else []
             )
-            GLib.idle_add(self._update_chapter_marks_and_menu, chapters)
+            idle_add_once(self._update_chapter_marks_and_menu, chapters)
 
         @self.mpv.property_observer("chapter")
         def on_chapter_change(_name, chapter_idx):
             if chapter_idx is not None and self.chapters_menu_btn.get_active():
-                GLib.idle_add(self._sync_chapter_menu_selected)
+                idle_add_once(self._sync_chapter_menu_selected)
 
         @self.mpv.property_observer("pause")
         def on_pause_change(_name, paused):
             if self.mpv.eof_reached:  # allow to replay at eof, requires keep-open
                 self.mpv.seek(0, reference="absolute")
 
-            GLib.idle_add(self._sync_inhibit)
-            GLib.idle_add(self._update_play_pause_icon, paused)
+            idle_add_once(self._sync_inhibit)
+            idle_add_once(self._update_play_pause_icon, paused)
 
         @self.mpv.property_observer("idle-active")
         def on_idle_change(_name, is_idle):
@@ -2057,7 +2058,7 @@ class CineWindow(Adw.ApplicationWindow):
 
             self.startup = False
 
-            GLib.idle_add(update_state)
+            idle_add_once(update_state)
 
         @self.mpv.property_observer("media-title")
         def on_title_change(_name, title):
@@ -2080,14 +2081,14 @@ class CineWindow(Adw.ApplicationWindow):
                     pass
 
             if title:
-                GLib.idle_add(set)
+                idle_add_once(set)
 
         @self.mpv.property_observer("sub-scale")
         def on_sub_scale_change(_name, value):
             def set_sett_scale():
                 settings.set_double("subtitle-scale", value)
 
-            GLib.idle_add(set_sett_scale)
+            idle_add_once(set_sett_scale)
 
         @self.mpv.property_observer("sub-visibility")
         @self.mpv.property_observer("sid")
@@ -2120,7 +2121,7 @@ class CineWindow(Adw.ApplicationWindow):
                 except mpv.ShutdownError:
                     pass
 
-            GLib.idle_add(set_icon)
+            idle_add_once(set_icon)
 
         @self.mpv.property_observer("aid")
         def on_aid_change(_name, value):
@@ -2130,14 +2131,14 @@ class CineWindow(Adw.ApplicationWindow):
                     "cine-audio-symbolic" if audio_on else "cine-audio-off-symbolic"
                 )
 
-            GLib.idle_add(set_icon)
+            idle_add_once(set_icon)
 
         @self.mpv.property_observer("vid")
         def on_vid_change(_name, value):
-            GLib.idle_add(self.audio_only_icon.set_visible, not bool(value))
+            idle_add_once(self.audio_only_icon.set_visible, not bool(value))
             if not value:
                 # clear the last frame, which sometimes can still be present
-                GLib.idle_add(self.gl_area.queue_render)
+                idle_add_once(self.gl_area.queue_render)
 
         @self.mpv.property_observer("video-zoom")
         def on_zoom_change(_name, value):
@@ -2155,7 +2156,7 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.event_callback("shutdown")
         def on_quit(_event):
-            GLib.idle_add(self.close)
+            idle_add_once(self.close)
 
     def _connect(self, signal_name):
         return lambda func: self.connect(signal_name, func)
