@@ -160,6 +160,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.current_chapters: list = []
         self.actions: dict[str, Gio.SimpleAction] = {}
         self.prev_motion_xy: tuple = (0, 0)
+        self.hover_time: float = 0.0
         self.prev_prog_motion_xy: tuple = (0, 0)
         self.inhibit_cookie: int = 0
         self.loaded_path: str
@@ -948,7 +949,7 @@ class CineWindow(Adw.ApplicationWindow):
 
             @self.preview_player.property_observer("time-pos")
             def pos_observer(_name, pos):
-                if hasattr(self, "hover_time") and pos:
+                if pos and pos >= 0:
 
                     def on_screenshot_ready(_, result):
                         if result is None:
