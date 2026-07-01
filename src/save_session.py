@@ -28,6 +28,10 @@ def save_last_playlist_file(win_mpv):
     try:
         win_mpv["save-position-on-quit"] = True
         with open(LAST_PLAYLIST_FILE, "w", encoding="utf-8") as f:
+            if win_mpv.idle_active:
+                f.write("")
+                return
+
             f.write("#EXTM3U\n")
             for item in win_mpv.playlist:
                 path = item.get("filename")
@@ -48,7 +52,7 @@ def save_last_playlist_file(win_mpv):
 def restore_last_playlist(window, app, win_mpv):
     """Restore the last playlist if its the first window."""
 
-    if len(app.get_windows()) > 1:
+    if len(app.get_windows()) > 1 or os.path.getsize(LAST_PLAYLIST_FILE) == 0:
         return
 
     if os.path.exists(LAST_PLAYLIST_FILE):
