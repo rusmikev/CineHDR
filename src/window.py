@@ -161,7 +161,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.actions: dict[str, Gio.SimpleAction] = {}
         self.prev_motion_xy: tuple = (0, 0)
         self.prev_prog_motion_xy: tuple = (0, 0)
-        self.inhibit_id: int = 0
+        self.inhibit_cookie: int = 0
         self.loaded_path: str
         self.startup: bool = True
         self.space_hold_id: int = 0
@@ -1728,15 +1728,15 @@ class CineWindow(Adw.ApplicationWindow):
         except mpv.ShutdownError:
             should_inhibit = False
 
-        if should_inhibit and self.inhibit_id == 0:
-            self.inhibit_id = self.app.inhibit(
+        if should_inhibit and self.inhibit_cookie == 0:
+            self.inhibit_cookie = self.app.inhibit(
                 self,
                 Gtk.ApplicationInhibitFlags.IDLE,
                 "Playing Media",
             )
-        elif not should_inhibit and self.inhibit_id != 0:
-            self.app.uninhibit(self.inhibit_id)
-            self.inhibit_id = 0
+        elif not should_inhibit and self.inhibit_cookie != 0:
+            self.app.uninhibit(self.inhibit_cookie)
+            self.inhibit_cookie = 0
 
     def _show_icon_indicator(self):
         if self.mpv.idle_active or self.click_delay_id:
@@ -1758,8 +1758,8 @@ class CineWindow(Adw.ApplicationWindow):
         except mpv.ShutdownError:
             pass
 
-        if self.inhibit_id:
-            self.app.uninhibit(self.inhibit_id)
+        if self.inhibit_cookie:
+            self.app.uninhibit(self.inhibit_cookie)
 
         return False
 
