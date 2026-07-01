@@ -161,6 +161,8 @@ class CineWindow(Adw.ApplicationWindow):
         self.actions: dict[str, Gio.SimpleAction] = {}
         self.prev_motion_xy: tuple = (0, 0)
         self.hover_time: float = 0.0
+        self.show_remaining: bool = settings.get_boolean("show-remaining")
+        self.prev_prog_time: float = -1.0
         self.prev_prog_motion_xy: tuple = (0, 0)
         self.inhibit_cookie: int = 0
         self.loaded_path: str
@@ -1098,28 +1100,34 @@ class CineWindow(Adw.ApplicationWindow):
 
     @Gtk.Template.Callback()
     def _toggle_elapsed_remaining(self, _btn):
-        settings.set_boolean(
-            "show-remaining", not settings.get_boolean("show-remaining")
-        )
+        self.show_remaining = not self.show_remaining
+        settings.set_boolean("show-remaining", self.show_remaining)
         pos = float(self.mpv.time_pos or 0)
         self._update_progress(pos, update_bar=False)
+        self.time_elapsed_label.props.margin_end = 3 if self.show_remaining else 0
 
-    def _update_progress(self, current_time, update_bar=True):
+    def _update_progress(self, curr_time, update_bar=True):
+        curr_time = round(curr_time, 1)
+
+        if update_bar and curr_time == self.prev_prog_time:
+            return
+
         if update_bar:
             self.video_progress_adj.handler_block_by_func(self._on_progress_adjusted)
-            self.video_progress_adj.set_value(current_time)
+            self.video_progress_adj.props.value = curr_time
             self.video_progress_adj.handler_unblock_by_func(self._on_progress_adjusted)
+
         try:
-            if settings.get_boolean("show-remaining"):
+            if self.show_remaining:
                 duration = float(self.mpv.duration or 0)
-                remaining = (duration - current_time) if duration > current_time else 0
-                self.time_elapsed_label.set_text(f"-{format_time(remaining)}")
-                self.time_elapsed_label.props.margin_end = 3
+                remaining = (duration - curr_time) if duration > curr_time else 0
+                self.time_elapsed_label.props.label = f"-{format_time(remaining)}"
             else:
-                self.time_elapsed_label.set_text(format_time(current_time))
-                self.time_elapsed_label.props.margin_end = 0
+                self.time_elapsed_label.props.label = format_time(curr_time)
         except mpv.ShutdownError:
             pass
+
+        self.prev_prog_time = curr_time
 
     def _update_chapter_marks_and_menu(self, chapters):
         if not chapters:
