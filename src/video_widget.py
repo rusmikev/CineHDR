@@ -182,6 +182,7 @@ class MpvVideoWidget(Gtk.Widget):
         self.apply_hdr_settings()
 
     def apply_hdr_settings(self):
+        # Apply tone mapping parameters and target primaries for HDR playback
         try:
             self.mpv["target-colorspace-hint"] = "yes" if self._hdr_enabled else "no"
             if self._hdr_enabled:
