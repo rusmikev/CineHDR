@@ -62,6 +62,7 @@ class OptionsMenuButton(Gtk.MenuButton):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._syncing_ui = False
         self.connect("realize", self._on_realize)
         self.connect("notify::active", self._on_active)
 
@@ -149,6 +150,11 @@ class OptionsMenuButton(Gtk.MenuButton):
         self.hdr_gamut_dropdown.connect("notify::selected", self._on_hdr_gamut_changed)
         self.hdr_gamut_row.append(self.hdr_gamut_dropdown)
 
+        # Prevent gamut dropdown popover from stealing autohide
+        popover_gamut = self.hdr_gamut_dropdown.get_first_child().get_next_sibling()  # type: ignore
+        if popover_gamut:
+            popover_gamut.set_autohide(False)  # type: ignore
+
         main_box.append(self.hdr_gamut_row)
 
         # Peak Brightness Row
@@ -169,11 +175,18 @@ class OptionsMenuButton(Gtk.MenuButton):
         self.hdr_peak_dropdown.connect("notify::selected", self._on_hdr_peak_changed)
         self.hdr_peak_row.append(self.hdr_peak_dropdown)
 
+        # Prevent peak dropdown popover from stealing autohide
+        popover_peak = self.hdr_peak_dropdown.get_first_child().get_next_sibling()  # type: ignore
+        if popover_peak:
+            popover_peak.set_autohide(False)  # type: ignore
+
         main_box.append(self.hdr_peak_row)
 
     def _on_active(self, *arg):
         if not self.get_active():
             return
+
+        self._syncing_ui = True
 
         hwdec_on = settings.get_boolean("hwdec")
         hwdec = str(self.win.mpv.hwdec_current)
@@ -255,6 +268,8 @@ class OptionsMenuButton(Gtk.MenuButton):
             except Exception:
                 self.hdr_peak_dropdown.set_selected(0)
 
+        self._syncing_ui = False
+
         try:
             crop_str = cast(str, self.win.mpv["video-crop"])
 
@@ -294,6 +309,8 @@ class OptionsMenuButton(Gtk.MenuButton):
         self._on_hdr_reset()
 
     def _on_hdr_toggled(self, switch, gparam):
+        if self._syncing_ui:
+            return
         active = switch.get_active()
         self.win.gl_area.hdr_enabled = active
         self.hdr_gamut_row.set_sensitive(active)
@@ -302,6 +319,8 @@ class OptionsMenuButton(Gtk.MenuButton):
         self._save_hdr_full_config()
 
     def _on_hdr_gamut_changed(self, dropdown, gparam):
+        if self._syncing_ui:
+            return
         idx = dropdown.get_selected()
         gl_area = self.win.gl_area
         if idx == 0:
@@ -314,6 +333,8 @@ class OptionsMenuButton(Gtk.MenuButton):
         self._save_hdr_full_config()
 
     def _on_hdr_peak_changed(self, dropdown, gparam):
+        if self._syncing_ui:
+            return
         idx = dropdown.get_selected()
         gl_area = self.win.gl_area
         peaks = ["auto", "200", "400", "600", "1000", "1600"]
