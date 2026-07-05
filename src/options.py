@@ -112,7 +112,7 @@ class OptionsMenuButton(Gtk.MenuButton):
         reset_btn = Gtk.Button(icon_name="edit-undo-symbolic")
         reset_btn.set_tooltip_text(_("Reset HDR"))
         reset_btn.add_css_class("flat")
-        reset_btn.connect("clicked", lambda *a: self.hdr_switch.set_active(True))
+        reset_btn.connect("clicked", lambda *a: self._on_hdr_reset())
         hdr_row.append(reset_btn)
 
         label = Gtk.Label(label=_("HDR Playback"))
@@ -130,6 +130,46 @@ class OptionsMenuButton(Gtk.MenuButton):
         hdr_row.append(self.hdr_switch)
 
         main_box.append(hdr_row)
+
+        # Gamut Row
+        self.hdr_gamut_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.hdr_gamut_row.set_margin_start(24)
+
+        gamut_label = Gtk.Label(label=_("HDR Gamut Mapping"))
+        gamut_label.set_halign(Gtk.Align.START)
+        self.hdr_gamut_row.append(gamut_label)
+
+        gamut_sep = Gtk.Separator(hexpand=True, opacity=0)
+        self.hdr_gamut_row.append(gamut_sep)
+
+        gamut_sl = Gtk.StringList.new([_("Auto (BT.2020)"), _("DCI-P3 (Recommended)"), _("sRGB (Standard)")])
+        self.hdr_gamut_dropdown = Gtk.DropDown.new(model=gamut_sl)
+        self.hdr_gamut_dropdown.set_halign(Gtk.Align.END)
+        self.hdr_gamut_dropdown.set_width_request(150)
+        self.hdr_gamut_dropdown.connect("notify::selected", self._on_hdr_gamut_changed)
+        self.hdr_gamut_row.append(self.hdr_gamut_dropdown)
+
+        main_box.append(self.hdr_gamut_row)
+
+        # Peak Brightness Row
+        self.hdr_peak_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.hdr_peak_row.set_margin_start(24)
+
+        peak_label = Gtk.Label(label=_("HDR Peak Brightness"))
+        peak_label.set_halign(Gtk.Align.START)
+        self.hdr_peak_row.append(peak_label)
+
+        peak_sep = Gtk.Separator(hexpand=True, opacity=0)
+        self.hdr_peak_row.append(peak_sep)
+
+        peak_sl = Gtk.StringList.new([_("Auto"), "200 nits", "400 nits", "600 nits", "1000 nits", "1600 nits"])
+        self.hdr_peak_dropdown = Gtk.DropDown.new(model=peak_sl)
+        self.hdr_peak_dropdown.set_halign(Gtk.Align.END)
+        self.hdr_peak_dropdown.set_width_request(150)
+        self.hdr_peak_dropdown.connect("notify::selected", self._on_hdr_peak_changed)
+        self.hdr_peak_row.append(self.hdr_peak_dropdown)
+
+        main_box.append(self.hdr_peak_row)
 
     def _on_active(self, *arg):
         if not self.get_active():
@@ -177,8 +217,43 @@ class OptionsMenuButton(Gtk.MenuButton):
         set_open_val(self.audio_delay_spin, float(self.win.mpv["audio-delay"] or 0))
         set_open_val(self.speed_spin, float(self.win.mpv["speed"] or 1.0))
 
-        if self.hdr_switch.get_active() != self.win.gl_area.hdr_enabled:
-            self.hdr_switch.set_active(self.win.gl_area.hdr_enabled)
+        gl_area = self.win.gl_area
+        if self.hdr_switch.get_active() != gl_area.hdr_enabled:
+            self.hdr_switch.set_active(gl_area.hdr_enabled)
+
+        self.hdr_gamut_row.set_sensitive(gl_area.hdr_enabled)
+        self.hdr_peak_row.set_sensitive(gl_area.hdr_enabled)
+
+        # Set gamut dropdown selection
+        prim = gl_area.hdr_target_prim
+        if prim == "auto":
+            self.hdr_gamut_dropdown.set_selected(0)
+        elif prim == "dci-p3":
+            self.hdr_gamut_dropdown.set_selected(1)
+        else:
+            self.hdr_gamut_dropdown.set_selected(2)
+
+        # Set peak dropdown selection
+        peak = gl_area.hdr_target_peak
+        if peak == "auto":
+            self.hdr_peak_dropdown.set_selected(0)
+        else:
+            try:
+                p_val = int(float(peak))
+                if p_val == 200:
+                    self.hdr_peak_dropdown.set_selected(1)
+                elif p_val == 400:
+                    self.hdr_peak_dropdown.set_selected(2)
+                elif p_val == 600:
+                    self.hdr_peak_dropdown.set_selected(3)
+                elif p_val == 1000:
+                    self.hdr_peak_dropdown.set_selected(4)
+                elif p_val == 1600:
+                    self.hdr_peak_dropdown.set_selected(5)
+                else:
+                    self.hdr_peak_dropdown.set_selected(0)
+            except Exception:
+                self.hdr_peak_dropdown.set_selected(0)
 
         try:
             crop_str = cast(str, self.win.mpv["video-crop"])
@@ -216,14 +291,50 @@ class OptionsMenuButton(Gtk.MenuButton):
         self.sub_delay_spin.set_value(0)
         self.audio_delay_spin.set_value(0)
         self.speed_spin.set_value(1.0)
-        self.hdr_switch.set_active(True)
+        self._on_hdr_reset()
 
     def _on_hdr_toggled(self, switch, gparam):
         active = switch.get_active()
         self.win.gl_area.hdr_enabled = active
+        self.hdr_gamut_row.set_sensitive(active)
+        self.hdr_peak_row.set_sensitive(active)
         self.win.gl_area.queue_draw()
-        from .video_widget import save_hdr_setting
-        save_hdr_setting(active)
+        self._save_hdr_full_config()
+
+    def _on_hdr_gamut_changed(self, dropdown, gparam):
+        idx = dropdown.get_selected()
+        gl_area = self.win.gl_area
+        if idx == 0:
+            gl_area.hdr_target_prim = "auto"
+        elif idx == 1:
+            gl_area.hdr_target_prim = "dci-p3"
+        else:
+            gl_area.hdr_target_prim = "bt.709"
+        self.win.gl_area.queue_draw()
+        self._save_hdr_full_config()
+
+    def _on_hdr_peak_changed(self, dropdown, gparam):
+        idx = dropdown.get_selected()
+        gl_area = self.win.gl_area
+        peaks = ["auto", "200", "400", "600", "1000", "1600"]
+        gl_area.hdr_target_peak = peaks[idx]
+        self.win.gl_area.queue_draw()
+        self._save_hdr_full_config()
+
+    def _on_hdr_reset(self):
+        self.hdr_switch.set_active(True)
+        self.hdr_gamut_dropdown.set_selected(1) # Default DCI-P3 (Recommended)
+        self.hdr_peak_dropdown.set_selected(0)  # Default Auto
+        self._save_hdr_full_config()
+
+    def _save_hdr_full_config(self):
+        from .video_widget import save_hdr_config
+        config = {
+            "hdr_enabled": self.hdr_switch.get_active(),
+            "hdr_target_prim": self.win.gl_area.hdr_target_prim,
+            "hdr_target_peak": self.win.gl_area.hdr_target_peak
+        }
+        save_hdr_config(config)
 
     # --- ASPECT ---
     @Gtk.Template.Callback()

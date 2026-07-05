@@ -114,23 +114,41 @@ glCheckFramebufferStatus = get_gl_func(
 HDR_CONFIG_PATH = os.path.join(CONFIG_DIR, "hdr_config.json")
 
 
-def load_hdr_setting():
+def load_hdr_config():
     try:
         if os.path.exists(HDR_CONFIG_PATH):
             with open(HDR_CONFIG_PATH, "r") as f:
                 data = json.load(f)
-                return data.get("hdr_enabled", True)
+                return {
+                    "hdr_enabled": data.get("hdr_enabled", True),
+                    "hdr_target_peak": data.get("hdr_target_peak", "auto"),
+                    "hdr_target_prim": data.get("hdr_target_prim", "dci-p3")
+                }
     except Exception as e:
         print(f"Error loading HDR config: {e}")
-    return True
+    return {
+        "hdr_enabled": True,
+        "hdr_target_peak": "auto",
+        "hdr_target_prim": "dci-p3"
+    }
+
+
+def save_hdr_config(config):
+    try:
+        with open(HDR_CONFIG_PATH, "w") as f:
+            json.dump(config, f)
+    except Exception as e:
+        print(f"Error saving HDR config: {e}")
+
+
+def load_hdr_setting():
+    return load_hdr_config()["hdr_enabled"]
 
 
 def save_hdr_setting(enabled):
-    try:
-        with open(HDR_CONFIG_PATH, "w") as f:
-            json.dump({"hdr_enabled": enabled}, f)
-    except Exception as e:
-        print(f"Error saving HDR config: {e}")
+    cfg = load_hdr_config()
+    cfg["hdr_enabled"] = enabled
+    save_hdr_config(cfg)
 
 
 class MpvVideoWidget(Gtk.Widget):
@@ -157,11 +175,28 @@ class MpvVideoWidget(Gtk.Widget):
         self.mpv_ctx = None
         self.current_texture = None
 
-        self._hdr_enabled = load_hdr_setting()
+        config = load_hdr_config()
+        self._hdr_enabled = config["hdr_enabled"]
+        self._hdr_target_peak = config["hdr_target_peak"]
+        self._hdr_target_prim = config["hdr_target_prim"]
+        self.apply_hdr_settings()
+
+    def apply_hdr_settings(self):
         try:
             self.mpv["target-colorspace-hint"] = "yes" if self._hdr_enabled else "no"
+            if self._hdr_enabled:
+                self.mpv["target-prim"] = self._hdr_target_prim
+                if self._hdr_target_peak == "auto":
+                    self.mpv["target-peak"] = "auto"
+                else:
+                    self.mpv["target-peak"] = float(self._hdr_target_peak)
+                self.mpv["target-trc"] = "pq"
+            else:
+                self.mpv["target-prim"] = "auto"
+                self.mpv["target-peak"] = "auto"
+                self.mpv["target-trc"] = "auto"
         except Exception as e:
-            print(f"Error setting target-colorspace-hint: {e}")
+            print(f"Error applying HDR settings: {e}")
 
     @property
     def hdr_enabled(self):
@@ -170,10 +205,25 @@ class MpvVideoWidget(Gtk.Widget):
     @hdr_enabled.setter
     def hdr_enabled(self, value):
         self._hdr_enabled = value
-        try:
-            self.mpv["target-colorspace-hint"] = "yes" if value else "no"
-        except Exception as e:
-            print(f"Error setting target-colorspace-hint: {e}")
+        self.apply_hdr_settings()
+
+    @property
+    def hdr_target_peak(self):
+        return self._hdr_target_peak
+
+    @hdr_target_peak.setter
+    def hdr_target_peak(self, value):
+        self._hdr_target_peak = value
+        self.apply_hdr_settings()
+
+    @property
+    def hdr_target_prim(self):
+        return self._hdr_target_prim
+
+    @hdr_target_prim.setter
+    def hdr_target_prim(self, value):
+        self._hdr_target_prim = value
+        self.apply_hdr_settings()
 
     def _on_realize(self, area):
         area.make_current()
