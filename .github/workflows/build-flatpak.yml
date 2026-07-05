@@ -18,8 +18,9 @@ jobs:
 
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
-      # Don't fail the whole workflow if one architecture fails
+        # Currently building x86_64 only for fast CI (~4 mins).
+        # To enable ARM builds, add aarch64 back: [x86_64, aarch64]
+        arch: [x86_64]
       fail-fast: false
 
     steps:
@@ -46,7 +47,4 @@ jobs:
           manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
           cache-key: flatpak-builder-${{ github.sha }}
           run-tests: false
-      - uses: actions/upload-artifact@v4
-        with:
-          name: CineHDR-Flatpak-${{ matrix.arch }}
-          path: CineHDR.flatpak
+          arch: ${{ matrix.arch }}
