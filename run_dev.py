@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
 import os
 import sys
+import subprocess
 import gi
 
 # Insert the script directory at the beginning of the python path
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+root_dir = os.path.abspath(os.path.dirname(__file__))
+sys.path.insert(0, root_dir)
 
-# Point GSettings to the installed Flatpak schemas directory
-schema_dir = '/var/lib/flatpak/app/io.github.diegopvlk.Cine/x86_64/stable/cd135e5025e8076cfadcc1c65a8361e64bdbbd8858660eb5b0b30cf2cd5260d4/files/share/glib-2.0/schemas'
-os.environ['GSETTINGS_SCHEMA_DIR'] = schema_dir
+# Ensure build directory and gresource are compiled
+build_dir = os.path.join(root_dir, "build")
+gresource_path = os.path.join(build_dir, "src", "cinehdr.gresource")
+data_dir = os.path.join(root_dir, "data")
 
-# Load the gresource from the installed Flatpak
-gresource_path = '/var/lib/flatpak/app/io.github.diegopvlk.Cine/x86_64/stable/cd135e5025e8076cfadcc1c65a8361e64bdbbd8858660eb5b0b30cf2cd5260d4/files/share/cine/cine.gresource'
+if not os.path.exists(gresource_path):
+    print("Compiling resources with Meson...")
+    if not os.path.exists(build_dir):
+        subprocess.run(["meson", "setup", "build"], cwd=root_dir, check=True)
+    subprocess.run(["meson", "compile", "-C", "build"], cwd=root_dir, check=True)
+
+# Point GSettings and XDG_DATA_DIRS to local data directory
+os.environ['GSETTINGS_SCHEMA_DIR'] = data_dir
+xdg_data = os.environ.get('XDG_DATA_DIRS', '/usr/local/share:/usr/share')
+os.environ['XDG_DATA_DIRS'] = f"{data_dir}:{xdg_data}"
 
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio
@@ -23,5 +34,5 @@ except Exception as e:
     print(f"Failed to load gresource: {e}")
     sys.exit(1)
 
-from cine import main
-sys.exit(main.main('1.7.1-hdr'))
+from src import main
+sys.exit(main.main('1.7.1-hdr-dev'))

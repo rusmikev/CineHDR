@@ -24,7 +24,7 @@ Play your videos
 **Changes in this fork / Изменения в этом форке:**
 * Replaced standard `GtkGLArea` with a custom high-precision float rendering pipeline (`GL_RGBA16F`).
 * Integrated Wayland HDR color state signaling (`rec2100-pq` / `srgb` textures) via GTK4 ColorState APIs.
-* Added a dynamic **HDR Playback** toggle in the Options menu for real-time SDR/HDR switching.
+* Added a dedicated **HDR Settings** control icon on the playback panel (visible when playing HDR content) for real-time SDR/HDR switching and peak/gamut adjustment.
 * Decoupled D-Bus naming flags (`NON_UNIQUE`) to allow running alongside the official Flatpak build.
 * Provided system integration launcher (**CineHDR**).
 

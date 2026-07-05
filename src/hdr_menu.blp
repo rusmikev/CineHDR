@@ -1,0 +1,120 @@
+using Gtk 4.0;
+
+template $HdrMenuButton: MenuButton {
+  name: "hdr-options";
+
+  styles [
+    "circular",
+    "flat",
+  ]
+
+  direction: up;
+  halign: center;
+  icon-name: "cine-hdr-symbolic";
+  tooltip-text: _("HDR Settings");
+  visible: false;
+
+  popover: Popover {
+    styles [
+      "popover-scrolled",
+    ]
+
+    Box {
+      orientation: vertical;
+      spacing: 12;
+      margin-top: 12;
+      margin-bottom: 12;
+      margin-start: 12;
+      margin-end: 12;
+
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        Button reset_btn {
+          icon-name: "edit-undo-symbolic";
+          tooltip-text: _("Reset HDR");
+          styles [
+            "flat",
+          ]
+          clicked => $_on_hdr_reset();
+        }
+
+        Label {
+          label: _("HDR Playback");
+          halign: start;
+          styles [
+            "heading",
+          ]
+        }
+
+        Separator {
+          hexpand: true;
+          opacity: 0;
+        }
+
+        Switch hdr_switch {
+          halign: end;
+          notify::active => $_on_hdr_toggled();
+        }
+      }
+
+      Box hdr_gamut_row {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label {
+          label: _("HDR Gamut Mapping");
+          halign: start;
+        }
+
+        Separator {
+          hexpand: true;
+          opacity: 0;
+        }
+
+        DropDown hdr_gamut_dropdown {
+          halign: end;
+          model: StringList {
+            strings [
+              _("Auto (BT.2020)"),
+              _("DCI-P3 (Recommended)"),
+              _("sRGB (Standard)"),
+            ]
+          };
+          notify::selected => $_on_hdr_gamut_changed();
+        }
+      }
+
+      Box hdr_peak_row {
+        orientation: horizontal;
+        spacing: 8;
+
+        Label {
+          label: _("HDR Peak Brightness");
+          halign: start;
+        }
+
+        Separator {
+          hexpand: true;
+          opacity: 0;
+        }
+
+        DropDown hdr_peak_dropdown {
+          halign: end;
+          model: StringList {
+            strings [
+              _("Auto"),
+              "200 nits",
+              "400 nits",
+              "600 nits",
+              "1000 nits",
+              "1600 nits",
+            ]
+          };
+          notify::selected => $_on_hdr_peak_changed();
+        }
+      }
+    }
+  };
+}

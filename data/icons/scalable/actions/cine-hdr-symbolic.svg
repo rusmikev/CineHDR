@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="16px" height="16px" viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg">
+  <g fill="#000000" fill-rule="evenodd">
+    <!-- H -->
+    <path d="M 0 4 L 2 4 L 2 7 L 3 7 L 3 4 L 5 4 L 5 12 L 3 12 L 3 9 L 2 9 L 2 12 L 0 12 Z"/>
+    <!-- D -->
+    <path d="M 6 4 L 9 4 L 10 5 L 10 11 L 9 12 L 6 12 Z M 8 6 L 8 10 L 9 10 L 9 6 Z"/>
+    <!-- R -->
+    <path d="M 11 4 L 14 4 L 15 5 L 15 8 L 14 9 L 15 12 L 13 12 L 13 9 L 13 9 L 13 12 L 11 12 Z M 13 6 L 13 7 L 14 7 L 14 6 Z"/>
+  </g>
+</svg>

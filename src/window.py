@@ -54,6 +54,7 @@ from .utils import (
 
 from .history import HistoryDialog
 from .options import OptionsMenuButton
+from .hdr_menu import HdrMenuButton
 from .playlist import Playlist, PlaylistItemObj
 from .preferences import settings, sync_mpv_with_settings
 from .shortcuts import INTERNAL_BINDINGS, populate_shortcuts_dialog_mpv
@@ -123,6 +124,7 @@ class CineWindow(Adw.ApplicationWindow):
     chapters_menu_btn: Gtk.MenuButton = Gtk.Template.Child()
     chapters_menu: Gio.Menu = Gtk.Template.Child()
     options_menu_btn: OptionsMenuButton = Gtk.Template.Child()
+    hdr_menu_btn: HdrMenuButton = Gtk.Template.Child()
     shuffle_toggle_btn: Gtk.ToggleButton = Gtk.Template.Child()
     loop_toggle_btn: Gtk.ToggleButton = Gtk.Template.Child()
     loop_file_toggle_btn: Gtk.ToggleButton = Gtk.Template.Child()
@@ -484,6 +486,7 @@ class CineWindow(Adw.ApplicationWindow):
             self.primary_menu_btn,
             self.open_menu_btn,
             self.options_menu_btn,
+            self.hdr_menu_btn,
             self.volume_menu_btn,
             self.subtitles_menu_btn,
             self.audio_tracks_menu_btn,
@@ -518,6 +521,7 @@ class CineWindow(Adw.ApplicationWindow):
             ],
             Gtk.PropagationLimit.NONE: [
                 self.options_menu_btn,
+                self.hdr_menu_btn,
             ],
         }
         for limit, buttons in groups.items():
@@ -573,6 +577,7 @@ class CineWindow(Adw.ApplicationWindow):
                 or self.primary_menu_btn.props.active
                 or self.open_menu_btn.props.active
                 or self.options_menu_btn.props.active
+                or self.hdr_menu_btn.props.active
                 or self.volume_menu_btn.props.active
                 or self.subtitles_menu_btn.props.active
                 or self.audio_tracks_menu_btn.props.active
@@ -2099,6 +2104,18 @@ class CineWindow(Adw.ApplicationWindow):
             if not value:
                 # clear the last frame, which sometimes can still be present
                 idle_add_once(self.gl_area.queue_render)
+                idle_add_once(self.hdr_menu_btn.set_visible, False)
+
+        @self.mpv.property_observer("video-params")
+        def on_video_params_change(_name, params):
+            def update_hdr_btn():
+                is_hdr = False
+                if params and isinstance(params, dict):
+                    primaries = params.get("primaries")
+                    gamma = params.get("gamma")
+                    is_hdr = ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
+                self.hdr_menu_btn.set_visible(is_hdr)
+            idle_add_once(update_hdr_btn)
 
         @self.mpv.property_observer("video-zoom")
         def on_zoom_change(_name, value):

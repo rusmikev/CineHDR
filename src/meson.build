@@ -8,6 +8,7 @@ blueprints = custom_target('blueprints',
     'playlist.blp',
     'preferences.blp',
     'options.blp',
+    'hdr_menu.blp',
     'shortcuts-dialog.blp',
     'window.blp',
   ),
@@ -42,6 +43,7 @@ configure_file(
 
 cine_sources = [
   '__init__.py',
+  'hdr_menu.py',
   'history.py',
   'main.py',
   'mpris.py',

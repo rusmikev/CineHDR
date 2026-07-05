@@ -186,12 +186,15 @@ class MpvVideoWidget(Gtk.Widget):
         try:
             self.mpv["target-colorspace-hint"] = "yes" if self._hdr_enabled else "no"
             if self._hdr_enabled:
+                self.mpv["target-trc"] = "pq"
                 self.mpv["target-prim"] = self._hdr_target_prim
                 if self._hdr_target_peak == "auto":
                     self.mpv["target-peak"] = "auto"
                 else:
-                    self.mpv["target-peak"] = float(self._hdr_target_peak)
-                self.mpv["target-trc"] = "pq"
+                    try:
+                        self.mpv["target-peak"] = int(float(self._hdr_target_peak))
+                    except (ValueError, TypeError):
+                        self.mpv["target-peak"] = str(self._hdr_target_peak)
             else:
                 self.mpv["target-prim"] = "auto"
                 self.mpv["target-peak"] = "auto"

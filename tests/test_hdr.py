@@ -141,13 +141,13 @@ class TestApplyHDRSettings(unittest.TestCase):
 
         mock_mpv["target-colorspace-hint"] = "yes" if hdr_enabled else "no"
         if hdr_enabled:
-            mock_mpv["target-prim"] = target_prim
-            mock_mpv["target-peak"] = float(target_peak) if target_peak != "auto" else "auto"
             mock_mpv["target-trc"] = "pq"
+            mock_mpv["target-prim"] = target_prim
+            mock_mpv["target-peak"] = int(float(target_peak)) if target_peak != "auto" else "auto"
 
         self.assertEqual(props["target-colorspace-hint"], "yes")
         self.assertEqual(props["target-prim"], "dci-p3")
-        self.assertEqual(props["target-peak"], 400.0)
+        self.assertEqual(props["target-peak"], 400)
         self.assertEqual(props["target-trc"], "pq")
 
     def test_hdr_disabled_resets_to_auto(self):
@@ -172,17 +172,17 @@ class TestApplyHDRSettings(unittest.TestCase):
         if target_peak == "auto":
             mock_mpv["target-peak"] = "auto"
         else:
-            mock_mpv["target-peak"] = float(target_peak)
+            mock_mpv["target-peak"] = int(float(target_peak))
         self.assertEqual(props["target-peak"], "auto")
 
     def test_hdr_numeric_peak(self):
-        """When peak is numeric, target-peak should be a float."""
+        """When peak is numeric, target-peak should be an int."""
         mock_mpv, props = self._make_mock_mpv()
-        for peak_str, expected in [("200", 200.0), ("400", 400.0), ("600", 600.0), ("1000", 1000.0), ("1600", 1600.0)]:
+        for peak_str, expected in [("200", 200), ("400", 400), ("600", 600), ("1000", 1000), ("1600", 1600)]:
             if peak_str == "auto":
                 mock_mpv["target-peak"] = "auto"
             else:
-                mock_mpv["target-peak"] = float(peak_str)
+                mock_mpv["target-peak"] = int(float(peak_str))
             self.assertEqual(props["target-peak"], expected, f"Failed for peak={peak_str}")
 
     def test_all_gamut_options(self):
@@ -327,6 +327,20 @@ class TestColorStateSelection(unittest.TestCase):
     def test_pq_without_bt2020(self):
         """PQ gamma without BT.2020 → HDR (PQ is always HDR)."""
         self.assertTrue(self._is_hdr(True, "bt.709", "pq"))
+
+    def test_file_supports_hdr_detection(self):
+        """Test file HDR detection logic for showing/hiding HDR menu button."""
+        def file_supports_hdr(params):
+            if not params or not isinstance(params, dict):
+                return False
+            primaries = params.get("primaries")
+            gamma = params.get("gamma")
+            return ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
+        
+        self.assertTrue(file_supports_hdr({"primaries": "bt.2020", "gamma": "pq"}))
+        self.assertTrue(file_supports_hdr({"primaries": "bt.709", "gamma": "hlg"}))
+        self.assertFalse(file_supports_hdr({"primaries": "bt.709", "gamma": "srgb"}))
+        self.assertFalse(file_supports_hdr(None))
 
 
 if __name__ == "__main__":
