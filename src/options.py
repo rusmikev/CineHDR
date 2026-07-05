@@ -145,7 +145,7 @@ class OptionsMenuButton(Gtk.MenuButton):
         gamut_sl = Gtk.StringList.new([_("Auto (BT.2020)"), _("DCI-P3 (Recommended)"), _("sRGB (Standard)")])
         self.hdr_gamut_dropdown = Gtk.DropDown.new(model=gamut_sl)
         self.hdr_gamut_dropdown.set_halign(Gtk.Align.END)
-        self.hdr_gamut_dropdown.set_width_request(150)
+        self.hdr_gamut_dropdown.set_size_request(150, -1)
         self.hdr_gamut_dropdown.connect("notify::selected", self._on_hdr_gamut_changed)
         self.hdr_gamut_row.append(self.hdr_gamut_dropdown)
 
@@ -165,7 +165,7 @@ class OptionsMenuButton(Gtk.MenuButton):
         peak_sl = Gtk.StringList.new([_("Auto"), "200 nits", "400 nits", "600 nits", "1000 nits", "1600 nits"])
         self.hdr_peak_dropdown = Gtk.DropDown.new(model=peak_sl)
         self.hdr_peak_dropdown.set_halign(Gtk.Align.END)
-        self.hdr_peak_dropdown.set_width_request(150)
+        self.hdr_peak_dropdown.set_size_request(150, -1)
         self.hdr_peak_dropdown.connect("notify::selected", self._on_hdr_peak_changed)
         self.hdr_peak_row.append(self.hdr_peak_dropdown)
 
