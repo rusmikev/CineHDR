@@ -13,3 +13,5 @@ repo
 *.gresource
 *.compiled
 io.github.rusmikev.CineHDR.flatpak
+PROJECT_RULES.md
+AUDIT_TASKS.md

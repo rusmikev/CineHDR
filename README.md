@@ -1,12 +1,13 @@
 <img style="vertical-align: middle;" src="data/icons/hicolor/scalable/apps/io.github.rusmikev.CineHDR.svg" width="112" height="112" align="left">
 
-### Cine
+### CineHDR
 
-Play your videos
+Play your videos with HDR support
 
 <br>
 
-<a href='https://flathub.org/apps/io.github.rusmikev.CineHDR'><img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?svg&locale=en'/></a>
+[![Download Flatpak](https://img.shields.io/badge/Download-Flatpak%20(Actions)-283C54?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/rusmikev/CineHDR/actions)
+[![CI](https://github.com/rusmikev/CineHDR/actions/workflows/build-flatpak.yml/badge.svg)](https://github.com/rusmikev/CineHDR/actions/workflows/build-flatpak.yml)
 
 ---
 
@@ -32,10 +33,11 @@ Play your videos
 
 ### Description
 
-Cine combines a clean interface with a high-performance engine to deliver a seamless viewing experience.
+CineHDR combines a clean interface with a high-performance engine to deliver a seamless viewing experience with HDR support.
 
 ### Features
 
+- **HDR Support** — Passthrough HDR10/HLG content to compatible monitors
 - **Simple Design** — A refined, distraction-free interface
 - **MPV-Based** — Leverages the robust power of MPV for great playback and format support
 - **Audio and Subtitles** — Control track selection and synchronization for both
@@ -54,17 +56,17 @@ Cine combines a clean interface with a high-performance engine to deliver a seam
   </details>
 </div>
 
-### Donate
+### Donate (Upstream Project)
 
-If you want to help with a donation (thank you!), you can use:
+If you want to support the original creator of Cine (Diego Povliuk), you can use:
 
 - [PayPal](https://www.paypal.com/donate?hosted_button_id=DVL7H35GA66X6)
 - [Ko-fi](https://ko-fi.com/diegopvlk)
 - Pix: diego.pvlk@gmail.com
 
-### Translations
+### Translations (Upstream Project)
 
-You can help translate using [Weblate](https://hosted.weblate.org/projects/cine/app/)
+You can help translate upstream Cine using [Weblate](https://hosted.weblate.org/projects/cine/app/)
 
 [![Translation status](https://hosted.weblate.org/widget/cine/app/multi-auto.svg)](https://hosted.weblate.org/engage/cine/)
 

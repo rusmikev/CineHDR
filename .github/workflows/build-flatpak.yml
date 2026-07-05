@@ -18,9 +18,8 @@ jobs:
 
     strategy:
       matrix:
-        # Currently building x86_64 only for fast CI (~4 mins).
-        # To enable ARM builds, add aarch64 back: [x86_64, aarch64]
-        arch: [x86_64]
+        # Building for both standard x86_64 and ARM64 (aarch64 via QEMU emulation).
+        arch: [x86_64, aarch64]
       fail-fast: false
 
     steps:

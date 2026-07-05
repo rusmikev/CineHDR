@@ -227,7 +227,7 @@
             ]
         },
         {
-            "name": "cine",
+            "name": "cinehdr",
             "builddir": true,
             "buildsystem": "meson",
             "sources": [
