@@ -28,7 +28,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, Gtk
 from .utils import CONFIG_DIR, display, has_host_permission, is_flatpak
 
-settings = Gio.Settings.new("io.github.diegopvlk.Cine")
+settings = Gio.Settings.new("io.github.rusmikev.CineHDR")
 
 
 def sync_mpv_with_settings(window):
@@ -63,7 +63,7 @@ def sync_mpv_with_settings(window):
         mpv.command("af", "add", "@cine_loudnorm:lavfi=[loudnorm=I=-20]")
 
 
-@Gtk.Template(resource_path="/io/github/diegopvlk/Cine/preferences.ui")
+@Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/preferences.ui")
 class Preferences(Adw.Dialog):
     __gtype_name__ = "Preferences"
 

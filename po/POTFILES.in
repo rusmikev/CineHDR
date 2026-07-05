@@ -1,7 +1,7 @@
 # List of source files containing translatable strings.
 # Please keep this file sorted alphabetically.
-data/io.github.diegopvlk.Cine.desktop.in
-data/io.github.diegopvlk.Cine.metainfo.xml.in
+data/io.github.rusmikev.CineHDR.desktop.in
+data/io.github.rusmikev.CineHDR.metainfo.xml.in
 src/history.blp
 src/history.py
 src/main.py

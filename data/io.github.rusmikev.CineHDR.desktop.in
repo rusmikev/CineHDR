@@ -1,8 +1,8 @@
 [Desktop Entry]
-Name=Cine
+Name=CineHDR
 Comment=Play your videos
-Exec=cine --new-window %U
-Icon=io.github.diegopvlk.Cine
+Exec=cinehdr --new-window %U
+Icon=io.github.rusmikev.CineHDR
 Terminal=false
 Type=Application
 Categories=AudioVideo;Video;Player;GNOME;GTK;
@@ -16,4 +16,4 @@ X-Purism-FormFactor=Workstation;Mobile;
 
 [Desktop Action new-window]
 Name=New Window
-Exec=cine --new-window
+Exec=cinehdr --new-window

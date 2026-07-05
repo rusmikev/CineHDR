@@ -1,4 +1,4 @@
-<img style="vertical-align: middle;" src="data/icons/hicolor/scalable/apps/io.github.diegopvlk.Cine.svg" width="112" height="112" align="left">
+<img style="vertical-align: middle;" src="data/icons/hicolor/scalable/apps/io.github.rusmikev.CineHDR.svg" width="112" height="112" align="left">
 
 ### Cine
 
@@ -6,7 +6,7 @@ Play your videos
 
 <br>
 
-<a href='https://flathub.org/apps/io.github.diegopvlk.Cine'><img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?svg&locale=en'/></a>
+<a href='https://flathub.org/apps/io.github.rusmikev.CineHDR'><img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?svg&locale=en'/></a>
 
 ---
 
@@ -96,7 +96,7 @@ If you want to compile the Flatpak bundle yourself:
    ```
 3. Build and install the application:
    ```bash
-   flatpak-builder --user --install --force-clean build-dir build-aux/flatpak/io.github.diegopvlk.Cine.json
+   flatpak-builder --user --install --force-clean build-dir build-aux/flatpak/io.github.rusmikev.CineHDR.json
    ```
 
 #### Option C: Native compilation / Локальная сборка

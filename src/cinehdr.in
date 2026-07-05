@@ -50,12 +50,12 @@ if __name__ == '__main__':
 
     # This should set the icon/name in sound settings to Cine,
     # but it doesn't work with mpv ao=pipewire
-    GLib.set_prgname('cine')
-    GLib.set_application_name(_('Cine'))
+    GLib.set_prgname('cinehdr')
+    GLib.set_application_name(_('CineHDR'))
 
     from gi.repository import Gio
-    resource = Gio.Resource.load(os.path.join(pkgdatadir, 'cine.gresource'))
+    resource = Gio.Resource.load(os.path.join(pkgdatadir, 'cinehdr.gresource'))
     resource._register()
 
-    from cine import main
+    from cinehdr import main
     sys.exit(main.main(VERSION))

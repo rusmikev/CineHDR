@@ -38,7 +38,7 @@ from .save_session import is_same_playlist
 os.environ["GSK_RENDERER"] = "gl"
 
 # Set the icon shown in gnome sound settings
-os.environ["PIPEWIRE_PROPS"] = '{application.icon-name="io.github.diegopvlk.Cine"}'
+os.environ["PIPEWIRE_PROPS"] = '{application.icon-name="io.github.rusmikev.CineHDR"}'
 
 
 class CineApplication(Adw.Application):
@@ -46,9 +46,9 @@ class CineApplication(Adw.Application):
 
     def __init__(self):
         super().__init__(
-            application_id="io.github.diegopvlk.Cine",
+            application_id="io.github.rusmikev.CineHDR",
             flags=Gio.ApplicationFlags.HANDLES_OPEN | Gio.ApplicationFlags.NON_UNIQUE,
-            resource_base_path="/io/github/diegopvlk/Cine",
+            resource_base_path="/io/github/rusmikev/CineHDR",
         )
 
         self.add_main_option(
@@ -227,7 +227,7 @@ class CineApplication(Adw.Application):
         APP_VERSION = getattr(sys.modules["__main__"], "VERSION")
         about = Adw.AboutDialog(
             application_name=_("Cine"),
-            application_icon="io.github.diegopvlk.Cine",
+            application_icon="io.github.rusmikev.CineHDR",
             developer_name="Diego Povliuk",
             version=APP_VERSION,
             copyright="© 2026 Diego Povliuk",

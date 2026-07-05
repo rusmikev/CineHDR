@@ -1,5 +1,5 @@
 pkgdatadir = get_option('prefix') / get_option('datadir') / meson.project_name()
-moduledir = pkgdatadir / 'cine'
+moduledir = pkgdatadir / 'cinehdr'
 gnome = import('gnome')
 
 blueprints = custom_target('blueprints',
@@ -15,8 +15,8 @@ blueprints = custom_target('blueprints',
   command: [find_program('blueprint-compiler'), 'batch-compile', '@OUTPUT@', '@CURRENT_SOURCE_DIR@', '@INPUT@'],
 )
 
-gnome.compile_resources('cine',
-  'cine.gresource.xml',
+gnome.compile_resources('cinehdr',
+  'cinehdr.gresource.xml',
   gresource_bundle: true,
   install: true,
   install_dir: pkgdatadir,
@@ -32,8 +32,8 @@ conf.set('localedir', get_option('prefix') / get_option('localedir'))
 conf.set('pkgdatadir', pkgdatadir)
 
 configure_file(
-  input: 'cine.in',
-  output: 'cine',
+  input: 'cinehdr.in',
+  output: 'cinehdr',
   configuration: conf,
   install: true,
   install_dir: get_option('bindir'),

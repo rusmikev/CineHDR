@@ -1,9 +1,9 @@
 {
-    "id": "io.github.diegopvlk.Cine",
+    "id": "io.github.rusmikev.CineHDR",
     "runtime": "org.gnome.Platform",
     "runtime-version": "50",
     "sdk": "org.gnome.Sdk",
-    "command": "cine",
+    "command": "cinehdr",
     "finish-args": [
         "--share=ipc",
         "--share=network",

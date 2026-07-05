@@ -1,4 +1,4 @@
-application_id = 'io.github.diegopvlk.Cine'
+application_id = 'io.github.rusmikev.CineHDR'
 
 scalable_dir = 'hicolor' / 'scalable' / 'apps'
 install_data(

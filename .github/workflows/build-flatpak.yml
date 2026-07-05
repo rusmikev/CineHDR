@@ -43,7 +43,7 @@ jobs:
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: Cine.flatpak
-          manifest-path: build-aux/flatpak/io.github.diegopvlk.Cine.json
+          manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
           cache-key: flatpak-builder-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         with:

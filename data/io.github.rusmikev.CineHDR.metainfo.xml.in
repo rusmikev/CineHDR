@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.diegopvlk.Cine</id>
+  <id>io.github.rusmikev.CineHDR</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
 
   <translation type="gettext">cine</translation>
-  <launchable type="desktop-id">io.github.diegopvlk.Cine.desktop</launchable>
+  <launchable type="desktop-id">io.github.rusmikev.CineHDR.desktop</launchable>
   <content_rating type="oars-1.1" />
 
   <url type="homepage">https://github.com/diegopvlk/Cine</url>
