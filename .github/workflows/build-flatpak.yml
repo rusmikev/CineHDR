@@ -45,6 +45,7 @@ jobs:
           bundle: CineHDR.flatpak
           manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
           cache-key: flatpak-builder-${{ github.sha }}
+          run-tests: false
       - uses: actions/upload-artifact@v4
         with:
           name: CineHDR-Flatpak-${{ matrix.arch }}
