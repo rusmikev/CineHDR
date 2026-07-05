@@ -83,7 +83,7 @@ gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1120, 630
 
 
-@Gtk.Template(resource_path="/io/github/diegopvlk/Cine/window.ui")
+@Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/window.ui")
 class CineWindow(Adw.ApplicationWindow):
     __gtype_name__ = "CineWindow"
 
@@ -316,7 +316,7 @@ class CineWindow(Adw.ApplicationWindow):
 
     def _present_shortcuts(self, *args):
         builder = Gtk.Builder.new_from_resource(
-            "/io/github/diegopvlk/Cine/shortcuts-dialog.ui"
+            "/io/github/rusmikev/CineHDR/shortcuts-dialog.ui"
         )
         self.shortcuts_dialog = cast(
             Adw.ShortcutsDialog,  # pyright: ignore[reportAttributeAccessIssue]

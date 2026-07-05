@@ -226,12 +226,12 @@ class CineApplication(Adw.Application):
         """Callback for the app.about action."""
         APP_VERSION = getattr(sys.modules["__main__"], "VERSION")
         about = Adw.AboutDialog(
-            application_name=_("Cine"),
+            application_name=_("CineHDR"),
             application_icon="io.github.rusmikev.CineHDR",
             developer_name="Diego Povliuk",
             version=APP_VERSION,
             copyright="© 2026 Diego Povliuk",
-            issue_url="https://github.com/diegopvlk/Cine/issues",
+            issue_url="https://github.com/rusmikev/CineHDR/issues",
             license_type=Gtk.License.GPL_3_0,
         )
         try:

@@ -1,6 +1,6 @@
 # video_widget.py
 #
-# Copyright 2026 Diego Povliuk, Ruslan Mikev
+# Copyright 2026 Diego Povliuk
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by

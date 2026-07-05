@@ -32,7 +32,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, Gdk, GLib, Gtk
 
 
-@Gtk.Template(resource_path="/io/github/diegopvlk/Cine/history.ui")
+@Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/history.ui")
 class HistoryDialog(Adw.Dialog):
     __gtype_name__ = "HistoryDialog"
 

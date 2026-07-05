@@ -41,7 +41,7 @@ RATIOS = [
 ]
 
 
-@Gtk.Template(resource_path="/io/github/diegopvlk/Cine/options.ui")
+@Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/options.ui")
 class OptionsMenuButton(Gtk.MenuButton):
     __gtype_name__ = "OptionsMenuButton"
 

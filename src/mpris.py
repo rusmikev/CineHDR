@@ -28,7 +28,7 @@ gi.require_version("GLib", "2.0")
 from gi.repository import Adw, Gio, GLib
 
 
-APP_ID = "io.github.diegopvlk.Cine"
+APP_ID = "io.github.rusmikev.CineHDR"
 MEDIAPLAYER2_PLAYER = "org.mpris.MediaPlayer2.Player"
 
 # some gnome extensions can spam properties which can cause frame drops

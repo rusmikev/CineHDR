@@ -48,7 +48,7 @@ class PlaylistItemObj(GObject.Object):
         self.title = None
 
 
-@Gtk.Template(resource_path="/io/github/diegopvlk/Cine/playlist.ui")
+@Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/playlist.ui")
 class Playlist(Adw.Dialog):
     __gtype_name__ = "Playlist"
 
