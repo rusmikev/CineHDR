@@ -58,6 +58,7 @@ from .playlist import Playlist, PlaylistItemObj
 from .preferences import settings, sync_mpv_with_settings
 from .shortcuts import INTERNAL_BINDINGS, populate_shortcuts_dialog_mpv
 from .mpris import MPRIS
+from .video_widget import MpvVideoWidget
 
 gi.require_version("Adw", "1")
 gi.require_version("Gio", "2.0")
@@ -139,16 +140,6 @@ class CineWindow(Adw.ApplicationWindow):
         self.app_mpris: MPRIS = self.app.mpris  # type: ignore
 
         Gtk.WindowGroup().add_window(self)
-
-        self.gl_area: Gtk.GLArea = Gtk.GLArea()
-        self.offload: Gtk.GraphicsOffload = Gtk.GraphicsOffload(child=self.gl_area)
-        self.offload.set_black_background(True)
-
-        vendor: str | None = get_gpu_vendor(libgl)
-        if vendor and "nvidia" in vendor:
-            self.offload.set_enabled(Gtk.GraphicsOffloadEnabled.DISABLED)
-
-        self.video_overlay.set_child(self.offload)
 
         self.visible_dialog: Adw.Dialog | None = None
         self.playlist_ls: Gio.ListStore = Gio.ListStore.new(PlaylistItemObj)
@@ -237,6 +228,16 @@ class CineWindow(Adw.ApplicationWindow):
             save_watch_history=True,
             watch_history_path=WATCH_HISTORY_JSONL,
         )
+
+        self.gl_area = MpvVideoWidget(self.mpv)
+        self.offload = Gtk.GraphicsOffload(child=self.gl_area)
+        self.offload.set_black_background(True)
+
+        vendor = get_gpu_vendor(libgl)
+        if vendor and "nvidia" in vendor:
+            self.offload.set_enabled(Gtk.GraphicsOffloadEnabled.DISABLED)
+
+        self.video_overlay.set_child(self.offload)
 
         if self.mpv["window-maximized"] or settings.get_boolean("is-maximized"):
             self.maximize()
@@ -398,9 +399,6 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.popover_content_box.append(self.chapter_popover_label)
         self.chapter_popover.set_child(self.popover_content_box)
-
-        self.gl_area.connect("realize", self._on_realize_area)
-        self.gl_area.connect("render", self._on_render_area)
 
     def _setup_event_handlers(self):
         key_controller = Gtk.EventControllerKey()
@@ -1677,43 +1675,7 @@ class CineWindow(Adw.ApplicationWindow):
 
         return True
 
-    def _on_realize_area(self, area):
-        area.make_current()
 
-        proc_address_fn = mpv.MpvGlGetProcAddressFn(
-            lambda _inst, name: egl_get_proc_address(name)
-        )
-
-        display_param = get_display_param()
-
-        self.mpv_ctx = mpv.MpvRenderContext(
-            self.mpv,
-            "opengl",
-            opengl_init_params={
-                "get_proc_address": proc_address_fn,
-            },
-            **display_param,
-        )
-
-        self.mpv_ctx.update_cb = lambda: idle_add_once(self.gl_area.queue_render)
-
-        self.fbo = ctypes.c_int()
-
-    def _on_render_area(self, area, _context):
-        try:
-            glGetIntegerv(GL_FRAMEBUFFER_BINDING, self.fbo)
-
-            self.mpv_ctx.render(
-                flip_y=True,
-                opengl_fbo={
-                    "w": area.get_width() * area.props.scale_factor,
-                    "h": area.get_height() * area.props.scale_factor,
-                    "fbo": self.fbo.value,
-                },
-            )
-        except Exception as e:
-            print(f"Render error: {e}")
-            return
 
     def _set_window_size(self, width, height):
         if width <= 0 or height <= 0:

@@ -101,6 +101,36 @@ class OptionsMenuButton(Gtk.MenuButton):
         popover_crop = self.crop_dropdown.get_first_child().get_next_sibling()  # type: ignore
         popover_crop.set_autohide(False)  # type: ignore
 
+        # Programmatically build and append HDR Toggle Row
+        popover = self.get_popover()
+        scrolled = popover.get_child()
+        viewport = scrolled.get_child()
+        main_box = viewport.get_child()
+
+        hdr_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+
+        reset_btn = Gtk.Button(icon_name="edit-undo-symbolic")
+        reset_btn.set_tooltip_text(_("Reset HDR"))
+        reset_btn.add_css_class("flat")
+        reset_btn.connect("clicked", lambda *a: self.hdr_switch.set_active(True))
+        hdr_row.append(reset_btn)
+
+        label = Gtk.Label(label=_("HDR Playback"))
+        label.add_css_class("heading")
+        label.set_halign(Gtk.Align.START)
+        label.set_margin_start(8)
+        hdr_row.append(label)
+
+        sep = Gtk.Separator(hexpand=True, opacity=0)
+        sep.set_margin_end(2)
+        hdr_row.append(sep)
+
+        self.hdr_switch = Gtk.Switch(halign=Gtk.Align.END)
+        self.hdr_switch.connect("notify::active", self._on_hdr_toggled)
+        hdr_row.append(self.hdr_switch)
+
+        main_box.append(hdr_row)
+
     def _on_active(self, *arg):
         if not self.get_active():
             return
@@ -147,6 +177,9 @@ class OptionsMenuButton(Gtk.MenuButton):
         set_open_val(self.audio_delay_spin, float(self.win.mpv["audio-delay"] or 0))
         set_open_val(self.speed_spin, float(self.win.mpv["speed"] or 1.0))
 
+        if self.hdr_switch.get_active() != self.win.gl_area.hdr_enabled:
+            self.hdr_switch.set_active(self.win.gl_area.hdr_enabled)
+
         try:
             crop_str = cast(str, self.win.mpv["video-crop"])
 
@@ -183,6 +216,14 @@ class OptionsMenuButton(Gtk.MenuButton):
         self.sub_delay_spin.set_value(0)
         self.audio_delay_spin.set_value(0)
         self.speed_spin.set_value(1.0)
+        self.hdr_switch.set_active(True)
+
+    def _on_hdr_toggled(self, switch, gparam):
+        active = switch.get_active()
+        self.win.gl_area.hdr_enabled = active
+        self.win.gl_area.queue_draw()
+        from .video_widget import save_hdr_setting
+        save_hdr_setting(active)
 
     # --- ASPECT ---
     @Gtk.Template.Callback()

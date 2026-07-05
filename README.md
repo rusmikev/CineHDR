@@ -8,6 +8,28 @@ Play your videos
 
 <a href='https://flathub.org/apps/io.github.diegopvlk.Cine'><img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?svg&locale=en'/></a>
 
+---
+
+### 📢 CineHDR: AI-Enhanced HDR Fork
+
+> [!IMPORTANT]
+> **Disclaimer:** This repository is an independent fork of the original [Cine](https://github.com/diegopvlk/Cine) video player. 
+> The HDR implementation and UI modifications were co-developed with **Google Gemini (Advanced Agentic Coding AI)**. 
+> This software is provided **"as is"**, without warranty of any kind, express or implied. Use at your own risk.
+>
+> **Дисклеймер:** Этот репозиторий является независимым форком оригинального видеоплеера [Cine](https://github.com/diegopvlk/Cine).
+> Поддержка HDR и изменения в интерфейсе разработаны совместно с **Google Gemini (Advanced Agentic Coding AI)**.
+> Программное обеспечение предоставляется **"как есть" (as is)**, без каких-либо явных или подразумеваемых гарантий.
+
+**Changes in this fork / Изменения в этом форке:**
+* Replaced standard `GtkGLArea` with a custom high-precision float rendering pipeline (`GL_RGBA16F`).
+* Integrated Wayland HDR color state signaling (`rec2100-pq` / `srgb` textures) via GTK4 ColorState APIs.
+* Added a dynamic **HDR Playback** toggle in the Options menu for real-time SDR/HDR switching.
+* Decoupled D-Bus naming flags (`NON_UNIQUE`) to allow running alongside the official Flatpak build.
+* Provided system integration launcher (**CineHDR**).
+
+---
+
 ### Description
 
 Cine combines a clean interface with a high-performance engine to deliver a seamless viewing experience.

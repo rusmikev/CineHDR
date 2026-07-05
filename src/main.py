@@ -47,7 +47,7 @@ class CineApplication(Adw.Application):
     def __init__(self):
         super().__init__(
             application_id="io.github.diegopvlk.Cine",
-            flags=Gio.ApplicationFlags.HANDLES_OPEN,
+            flags=Gio.ApplicationFlags.HANDLES_OPEN | Gio.ApplicationFlags.NON_UNIQUE,
             resource_base_path="/io/github/diegopvlk/Cine",
         )
 

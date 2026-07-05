@@ -51,6 +51,7 @@ cine_sources = [
   'save_session.py',
   'shortcuts.py',
   'utils.py',
+  'video_widget.py',
   'window.py',
 ]
 
