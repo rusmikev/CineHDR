@@ -45,3 +45,7 @@ jobs:
           bundle: Cine.flatpak
           manifest-path: build-aux/flatpak/io.github.diegopvlk.Cine.json
           cache-key: flatpak-builder-${{ github.sha }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CineHDR-Flatpak-${{ matrix.arch }}
+          path: Cine.flatpak

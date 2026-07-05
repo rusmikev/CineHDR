@@ -73,6 +73,36 @@ You can help translate using [Weblate](https://hosted.weblate.org/projects/cine/
 
 This project follows the [GNOME Code of Conduct](https://conduct.gnome.org).
 
-### Build from source
+### Installation / Установка
 
-Clone the repo in GNOME Builder and press run.
+For general users, the easiest way to install **CineHDR** is using Flatpak:
+
+#### Option A: Pre-built Flatpak (Fastest) / Готовая сборка Flatpak
+1. Go to the [Actions](https://github.com/rusmikev/CineHDR/actions) tab of this repository.
+2. Click on the latest workflow run (e.g. "Implement HDR playback support...").
+3. Scroll down to the **Artifacts** section at the bottom and download `CineHDR-Flatpak-x86_64` (for standard PCs) or `CineHDR-Flatpak-aarch64` (for ARM devices).
+4. Unzip the downloaded file to obtain `Cine.flatpak`.
+5. Install it by running the following command in your terminal:
+   ```bash
+   flatpak install --user Cine.flatpak
+   ```
+
+#### Option B: Build Flatpak from source / Сборка Flatpak из исходников
+If you want to compile the Flatpak bundle yourself:
+1. Ensure `flatpak` and `flatpak-builder` are installed on your system.
+2. Add the Flathub repository (required for runtime dependencies):
+   ```bash
+   flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+   ```
+3. Build and install the application:
+   ```bash
+   flatpak-builder --user --install --force-clean build-dir build-aux/flatpak/io.github.diegopvlk.Cine.json
+   ```
+
+#### Option C: Native compilation / Локальная сборка
+1. Install development dependencies (`meson`, `ninja`, `python3-mpv`, and dependencies for GTK4/Adwaita).
+2. Clone the repo, open it in GNOME Builder and press run, or compile it manually using:
+   ```bash
+   meson setup build
+   meson compile -C build
+   ```
