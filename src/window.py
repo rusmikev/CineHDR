@@ -191,7 +191,7 @@ class CineWindow(Adw.ApplicationWindow):
             # terminal=True,
             # log_handler=print,
             loglevel="info",
-            audio_client_name=_("Cine"),
+            audio_client_name=_("CineHDR"),
             screenshot_directory=SCREENSHOT_DIR,
             screenshot_template="cine_%n",
             config=True,
@@ -2016,7 +2016,7 @@ class CineWindow(Adw.ApplicationWindow):
                 if is_idle:
                     self.error_count = 0
                     self.revealer_ui.set_reveal_child(True)
-                    self.set_title(_("Cine"))
+                    self.set_title(_("CineHDR"))
                     self.hide_icon_indicator = True
                     if isinstance(self.visible_dialog, Playlist):
                         self.visible_dialog.close()

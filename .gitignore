@@ -7,4 +7,9 @@ repo
 .git
 .vscode
 /src/__pycache__
+/__pycache__
+*.pyc
+*.ui
+*.gresource
+*.compiled
 io.github.rusmikev.CineHDR.flatpak

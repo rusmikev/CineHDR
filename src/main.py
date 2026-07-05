@@ -238,7 +238,7 @@ class CineApplication(Adw.Application):
             application_icon="io.github.rusmikev.CineHDR",
             developer_name="Diego Povliuk",
             developers=["Diego Povliuk", "rusmikev"],
-            comments=_("Unofficial fork of Cine with HDR playback support, co-developed with Google Gemini."),
+            comments=_("Unofficial fork of Cine with HDR playback support, improved with AI."),
             version=APP_VERSION,
             copyright="© 2026 Diego Povliuk (Original App)\n© 2026 rusmikev (HDR modifications)",
             issue_url="https://github.com/rusmikev/CineHDR/issues",
