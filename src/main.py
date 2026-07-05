@@ -47,7 +47,7 @@ class CineApplication(Adw.Application):
     def __init__(self):
         super().__init__(
             application_id="io.github.rusmikev.CineHDR",
-            flags=Gio.ApplicationFlags.HANDLES_OPEN | Gio.ApplicationFlags.NON_UNIQUE,
+            flags=Gio.ApplicationFlags.HANDLES_OPEN,
             resource_base_path="/io/github/rusmikev/CineHDR",
         )
 
