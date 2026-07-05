@@ -8,22 +8,20 @@
   <launchable type="desktop-id">io.github.rusmikev.CineHDR.desktop</launchable>
   <content_rating type="oars-1.1" />
 
-  <url type="homepage">https://github.com/diegopvlk/Cine</url>
-  <url type="bugtracker">https://github.com/diegopvlk/Cine/issues</url>
-  <url type="vcs-browser">https://github.com/diegopvlk/Cine</url>
-  <url type="donation">https://www.paypal.com/donate?hosted_button_id=DVL7H35GA66X6</url>
-  <url type="translate">https://hosted.weblate.org/projects/cine/app/</url>
-  <update_contact>diego.pvlk@gmail.com</update_contact>
+  <url type="homepage">https://github.com/rusmikev/CineHDR</url>
+  <url type="bugtracker">https://github.com/rusmikev/CineHDR/issues</url>
+  <url type="vcs-browser">https://github.com/rusmikev/CineHDR</url>
 
-  <developer id="io.github.diegopvlk">
-    <name translate="no">Diego Povliuk</name>
+  <developer id="io.github.rusmikev">
+    <name translate="no">rusmikev (fork of Cine by Diego Povliuk)</name>
   </developer>
 
-  <name translate="no">Cine</name>
-  <summary>Play your videos</summary>
+  <name translate="no">CineHDR</name>
+  <summary>Play your videos with HDR support</summary>
   <description>
-    <p>Cine combines a clean interface with a high-performance engine to deliver a seamless viewing experience.</p>
+    <p>CineHDR is an HDR-enabled fork of Cine. It combines a clean interface with a high-performance MPV engine and adds HDR passthrough support for compatible displays.</p>
 		<ul>
+			<li>HDR Support: Passthrough HDR10/HLG content to compatible monitors</li>
 			<li>Simple Design: A refined, distraction-free interface</li>
       <li>MPV-Based: Leverages the robust power of MPV for great playback and format support</li>
       <li>Audio and Subtitles: Control track selection and synchronization for both</li>

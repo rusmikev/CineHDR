@@ -42,10 +42,10 @@ jobs:
           platforms: arm64
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: Cine.flatpak
+          bundle: CineHDR.flatpak
           manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
           cache-key: flatpak-builder-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         with:
           name: CineHDR-Flatpak-${{ matrix.arch }}
-          path: Cine.flatpak
+          path: CineHDR.flatpak
