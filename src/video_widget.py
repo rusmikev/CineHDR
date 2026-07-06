@@ -162,6 +162,20 @@ def save_hdr_setting(enabled):
     save_hdr_config(cfg)
 
 
+def check_hdr_support():
+    try:
+        if not hasattr(Gdk.ColorState, "get_rec2100_pq"):
+            return False
+        display = Gdk.Display.get_default()
+        if not display:
+            return False
+        if "Wayland" not in display.__class__.__name__:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 class MpvVideoWidget(Gtk.Widget):
     """Custom GTK4 video widget integrating libmpv with GdkGLTextureBuilder and HDR."""
 
@@ -208,11 +222,16 @@ class MpvVideoWidget(Gtk.Widget):
     def apply_hdr_settings(self):
         # Apply tone mapping parameters and target primaries for HDR playback
         try:
+            # Check if HDR output is fully supported by GTK and Wayland
+            hdr_supported = check_hdr_support()
+
             # Only apply HDR targets if BOTH user enabled HDR in UI AND content is actually HDR (Risk P-1)
-            if self._hdr_enabled and getattr(self, "_is_hdr_content", False):
+            # AND the system/compositor fully supports Rec2100 PQ signaling
+            if self._hdr_enabled and getattr(self, "_is_hdr_content", False) and hdr_supported:
                 self.mpv["target-colorspace-hint"] = "yes"
                 self.mpv["target-trc"] = "pq"
                 self.mpv["target-prim"] = self._hdr_target_prim
+                self.mpv["hdr-compute-peak"] = "yes"
                 if self._hdr_target_peak == "auto":
                     self.mpv["target-peak"] = "auto"
                 else:
@@ -221,11 +240,13 @@ class MpvVideoWidget(Gtk.Widget):
                     except (ValueError, TypeError):
                         self.mpv["target-peak"] = str(self._hdr_target_peak)
             else:
-                # Safe SDR fallback: do not force PQ tone mapping on SDR content!
+                # Safe SDR fallback: do not force PQ tone mapping on SDR content,
+                # or if the session does not support Wayland HDR signaling!
                 self.mpv["target-colorspace-hint"] = "no"
                 self.mpv["target-prim"] = "auto"
                 self.mpv["target-peak"] = "auto"
                 self.mpv["target-trc"] = "auto"
+                self.mpv["hdr-compute-peak"] = "auto"
         except Exception as e:
             print(f"Error applying HDR settings: {e}")
 
@@ -417,7 +438,21 @@ class MpvVideoWidget(Gtk.Widget):
                 if getattr(self, "_is_hdr_content", None) != content_hdr:
                     self._is_hdr_content = content_hdr
                     idle_add_once(self.apply_hdr_settings)
-                is_hdr = self.hdr_enabled and content_hdr
+
+                hdr_supported = check_hdr_support()
+                is_hdr = self.hdr_enabled and content_hdr and hdr_supported
+
+                if self.hdr_enabled and content_hdr and not hdr_supported:
+                    if not getattr(self, "_hdr_support_warned", False):
+                        display = Gdk.Display.get_default()
+                        reason = "Gdk.ColorState is not available (requires GTK >= 4.16)"
+                        if hasattr(Gdk.ColorState, "get_rec2100_pq"):
+                            if display and "Wayland" not in display.__class__.__name__:
+                                reason = f"HDR signaling is not supported under {display.__class__.__name__} (requires Wayland)"
+                            else:
+                                reason = "Wayland compositor does not support HDR/color management"
+                        print(f"WARNING: HDR playback is active but target output is unsupported: {reason}. Falling back to SDR tonemapping.")
+                        self._hdr_support_warned = True
             except Exception as e:
                 is_hdr = False
 
@@ -425,9 +460,7 @@ class MpvVideoWidget(Gtk.Widget):
                 try:
                     builder.set_color_state(Gdk.ColorState.get_rec2100_pq())
                 except AttributeError:
-                    if not getattr(self, "_colorstate_warned", False):
-                        print("WARNING: Gdk.ColorState is not available on this GTK version (< 4.16). HDR output will fallback to SDR.")
-                        self._colorstate_warned = True
+                    pass
             else:
                 try:
                     builder.set_color_state(Gdk.ColorState.get_srgb())
