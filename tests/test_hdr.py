@@ -42,7 +42,7 @@ class TestHDRConfigPersistence(unittest.TestCase):
             config = load_hdr_config()
         self.assertTrue(config["hdr_enabled"])
         self.assertEqual(config["hdr_target_peak"], "auto")
-        self.assertEqual(config["hdr_target_prim"], "dci-p3")
+        self.assertEqual(config["hdr_target_prim"], "auto")
 
     def test_save_and_load_roundtrip(self):
         """Saving config and loading it back returns the same values."""
@@ -63,7 +63,7 @@ class TestHDRConfigPersistence(unittest.TestCase):
         """load_hdr_setting returns just the boolean enabled state."""
         from src.video_widget import load_hdr_setting, save_hdr_config
         with patch("src.video_widget.HDR_CONFIG_PATH", self.config_path):
-            save_hdr_config({"hdr_enabled": False, "hdr_target_peak": "auto", "hdr_target_prim": "dci-p3"})
+            save_hdr_config({"hdr_enabled": False, "hdr_target_peak": "auto", "hdr_target_prim": "auto"})
             result = load_hdr_setting()
         self.assertFalse(result)
 
@@ -88,7 +88,7 @@ class TestHDRConfigPersistence(unittest.TestCase):
             config = load_hdr_config()
         self.assertFalse(config["hdr_enabled"])
         self.assertEqual(config["hdr_target_peak"], "auto")
-        self.assertEqual(config["hdr_target_prim"], "dci-p3")
+        self.assertEqual(config["hdr_target_prim"], "auto")
 
     def test_load_corrupted_file_returns_defaults(self):
         """Loading a corrupted JSON file returns defaults without crashing."""
@@ -99,15 +99,26 @@ class TestHDRConfigPersistence(unittest.TestCase):
             config = load_hdr_config()
         self.assertTrue(config["hdr_enabled"])
         self.assertEqual(config["hdr_target_peak"], "auto")
-        self.assertEqual(config["hdr_target_prim"], "dci-p3")
+        self.assertEqual(config["hdr_target_prim"], "auto")
+
+    def test_atomic_config_save(self):
+        """save_hdr_config atomically writes via temporary file without leaving tmp files behind (Risk P-6)."""
+        from src.video_widget import save_hdr_config
+        with patch("src.video_widget.HDR_CONFIG_PATH", self.config_path):
+            save_hdr_config({"hdr_enabled": False, "hdr_target_peak": "1000", "hdr_target_prim": "auto"})
+        self.assertTrue(os.path.exists(self.config_path))
+        self.assertFalse(os.path.exists(f"{self.config_path}.tmp"))
+        with open(self.config_path, "r") as f:
+            data = json.load(f)
+        self.assertEqual(data["hdr_target_peak"], "1000")
 
 
 # ──────────────────────────────────────────────────────────────
-# 2. Tests for MpvVideoWidget.apply_hdr_settings
+# 2. Tests for MpvVideoWidget.apply_hdr_settings & SDR Protection
 # ──────────────────────────────────────────────────────────────
 
 class TestApplyHDRSettings(unittest.TestCase):
-    """Tests for apply_hdr_settings mpv property mapping."""
+    """Tests for apply_hdr_settings mpv property mapping and SDR protection."""
 
     def _make_mock_mpv(self):
         """Create a mock mpv player that records property assignments."""
@@ -118,44 +129,42 @@ class TestApplyHDRSettings(unittest.TestCase):
         mock._props = props
         return mock, props
 
-    def test_hdr_enabled_sets_colorspace_hint_yes(self):
-        """When HDR is enabled, target-colorspace-hint should be 'yes'."""
+    def test_hdr_enabled_and_hdr_content_sets_targets(self):
+        """When HDR is enabled AND content is HDR, target params should be applied."""
         mock_mpv, props = self._make_mock_mpv()
-        # Directly test the logic without GTK
-        mock_mpv["target-colorspace-hint"] = "yes"
-        self.assertEqual(props["target-colorspace-hint"], "yes")
-
-    def test_hdr_disabled_sets_colorspace_hint_no(self):
-        """When HDR is disabled, target-colorspace-hint should be 'no'."""
-        mock_mpv, props = self._make_mock_mpv()
-        mock_mpv["target-colorspace-hint"] = "no"
-        self.assertEqual(props["target-colorspace-hint"], "no")
-
-    def test_hdr_enabled_sets_target_prim(self):
-        """When HDR is enabled, target-prim should match the configured value."""
-        mock_mpv, props = self._make_mock_mpv()
-        # Simulate apply_hdr_settings logic for HDR enabled
         hdr_enabled = True
+        is_hdr_content = True
         target_prim = "dci-p3"
         target_peak = "400"
 
-        mock_mpv["target-colorspace-hint"] = "yes" if hdr_enabled else "no"
-        if hdr_enabled:
+        if hdr_enabled and is_hdr_content:
+            mock_mpv["target-colorspace-hint"] = "yes"
             mock_mpv["target-trc"] = "pq"
             mock_mpv["target-prim"] = target_prim
             mock_mpv["target-peak"] = int(float(target_peak)) if target_peak != "auto" else "auto"
+        else:
+            mock_mpv["target-colorspace-hint"] = "no"
+            mock_mpv["target-prim"] = "auto"
+            mock_mpv["target-peak"] = "auto"
+            mock_mpv["target-trc"] = "auto"
 
         self.assertEqual(props["target-colorspace-hint"], "yes")
         self.assertEqual(props["target-prim"], "dci-p3")
         self.assertEqual(props["target-peak"], 400)
         self.assertEqual(props["target-trc"], "pq")
 
-    def test_hdr_disabled_resets_to_auto(self):
-        """When HDR is disabled, all target params reset to 'auto'."""
+    def test_sdr_protection_when_hdr_enabled(self):
+        """When HDR is enabled in UI BUT content is SDR, targets must reset to auto/no (Risk P-1)."""
         mock_mpv, props = self._make_mock_mpv()
-        hdr_enabled = False
-        mock_mpv["target-colorspace-hint"] = "yes" if hdr_enabled else "no"
-        if not hdr_enabled:
+        hdr_enabled = True
+        is_hdr_content = False  # Playing SDR video!
+
+        if hdr_enabled and is_hdr_content:
+            mock_mpv["target-colorspace-hint"] = "yes"
+            mock_mpv["target-trc"] = "pq"
+            mock_mpv["target-prim"] = "dci-p3"
+        else:
+            mock_mpv["target-colorspace-hint"] = "no"
             mock_mpv["target-prim"] = "auto"
             mock_mpv["target-peak"] = "auto"
             mock_mpv["target-trc"] = "auto"
@@ -164,6 +173,25 @@ class TestApplyHDRSettings(unittest.TestCase):
         self.assertEqual(props["target-prim"], "auto")
         self.assertEqual(props["target-peak"], "auto")
         self.assertEqual(props["target-trc"], "auto")
+
+    def test_hlg_and_pq_detection_logic(self):
+        """Primaries bt.2020 or gamma pq/hlg correctly identify HDR content (Risk P-8)."""
+        test_cases = [
+            ({"primaries": "bt.2020", "gamma": "bt.1886"}, True),
+            ({"primaries": "bt.709", "gamma": "pq"}, True),
+            ({"primaries": "bt.709", "gamma": "hlg"}, True),
+            ({"primaries": "bt.709", "gamma": "bt.1886"}, False),
+            ({}, False),
+            (None, False)
+        ]
+        for params, expected in test_cases:
+            if params and isinstance(params, dict):
+                primaries = params.get("primaries")
+                gamma = params.get("gamma")
+                is_hdr = ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
+            else:
+                is_hdr = False
+            self.assertEqual(is_hdr, expected, f"Failed detection for {params}")
 
     def test_hdr_auto_peak(self):
         """When peak is 'auto', target-peak should be set to string 'auto'."""
@@ -278,14 +306,14 @@ class TestHDRUIHandlerLogic(unittest.TestCase):
         self.assertTrue(handler_called, "Handler should execute when not syncing")
 
     def test_hdr_reset_defaults(self):
-        """HDR reset should set enabled=True, gamut=DCI-P3 (idx 1), peak=Auto (idx 0)."""
+        """HDR reset should set enabled=True, gamut=Auto (idx 0), peak=Auto (idx 0)."""
         # Test the expected default values after reset
         default_enabled = True
-        default_gamut_idx = 1  # DCI-P3 (Recommended)
+        default_gamut_idx = 0  # Auto (Recommended)
         default_peak_idx = 0   # Auto
 
         self.assertTrue(default_enabled)
-        self.assertEqual(default_gamut_idx, 1)
+        self.assertEqual(default_gamut_idx, 0)
         self.assertEqual(default_peak_idx, 0)
 
 

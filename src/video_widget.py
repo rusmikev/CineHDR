@@ -114,6 +114,13 @@ glCheckFramebufferStatus = get_gl_func(
 HDR_CONFIG_PATH = os.path.join(CONFIG_DIR, "hdr_config.json")
 
 
+# [CineHDR Architecture Decision]
+# Why HDR settings use a standalone JSON file (hdr_config.json) instead of GSettings:
+# Bypassing GSettings/dconf for HDR parameters is an intentional design choice (Risk P-7).
+# Adding new schema keys to upstream gschema.xml would require recompiling glib schemas
+# and create structural divergence from the original diegopvlk/Cine repository.
+# Using a dedicated JSON file keeps HDR configuration decoupled, portable, and ensures
+# clean, conflict-free merges when synchronizing with upstream releases.
 def load_hdr_config():
     try:
         if os.path.exists(HDR_CONFIG_PATH):
@@ -122,21 +129,25 @@ def load_hdr_config():
                 return {
                     "hdr_enabled": data.get("hdr_enabled", True),
                     "hdr_target_peak": data.get("hdr_target_peak", "auto"),
-                    "hdr_target_prim": data.get("hdr_target_prim", "dci-p3")
+                    "hdr_target_prim": data.get("hdr_target_prim", "auto")
                 }
     except Exception as e:
         print(f"Error loading HDR config: {e}")
     return {
         "hdr_enabled": True,
         "hdr_target_peak": "auto",
-        "hdr_target_prim": "dci-p3"
+        "hdr_target_prim": "auto"
     }
 
 
 def save_hdr_config(config):
     try:
-        with open(HDR_CONFIG_PATH, "w") as f:
+        tmp_path = f"{HDR_CONFIG_PATH}.tmp"
+        with open(tmp_path, "w") as f:
             json.dump(config, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, HDR_CONFIG_PATH)
     except Exception as e:
         print(f"Error saving HDR config: {e}")
 
@@ -179,13 +190,27 @@ class MpvVideoWidget(Gtk.Widget):
         self._hdr_enabled = config["hdr_enabled"]
         self._hdr_target_peak = config["hdr_target_peak"]
         self._hdr_target_prim = config["hdr_target_prim"]
+        self._is_hdr_content = False
+
+        @self.mpv.property_observer("video-params")
+        def _on_video_params(_name, params):
+            is_hdr = False
+            if params and isinstance(params, dict):
+                primaries = params.get("primaries")
+                gamma = params.get("gamma")
+                is_hdr = ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
+            if getattr(self, "_is_hdr_content", None) != is_hdr:
+                self._is_hdr_content = is_hdr
+                idle_add_once(self.apply_hdr_settings)
+
         self.apply_hdr_settings()
 
     def apply_hdr_settings(self):
         # Apply tone mapping parameters and target primaries for HDR playback
         try:
-            self.mpv["target-colorspace-hint"] = "yes" if self._hdr_enabled else "no"
-            if self._hdr_enabled:
+            # Only apply HDR targets if BOTH user enabled HDR in UI AND content is actually HDR (Risk P-1)
+            if self._hdr_enabled and getattr(self, "_is_hdr_content", False):
+                self.mpv["target-colorspace-hint"] = "yes"
                 self.mpv["target-trc"] = "pq"
                 self.mpv["target-prim"] = self._hdr_target_prim
                 if self._hdr_target_peak == "auto":
@@ -196,6 +221,8 @@ class MpvVideoWidget(Gtk.Widget):
                     except (ValueError, TypeError):
                         self.mpv["target-peak"] = str(self._hdr_target_peak)
             else:
+                # Safe SDR fallback: do not force PQ tone mapping on SDR content!
+                self.mpv["target-colorspace-hint"] = "no"
                 self.mpv["target-prim"] = "auto"
                 self.mpv["target-peak"] = "auto"
                 self.mpv["target-trc"] = "auto"
@@ -266,6 +293,18 @@ class MpvVideoWidget(Gtk.Widget):
             glDeleteTextures(1, ctypes.byref(self.texture_id))
             self.texture_id = None
 
+    def do_unroot(self):
+        # Guarantee unrealize and OpenGL resource cleanup when removed from root/window (Risk P-4)
+        if hasattr(self, "gl_area") and self.gl_area and self.gl_area.get_realized():
+            self._on_unrealize(self.gl_area)
+        Gtk.Widget.do_unroot(self)
+
+    def do_dispose(self):
+        # Cleanly unparent child GLArea to prevent GTK reference leaks (Risk P-4)
+        if hasattr(self, "gl_area") and self.gl_area and self.gl_area.get_parent() == self:
+            self.gl_area.unparent()
+        Gtk.Widget.do_dispose(self)
+
     def setup_fbo(self, w, h):
         self.gl_area.make_current()
 
@@ -335,11 +374,11 @@ class MpvVideoWidget(Gtk.Widget):
         scaled_w = int(w * scale)
         scaled_h = int(h * scale)
 
-        # Recreate texture if size changed
+        # Recreate texture only if size changed significantly (> 1px) or not initialized (Risk P-5)
         if (
             self.texture_id.value == 0
-            or self.tex_width != scaled_w
-            or self.tex_height != scaled_h
+            or abs(self.tex_width - scaled_w) > 1
+            or abs(self.tex_height - scaled_h) > 1
         ):
             self.setup_fbo(scaled_w, scaled_h)
 
@@ -372,9 +411,13 @@ class MpvVideoWidget(Gtk.Widget):
                 if params:
                     primaries = params.get("primaries")
                     gamma = params.get("gamma")
-                    is_hdr = self.hdr_enabled and ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
+                    content_hdr = ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
                 else:
-                    is_hdr = False
+                    content_hdr = False
+                if getattr(self, "_is_hdr_content", None) != content_hdr:
+                    self._is_hdr_content = content_hdr
+                    idle_add_once(self.apply_hdr_settings)
+                is_hdr = self.hdr_enabled and content_hdr
             except Exception as e:
                 is_hdr = False
 
@@ -382,7 +425,9 @@ class MpvVideoWidget(Gtk.Widget):
                 try:
                     builder.set_color_state(Gdk.ColorState.get_rec2100_pq())
                 except AttributeError:
-                    pass
+                    if not getattr(self, "_colorstate_warned", False):
+                        print("WARNING: Gdk.ColorState is not available on this GTK version (< 4.16). HDR output will fallback to SDR.")
+                        self._colorstate_warned = True
             else:
                 try:
                     builder.set_color_state(Gdk.ColorState.get_srgb())

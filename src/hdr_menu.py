@@ -50,7 +50,7 @@ class HdrMenuButton(Gtk.MenuButton):
         try:
             config = load_hdr_config()
             enabled = config.get("hdr_enabled", True)
-            prim = config.get("hdr_target_prim", "dci-p3")
+            prim = config.get("hdr_target_prim", "auto")
             peak = config.get("hdr_target_peak", "auto")
 
             self.hdr_switch.set_active(enabled)
@@ -74,7 +74,7 @@ class HdrMenuButton(Gtk.MenuButton):
     @Gtk.Template.Callback()
     def _on_hdr_reset(self, *args):
         self.hdr_switch.set_active(True)
-        self.hdr_gamut_dropdown.set_selected(1)  # Default DCI-P3 (Recommended)
+        self.hdr_gamut_dropdown.set_selected(0)  # Default Auto (Recommended)
         self.hdr_peak_dropdown.set_selected(0)   # Default Auto
         self._save_hdr_full_config()
 
