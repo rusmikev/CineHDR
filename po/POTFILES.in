@@ -2,6 +2,8 @@
 # Please keep this file sorted alphabetically.
 data/io.github.rusmikev.CineHDR.desktop.in
 data/io.github.rusmikev.CineHDR.metainfo.xml.in
+src/hdr_menu.blp
+src/hdr_menu.py
 src/history.blp
 src/history.py
 src/main.py
