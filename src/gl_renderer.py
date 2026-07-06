@@ -134,3 +134,62 @@ class GLFramebufferResource:
         self.width = 0
         self.height = 0
 
+
+class FramebufferSlot:
+    """A single slot in the OpenGL framebuffer ring pool."""
+    def __init__(self, index: int):
+        self.index = index
+        self.resource = GLFramebufferResource()
+        self.in_use = False
+        self.fence = None
+
+
+class GLFramebufferPool:
+    """
+    Ring buffer pool of OpenGL Framebuffer resources with GL fence synchronization.
+
+    Prevents GTK compositor / GPU rendering race conditions (tearing/stuttering) by ensuring
+    libmpv only renders into buffers that are not currently being sampled by GTK.
+    """
+    def __init__(self, size: int = 3):
+        self.size = size
+        self.slots = [FramebufferSlot(i) for i in range(size)]
+        self.dropped_frames = 0
+
+    def acquire(self, w: int, h: int, is_float: bool = True) -> FramebufferSlot | None:
+        """Acquire an available buffer slot from the ring pool."""
+        for slot in self.slots:
+            if not slot.in_use:
+                slot.in_use = True
+                slot.resource.ensure(w, h, is_float=is_float)
+                return slot
+
+        # Pool exhausted: all buffers are currently held by GTK compositor
+        self.dropped_frames += 1
+        return None
+
+    def release_buffer(self, slot: FramebufferSlot):
+        """Release a buffer slot back to the pool, deleting its sync fence."""
+        from .gl_bindings import glDeleteSync
+        if slot.fence and glDeleteSync:
+            try:
+                glDeleteSync(slot.fence)
+            except Exception:
+                pass
+            slot.fence = None
+        slot.in_use = False
+
+    def release_all(self):
+        """Free all OpenGL resources and sync objects across all slots."""
+        from .gl_bindings import glDeleteSync
+        for slot in self.slots:
+            if slot.fence and glDeleteSync:
+                try:
+                    glDeleteSync(slot.fence)
+                except Exception:
+                    pass
+                slot.fence = None
+            slot.resource.release()
+            slot.in_use = False
+
+

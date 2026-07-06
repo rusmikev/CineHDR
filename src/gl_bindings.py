@@ -96,6 +96,19 @@ glCheckFramebufferStatus = get_gl_func(
 glGetError = get_gl_func(
     "glGetError", ctypes.c_uint, []
 )
+glFenceSync = get_gl_func(
+    "glFenceSync", ctypes.c_void_p, [ctypes.c_uint, ctypes.c_uint]
+)
+glDeleteSync = get_gl_func(
+    "glDeleteSync", None, [ctypes.c_void_p]
+)
+glClientWaitSync = get_gl_func(
+    "glClientWaitSync", ctypes.c_uint, [ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint64]
+)
+
+# Sync Constants
+GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117
+GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFF
 
 
 def check_gl_error(step=""):
