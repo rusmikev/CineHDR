@@ -204,7 +204,7 @@ class MPRIS:
 
         return "None"
 
-    def _update_play_pause(self, paused):
+    def _update_playback_status(self, paused):
         status = "Paused" if paused else "Playing"
         self._emit_props_changed({"PlaybackStatus": GLib.Variant("s", status)})
 
@@ -279,11 +279,11 @@ class MPRIS:
             elif method == "Previous":
                 win = self._app.props.active_window
                 if win and win.can_go_prev:  # type: ignore
-                    win._on_previous_clicked(win)  # type: ignore
+                    win._on_previous_clicked()  # type: ignore
             elif method == "Next":
                 win = self._app.props.active_window
                 if win and win.can_go_next:  # type: ignore
-                    win._on_next_clicked(win)  # type: ignore
+                    win._on_next_clicked()  # type: ignore
             elif method == "Stop":
                 p.stop()
                 self._update_props()

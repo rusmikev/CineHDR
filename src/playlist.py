@@ -72,7 +72,7 @@ class Playlist(Adw.Dialog):
 
         n_items = win.playlist_ls.get_n_items()
         shuffle_btn = win.shuffle_toggle_btn
-        shuff_changed = win.last_shuffle != shuffle_btn.props.active
+        shuff_changed = win.prev_shuffle != shuffle_btn.props.active
 
         if n_items == 0 or n_items == 1 or shuff_changed or win.playlist_changed:
             win._splice_playlist()

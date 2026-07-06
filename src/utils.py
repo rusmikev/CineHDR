@@ -123,12 +123,12 @@ def is_local_path(path):
     return False
 
 
-def idle_add_once(callback, *args, **kwargs):
+def idle_add_once(function, *args, **kwargs) -> int:
     def wrapper():
-        callback(*args, **kwargs)
+        function(*args, **kwargs)
         return GLib.SOURCE_REMOVE
 
-    GLib.idle_add(wrapper)
+    return GLib.idle_add(wrapper)
 
 
 def get_gpu_vendor(libgl):

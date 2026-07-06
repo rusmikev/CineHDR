@@ -123,8 +123,8 @@ class CineWindow(Adw.ApplicationWindow):
     chapters_menu: Gio.Menu = Gtk.Template.Child()
     options_menu_btn: OptionsMenuButton = Gtk.Template.Child()
     shuffle_toggle_btn: Gtk.ToggleButton = Gtk.Template.Child()
-    loop_toggle_btn: Gtk.ToggleButton = Gtk.Template.Child()
-    loop_file_toggle_btn: Gtk.ToggleButton = Gtk.Template.Child()
+    loop_playlist_btn: Gtk.ToggleButton = Gtk.Template.Child()
+    loop_file_btn: Gtk.ToggleButton = Gtk.Template.Child()
     fullscreen_btn: Gtk.Button = Gtk.Template.Child()
     time_elapsed_label: Gtk.Label = Gtk.Template.Child()
     progress_box: Gtk.Box = Gtk.Template.Child()
@@ -154,7 +154,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.playlist_ls: Gio.ListStore = Gio.ListStore.new(PlaylistItemObj)
         self.playlist_debounce_id: int = 0
         self.playlist_prev_pos: int
-        self.last_shuffle: bool = False
+        self.prev_shuffle: bool = False
         self.playlist_changed: bool = False
         self.has_some_doc_path: bool = False
         self.can_go_prev: bool = False
@@ -168,7 +168,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.prev_prog_time: float = -1.0
         self.prev_prog_motion_xy: tuple = (0, 0)
         self.inhibit_cookie: int = 0
-        self.loaded_path: str
+        self.loaded_path: str = ""
         self.startup: bool = True
         self.space_hold_id: int = 0
         self.space_holding: bool = False
@@ -355,8 +355,8 @@ class CineWindow(Adw.ApplicationWindow):
         )
 
         self.shuffle_toggle_btn.connect("toggled", self._on_shuffle_toggled)
-        self.loop_toggle_btn.connect("toggled", self._on_loop_playlist_toggled)
-        self.loop_file_toggle_btn.connect("toggled", self._on_loop_file_toggled)
+        self.loop_playlist_btn.connect("toggled", self._on_loop_playlist_toggled)
+        self.loop_file_btn.connect("toggled", self._on_loop_file_toggled)
 
         self.fullscreen_btn.connect(
             "clicked",
@@ -1165,21 +1165,18 @@ class CineWindow(Adw.ApplicationWindow):
             item.set_action_and_target_value("win.select-chapter", GLib.Variant("i", i))
             self.chapters_menu.append_item(item)
 
-    def _on_previous_clicked(self, _):
-        pos = abs(cast(int, self.mpv.playlist_pos))
-        count = cast(int, self.mpv.playlist_count)
-        if pos == 0:
-            self.mpv.playlist_pos = count - 1
-        else:
-            self.mpv.playlist_prev()
+    def _navigate_playlist(self, direction: int):
+        pos = int(self.mpv.playlist_pos or 0)
+        count = int(self.mpv.playlist_count or 0)
 
-    def _on_next_clicked(self, _):
-        pos = abs(cast(int, self.mpv.playlist_pos))
-        count = cast(int, self.mpv.playlist_count)
-        if pos == count - 1:
-            self.mpv.playlist_pos = 0
-        else:
-            self.mpv.playlist_next()
+        if count > 0:
+            self.mpv.playlist_pos = (pos + direction) % count
+
+    def _on_previous_clicked(self, *args):
+        self._navigate_playlist(-1)
+
+    def _on_next_clicked(self, *args):
+        self._navigate_playlist(+1)
 
     def _on_subtitle_selected(self, action, parameter):
         self.mpv.command("set", "sub-visibility", "yes")
@@ -1221,7 +1218,7 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.icon_indicator.props.icon_name = pause if paused else play
         self._show_icon_indicator()
-        self.app_mpris._update_play_pause(paused)
+        self.app_mpris._update_playback_status(paused)
 
     def _update_duration(self, duration):
         self.time_total_label.set_text(format_time(duration))
@@ -1253,33 +1250,36 @@ class CineWindow(Adw.ApplicationWindow):
         self.mpv.command_async("seek", adjustment.props.value, "absolute")
 
     def _on_shuffle_toggled(self, button):
-        if button.props.active:
-            self.mpv.command("playlist-shuffle")
-        else:
-            self.mpv.command("playlist-unshuffle")
-        self.last_shuffle = not button.props.active
+        active = button.props.active
 
-        self.app_mpris._update_shuffle(button.props.active)
+        cmd = "playlist-shuffle" if active else "playlist-unshuffle"
+        self.mpv.command(cmd)
+
+        self.app_mpris._update_shuffle(active)
+        self.prev_shuffle = not active
 
         if isinstance(self.visible_dialog, Playlist):
             idle_add_once(self._splice_playlist)
 
+    def _set_loop_state(self, loop, active):
+        if loop == "playlist":
+            self.mpv.loop_playlist = "inf" if active else "no"
+            if active:
+                self.mpv.loop_file = "no"
+                self.loop_file_btn.set_active(False)
+            self._update_playlist_nav_sensitivity()
+
+        elif loop == "file":
+            self.mpv.loop_file = "inf" if active else "no"
+            if active:
+                self.mpv.loop_playlist = "no"
+                self.loop_playlist_btn.set_active(False)
+
     def _on_loop_playlist_toggled(self, button):
-        if button.props.active:
-            self.mpv.loop_playlist = "inf"
-            self.mpv.loop_file = "no"
-            self.loop_file_toggle_btn.set_active(False)
-        else:
-            self.mpv.loop_playlist = "no"
-        self._update_playlist_nav_sensitivity()
+        self._set_loop_state("playlist", button.props.active)
 
     def _on_loop_file_toggled(self, button):
-        if button.props.active:
-            self.mpv.loop_file = "inf"
-            self.mpv.loop_playlist = "no"
-            self.loop_toggle_btn.props.active = False
-        else:
-            self.mpv.loop_file = "no"
+        self._set_loop_state("file", button.props.active)
 
     def _update_playlist_nav_sensitivity(self):
         try:
@@ -1298,7 +1298,7 @@ class CineWindow(Adw.ApplicationWindow):
             self.next_btn.props.sensitive = self.can_go_next
 
             self.shuffle_toggle_btn.props.visible = has_multiple
-            self.loop_toggle_btn.props.visible = has_multiple
+            self.loop_playlist_btn.props.visible = has_multiple
         except mpv.ShutdownError:
             pass
 
@@ -1360,8 +1360,7 @@ class CineWindow(Adw.ApplicationWindow):
             if isinstance(item, Gio.File):
                 path = item.get_path() or item.get_uri()
 
-                # URL Thumbnail
-                is_url = not is_local_path(path)
+                is_url = not is_local_path(path)  # URL Thumbnail
 
                 if is_url:
                     self.mpv.loadfile(path, mode)
@@ -1404,12 +1403,9 @@ class CineWindow(Adw.ApplicationWindow):
             if mode == "replace":
                 self.mpv.command_async("set", "pause", "no")
 
-    def _sync_fullscreen(self, mpv_is_fs):
+    def _sync_fullscreen(self, mpv_is_fs: bool):
         self.is_fs = mpv_is_fs
-        if mpv_is_fs:
-            self.fullscreen()
-        else:
-            self.unfullscreen()
+        self.fullscreen() if mpv_is_fs else self.unfullscreen()
 
     def _set_space_holding(self, hold):
         if hold:
@@ -1808,7 +1804,7 @@ class CineWindow(Adw.ApplicationWindow):
             self.visible_dialog._set_item_count()
 
         self.playlist_ls.splice(0, self.playlist_ls.get_n_items(), new_items)
-        self.last_shuffle = self.shuffle_toggle_btn.props.active
+        self.prev_shuffle = self.shuffle_toggle_btn.props.active
         self.playlist_changed = False
 
     def _show_toast(self, label: str):
@@ -1912,7 +1908,7 @@ class CineWindow(Adw.ApplicationWindow):
         @self.mpv.property_observer("loop-playlist")
         def on_loop_playlist_change(_name, value):
             def update():
-                self.loop_toggle_btn.set_active(value == "inf")
+                self.loop_playlist_btn.set_active(value == "inf")
                 self._update_playlist_nav_sensitivity()
                 self.app_mpris._update_loop()
 
@@ -1921,7 +1917,7 @@ class CineWindow(Adw.ApplicationWindow):
         @self.mpv.property_observer("loop-file")
         def on_loop_file_change(_name, value):
             def update():
-                self.loop_file_toggle_btn.set_active(value == "inf")
+                self.loop_file_btn.set_active(value == "inf")
                 self.app_mpris._update_loop()
 
             idle_add_once(update)
