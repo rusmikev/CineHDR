@@ -1531,12 +1531,7 @@ class CineWindow(Adw.ApplicationWindow):
         if button != "MBTN_LEFT":
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
-        controls_hover = self.motion_controls.props.contains_pointer
-        header_hover = self.motion_header.props.contains_pointer
-        separator_hover = self.motion_controls_separator.props.contains_pointer
-        hovering = (controls_hover or header_hover) and not separator_hover
-
-        if not button or hovering:
+        if not button or self._is_hovering():
             return
 
         # Back and forward dont trigger _on_click_released when video is playing (??)
@@ -1550,12 +1545,7 @@ class CineWindow(Adw.ApplicationWindow):
 
     def _on_click_hold(self, gesture, *args):
         try:
-            controls_hover = self.motion_controls.props.contains_pointer
-            header_hover = self.motion_header.props.contains_pointer
-            separator_hover = self.motion_controls_separator.props.contains_pointer
-            hovering = (controls_hover or header_hover) and not separator_hover
-
-            if self.space_holding or hovering:
+            if self.space_holding or self._is_hovering():
                 return
 
             self.click_holding = True
@@ -1573,14 +1563,10 @@ class CineWindow(Adw.ApplicationWindow):
 
         button = MBTN_MAP.get(gesture.get_button())
 
-        controls_hover = self.motion_controls.props.contains_pointer
-        header_hover = self.motion_header.props.contains_pointer
-        separator_hover = self.motion_controls_separator.props.contains_pointer
         ignored_btn = not button or button in ("MBTN_BACK", "MBTN_FORWARD")
-        hovering = (controls_hover or header_hover) and not separator_hover
         ignore_left = self.is_inactive and button == "MBTN_LEFT" and self.left_clk == 1
 
-        if ignored_btn or hovering or ignore_left:
+        if ignored_btn or ignore_left or self._is_hovering():
             return
 
         if self.click_delay_id:
@@ -1684,6 +1670,13 @@ class CineWindow(Adw.ApplicationWindow):
         adj.set_value(new_vol)
 
         return True
+
+    def _is_hovering(self):
+        controls_hover = self.motion_controls.props.contains_pointer
+        header_hover = self.motion_header.props.contains_pointer
+        separator_hover = self.motion_controls_separator.props.contains_pointer
+        hovering = (controls_hover or header_hover) and not separator_hover
+        return hovering
 
     def _on_realize_area(self, area):
         area.make_current()
