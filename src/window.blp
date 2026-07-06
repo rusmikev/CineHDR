@@ -41,6 +41,7 @@ template $CineWindow: Adw.ApplicationWindow {
           Image icon_indicator {
             halign: center;
             valign: center;
+            pixel-size: 64;
 
             styles [
               "icon-indicator",
@@ -78,6 +79,7 @@ template $CineWindow: Adw.ApplicationWindow {
 
               title-widget: Adw.WindowTitle title_widget {
                 title: _("Cine");
+                visible: false;
               };
 
               styles [

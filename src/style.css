@@ -1,10 +1,21 @@
+@define-color window_bg_color rgba(5, 5, 6, 0.925);
+@define-color window_fg_color #e5e5e5;
+@define-color card_bg_color rgba(60, 60, 62, 0.66);
+@define-color popover_bg_color rgba(25, 25, 27, 0.975);
+@define-color dialog_bg_color @window_bg_color;
+
 window {
-  --card-bg-color: rgba(60, 60, 62, 0.66);
   --cine-grey: #e5e5e5;
+  --window-bg-color: rgba(5, 5, 6, 0.925);
+  --window-fg-color: var(--cine-grey);
+  --card-bg-color: rgba(60, 60, 62, 0.66);
+  --popover-bg-color: rgba(25, 25, 27, 0.975);
+  --popover-fg-color: var(--cine-grey);
+  --dialog-bg-color: var(--window-bg-color);
 }
 
 label.link {
-  --accent-color: #91c4ff;
+  --accent-color: @accent_color;
 }
 
 .osd {
@@ -31,24 +42,21 @@ label.link {
   );
 }
 .header-and-controls {
-  background:
-    linear-gradient(
-      180deg,
-      rgba(0, 0, 0, 0.3) 0%,
-      rgba(0, 0, 0, 0.15) 5%,
-      rgba(0, 0, 0, 0) 17%
-    ),
-    linear-gradient(
-      0deg,
-      rgba(0, 0, 0, 0.4) 0%,
-      rgba(0, 0, 0, 0.23) 10%,
-      rgba(0, 0, 0, 0) 35%
-    );
+  background-image: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.32) 0%,
+    rgba(0, 0, 0, 0.16) 5%,
+    rgba(0, 0, 0, 0) 17%,
+    rgba(0, 0, 0, 0) 65%,
+    rgba(0, 0, 0, 0.24) 90%,
+    rgba(0, 0, 0, 0.43) 100%
+  );
 }
 
 window:backdrop .controls button,
 window:backdrop .controls .heading,
 window:backdrop scale {
+  transition: opacity 300ms;
   opacity: 0.66;
 }
 
@@ -69,9 +77,9 @@ button.pill:active,
 dialog:not(#playlist),
 #playlist headerbar,
 #playlist searchbar,
-#playlist listview,
+cine-list-view,
 .start-page button {
-  --accent-color: var(--cine-grey);
+  --accent-color: var(--window-fg-color);
 }
 #playlist:drop(active) {
   box-shadow: none;
@@ -92,11 +100,11 @@ dialog:not(#playlist),
 }
 
 #history preferencesgroup > box {
-  margin-bottom: -8px;
+  margin-bottom: -6px;
 }
 #history preferencesgroup .header.single-line {
-  margin-top: -7px;
-  margin-bottom: -9px;
+  margin-top: -8px;
+  margin-bottom: -6px;
 }
 #history .row-history .header {
   margin-top: -4px;
@@ -120,18 +128,26 @@ menubutton
 }
 button:active:not(.close):not(.maximize):not(.minimize):not(.pill):not(
     .suggested-action
-  ) {
-  background: rgb(from currentColor r g b / calc(alpha * 0.25));
+  ):not(:checked) {
+  background-color: rgb(from currentColor r g b / calc(alpha * 0.3));
 }
 
 .osd.controls button:disabled {
   -gtk-icon-shadow: 0px 1px 5px black;
+  opacity: 1;
 }
 .osd.controls button.flat.toggle:checked {
   background-color: white;
   color: black;
   -gtk-icon-shadow: none;
+}
+
+.osd.controls button.flat.toggle:not(.toggle-mute):checked {
   box-shadow: 0 1px 3px 0px rgba(0, 0, 0, 0.2);
+}
+.toggle-mute:checked,
+.toggle-mute:checked:hover {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75);
 }
 
 .osd.controls button.flat.toggle:checked:hover {
@@ -158,10 +174,21 @@ button:active:not(.close):not(.maximize):not(.minimize):not(.pill):not(
   border-radius: 2px;
 }
 
+popover * {
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+
 popover:not(.chapter-popover) > contents,
 popover > arrow {
-  border: 1px solid #212122;
-  background: rgba(25, 25, 27, 0.975);
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--popover-bg-color) 96%,
+      rgb(from currentColor r g b / calc(alpha * 1))
+    );
+  background: var(--popover-bg-color);
+  color: var(--popover-fg-color);
   box-shadow: 0px 1px 4px rgba(0, 0, 0, 0.33);
 }
 
@@ -176,18 +203,26 @@ scale highlight,
 scale > trough > slider {
   background-color: white;
 }
+popover scale highlight,
+popover scale > trough > slider {
+  background-color: hsl(from var(--popover-fg-color) h s calc(l + 15%));
+}
 
 scale > trough > slider {
   border-radius: 100%;
 }
-
 scale trough {
   background-color: rgba(255, 255, 255, 0.3);
 }
-
+popover trough {
+  background-color: rgb(from var(--popover-fg-color) r g b / calc(alpha * 0.3));
+}
 scale mark {
   color: white;
   box-shadow: 1px 1px 1px rgba(0, 0, 0, 0.33);
+}
+popover scale mark {
+  color: hsl(from var(--popover-fg-color) h s calc(l + 15%));
 }
 
 .first-label-bold popover modelbutton:first-child {
@@ -200,7 +235,6 @@ scale mark {
 }
 
 .icon-indicator {
-  -gtk-icon-size: 64px;
   -gtk-icon-shadow: 0px 1px 9px rgba(0, 0, 0, 0.66);
   color: white;
 }
@@ -220,10 +254,6 @@ scale mark {
   margin: 12px;
 }
 
-.popover-scrolled > contents scrollbar.vertical > range > trough > slider {
-  min-height: 16px;
-}
-
 dialog:not(.shortcuts) preferencespage scrolledwindow viewport clamp {
   margin-top: -22px;
 }
@@ -236,7 +266,7 @@ statuspage box {
   margin-top: 0px;
 }
 
-#options spinbutton {
+cine-spinbutton {
   background: none;
   outline: none;
   padding: 0;
@@ -244,72 +274,80 @@ statuspage box {
   box-shadow: none;
 }
 
+time-popover picture,
+time-popover label {
+  margin: 6px;
+  border-radius: 12px;
+}
+time-popover picture {
+  margin-bottom: 0;
+  box-shadow:
+    0px 0px 5px 1px rgba(20, 20, 20, 0.5),
+    0px 0px 0px 1px rgba(144, 144, 144, 0.3);
+}
+time-popover label {
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--popover-bg-color) 96%,
+      rgb(from currentColor r g b / calc(alpha * 1))
+    );
+  background: var(--popover-bg-color);
+  color: var(--popover-fg-color);
+  padding: 6px 9px;
+  margin-bottom: 1px;
+  line-height: 18px;
+  box-shadow: 0px 1px 4px rgba(0, 0, 0, 0.33);
+  text-shadow: none;
+}
+
+.options-menu-btn popover button,
+.options-menu-btn popover cine-spinbutton {
+  min-height: 22px;
+}
+
 #options dropdown button * {
   background: none;
 }
 
-.chapter-popover label {
-  padding: 6px 9px;
-  margin-bottom: -7px;
-}
-.chapter-popover > contents {
-  background: transparent;
-}
-.chapter-popover > contents picture,
-.chapter-popover > contents label {
-  border: 1px solid #212122;
-  background: rgba(25, 25, 27, 0.95);
-  box-shadow: 0px 0px 3px rgba(0, 0, 0, 0.33);
-  border-radius: 12px;
-  line-height: 18px;
-}
-.chapter-popover > contents picture {
-  margin-bottom: 6px;
-  border: none;
-  box-shadow:
-    0px 0px 5px 1px rgba(20, 20, 20, 0.6),
-    0px 0px 0px 1px rgba(144, 144, 144, 0.3);
-}
-
-.options-menu-btn popover button,
-.options-menu-btn popover spinbutton {
-  min-height: 22px;
-}
-
-sheet {
-  background: rgba(5, 5, 6, 0.925);
-}
-
-.playlist-list-view {
+cine-list-view {
   background-color: transparent;
   padding-top: 1px;
   padding-bottom: 22px;
 }
-.playlist-list-view row {
+cine-list-view row {
   background-color: transparent;
   margin-right: 12px;
   margin-left: 12px;
   padding: 0;
 }
-.playlist-list-view row > box {
+cine-list-view row > box {
   transition: background-color 200ms ease-in-out;
   background-color: var(--card-bg-color);
   margin-bottom: -1px;
   border: 1px solid rgba(0, 0, 0, 0.5);
 }
-.playlist-list-view row > box:hover {
-  background-color: rgba(80, 80, 82, 0.66);
+cine-list-view row > box:hover {
+  background-color: color-mix(
+    in srgb,
+    var(--card-bg-color) 95%,
+    rgb(from currentColor r g b / calc(alpha * 1))
+  );
 }
-.playlist-list-view row > box:active {
-  background-color: rgba(80, 80, 82, 0.76);
+cine-list-view row > box:active {
+  background-color: color-mix(
+    in srgb,
+    var(--card-bg-color) 90%,
+    rgb(from currentColor r g b / calc(alpha * 1))
+  );
 }
-.playlist-list-view row:first-child,
-.playlist-list-view row:first-child > box {
+cine-list-view row:first-child,
+cine-list-view row:first-child > box {
   border-top-left-radius: 12px;
   border-top-right-radius: 12px;
 }
-.playlist-list-view row:last-child,
-.playlist-list-view row:last-child > box {
+cine-list-view row:last-child,
+cine-list-view row:last-child > box {
   border-bottom-left-radius: 12px;
   border-bottom-right-radius: 12px;
 }
@@ -352,37 +390,33 @@ sheet {
 }
 
 @media (prefers-contrast: more) {
-  popover:not(.chapter-popover) > contents,
-  popover > arrow,
-  .chapter-popover > contents label {
+  popover > contents,
+  popover > arrow {
     border: 1px solid var(--border-color);
-    background: rgba(25, 25, 27, 1);
   }
-  .chapter-popover > contents picture {
-    border: 1px solid rgba(255, 255, 255, 0.9);
+
+  time-popover label,
+  cine-list-view row > box {
+    border: 1px solid var(--border-color);
   }
-  sheet {
-    background: rgba(5, 5, 6, 1);
+
+  time-popover picture {
+    border: 1px solid white;
   }
+
   .header-and-controls {
-    background:
-      linear-gradient(
-        180deg,
-        rgba(0, 0, 0, 0.6) 0%,
-        rgba(0, 0, 0, 0.3) 5%,
-        rgba(0, 0, 0, 0) 17%
-      ),
-      linear-gradient(
-        0deg,
-        rgba(0, 0, 0, 0.8) 0%,
-        rgba(0, 0, 0, 0.46) 10%,
-        rgba(0, 0, 0, 0) 35%
-      );
+    background-image: linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.6) 0%,
+      rgba(0, 0, 0, 0.3) 5%,
+      rgba(0, 0, 0, 0) 17%,
+      rgba(0, 0, 0, 0) 65%,
+      rgba(0, 0, 0, 0.46) 90%,
+      rgba(0, 0, 0, 0.8) 100%
+    );
   }
-  .playlist-list-view row > box {
+
+  cine-list-view row > box {
     border: 1px solid var(--border-color);
-  }
-  .playlist-list-view row:focus-visible {
-    outline: 2px solid var(--accent-color);
   }
 }

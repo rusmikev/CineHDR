@@ -14,10 +14,6 @@ template $OptionsMenuButton: MenuButton {
   tooltip-text: _("Options");
 
   popover: Popover {
-    styles [
-      "popover-scrolled",
-    ]
-
     ScrolledWindow {
       propagate-natural-height: true;
       propagate-natural-width: true;
@@ -56,6 +52,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -114,6 +111,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -173,6 +171,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -230,6 +229,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -287,6 +287,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -301,6 +302,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton zoom_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
             digits: 2;
@@ -342,6 +344,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -356,6 +359,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton contrast_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
 
@@ -396,6 +400,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -410,6 +415,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton brightness_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
 
@@ -450,6 +456,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -464,6 +471,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton gamma_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
 
@@ -504,6 +512,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -518,6 +527,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton saturation_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
 
@@ -558,6 +568,7 @@ template $OptionsMenuButton: MenuButton {
               wrap: true;
               natural-wrap-mode: none;
               halign: start;
+              xalign: 0.0;
               margin-start: 8;
 
               styles [
@@ -573,6 +584,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton hue_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
 
@@ -613,6 +625,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -627,6 +640,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton sub_delay_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
             digits: 1;
@@ -668,6 +682,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -682,6 +697,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton audio_delay_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
             digits: 1;
@@ -723,6 +739,7 @@ template $OptionsMenuButton: MenuButton {
               natural-wrap-mode: none;
               halign: start;
               margin-start: 8;
+              xalign: 0.0;
 
               styles [
                 "heading",
@@ -737,6 +754,7 @@ template $OptionsMenuButton: MenuButton {
           }
 
           SpinButton speed_spin {
+            css-name: "cine-spinbutton";
             halign: end;
             climb-rate: 1;
             digits: 2;

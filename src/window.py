@@ -375,13 +375,13 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.video_progress_adj.connect("value-changed", self._on_progress_adjusted)
 
-        self.time_popover = Gtk.Popover()
+        self.time_popover = Gtk.Popover(css_name="time-popover")
+        self.time_popover.remove_css_class("background")
         self.time_popover.set_position(Gtk.PositionType.TOP)
         # video_progress_scale can be different heights because of marks, use a box instead
         self.time_popover.set_parent(self.vid_progress_scale_box)
         self.time_popover.set_autohide(False)
         self.time_popover.set_has_arrow(False)
-        self.time_popover.add_css_class("chapter-popover")
 
         self.popover_content_box = Gtk.Box()
         self.popover_content_box.props.orientation = Gtk.Orientation.VERTICAL
@@ -453,12 +453,11 @@ class CineWindow(Adw.ApplicationWindow):
                 self.visible_dialog = dialog
                 self.set_cursor_from_name(None)
                 self._cancel_click_hold()
-                self._hide_ui_timeout()
                 self.space_holding = False
                 self._set_space_holding(False)
             else:
-                self._hide_ui_timeout()
                 self.visible_dialog = None
+            self._hide_ui_timeout()
 
         @self._connect("notify::is-active")
         def on_is_active_change(*args):
@@ -563,8 +562,6 @@ class CineWindow(Adw.ApplicationWindow):
                 self.headerbar.set_decoration_layout(close_only)
             else:
                 self.headerbar.set_decoration_layout(layout)
-
-        self._hide_ui_timeout()
 
     def _show_ui(self):
         self.set_cursor_from_name(None)
@@ -894,10 +891,13 @@ class CineWindow(Adw.ApplicationWindow):
 
         def open_url(*args):
             dialog.close()
-            self.mpv.loadfile(self.url, mode)
-            if mode == "replace":
-                self.mpv.pause = False
-                self.shuffle_toggle_btn.set_active(False)
+            try:
+                self.mpv.loadfile(self.url, mode)
+                if mode == "replace":
+                    self.mpv.pause = False
+                    self.shuffle_toggle_btn.set_active(False)
+            except mpv.ShutdownError:
+                pass
 
         def on_clipboard_read(clipboard, result):
             text = clipboard.read_text_finish(result)
@@ -1827,6 +1827,7 @@ class CineWindow(Adw.ApplicationWindow):
                     self.spinner.set_visible(False)
                     self.is_local_path = is_local_path(self.mpv.path)
                     self.start_page.set_sensitive(True)
+                    self._hide_ui_timeout()
 
                     if settings.get_boolean("thumbnail-preview"):
                         self.thumb_preview.props.visible = True
@@ -1936,6 +1937,7 @@ class CineWindow(Adw.ApplicationWindow):
                 self.fullscreen_btn.set_tooltip_text(text)
                 self.fullscreen_btn.set_icon_name(icon)
                 self._sync_fullscreen(value)
+                self._hide_ui_timeout()
 
             idle_add_once(update)
 

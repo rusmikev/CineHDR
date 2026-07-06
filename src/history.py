@@ -126,6 +126,8 @@ class HistoryDialog(Adw.Dialog):
 
                 row = Adw.ActionRow(
                     title=GLib.markup_escape_text(file_title),
+                    title_lines=1,
+                    tooltip_text=file_title,
                     activatable=True,
                     css_classes=["row-history"],
                 )

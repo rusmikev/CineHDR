@@ -103,7 +103,7 @@ class OptionsMenuButton(Gtk.MenuButton):
             spin_down.props.css_classes = ["button"]
             spin_up.props.css_classes = ["button"]
             spin_down.props.margin_end = 8
-            spin_down.props.margin_start = 3
+            spin_down.props.margin_start = 8
             spin_down.props.width_request = 50
             spin_up.props.width_request = 50
 
