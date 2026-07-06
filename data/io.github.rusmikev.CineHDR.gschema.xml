@@ -58,11 +58,6 @@
 		<key name="hdr-mode" type="s">
 			<default>"auto"</default>
 		</key>
-		<key name="hdr-enabled" type="b">
-			<default>true</default>
-			<summary>DEPRECATED: Use hdr-mode instead</summary>
-			<description>Deprecated in favor of hdr-mode. If set to false, automatically migrates to hdr-mode="force-sdr".</description>
-		</key>
 		<key name="hdr-target-peak" type="s">
 			<default>"auto"</default>
 		</key>

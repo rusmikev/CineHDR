@@ -5,8 +5,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import gi
+import logging
 from typing import cast, Optional, Any
 from gettext import gettext as _
+
+logger = logging.getLogger(__name__)
 
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
@@ -103,7 +106,7 @@ class HdrMenuButton(Gtk.MenuButton):
             peak_map = {"auto": 0, "200": 1, "400": 2, "600": 3, "1000": 4, "1600": 5}
             self.hdr_peak_dropdown.set_selected(peak_map.get(str(peak), 0))
         except Exception as e:
-            print(f"Error syncing HDR UI: {e}")
+            logger.error(f"Error syncing HDR UI: {e}")
         finally:
             self._syncing_ui = False
 

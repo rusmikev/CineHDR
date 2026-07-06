@@ -46,7 +46,7 @@ def _get_hdr_settings() -> Optional[Gio.Settings]:
 
 
 def load_hdr_config() -> dict:
-    """Load full HDR configuration from GSettings with migration from deprecated hdr-enabled."""
+    """Load full HDR configuration from GSettings without deprecated hdr-enabled key."""
     try:
         settings = _get_hdr_settings()
         if not settings:
@@ -54,17 +54,9 @@ def load_hdr_config() -> dict:
         mode = settings.get_string("hdr-mode")
         if not mode or mode not in ("auto", "force-hdr", "force-sdr"):
             mode = "auto"
-        enabled = settings.get_boolean("hdr-enabled")
-        if not enabled and mode == "auto":
-            mode = "force-sdr"
-            try:
-                settings.set_string("hdr-mode", mode)
-                settings.set_boolean("hdr-enabled", True)
-            except GLib.Error as e:
-                logging.warning(f"Failed to migrate deprecated hdr-enabled key: {e}")
         return {
             "hdr_mode": mode,
-            "hdr_enabled": enabled,
+            "hdr_enabled": (mode != "force-sdr"),
             "hdr_target_peak": settings.get_string("hdr-target-peak"),
             "hdr_target_prim": settings.get_string("hdr-target-prim")
         }
@@ -86,8 +78,8 @@ def save_hdr_config(config: dict):
             return
         if "hdr_mode" in config:
             settings.set_string("hdr-mode", str(config["hdr_mode"]))
-        if "hdr_enabled" in config:
-            settings.set_boolean("hdr-enabled", bool(config["hdr_enabled"]))
+        elif "hdr_enabled" in config:
+            settings.set_string("hdr-mode", "auto" if config["hdr_enabled"] else "force-sdr")
         if "hdr_target_peak" in config:
             settings.set_string("hdr-target-peak", str(config["hdr_target_peak"]))
         if "hdr_target_prim" in config:
@@ -98,24 +90,12 @@ def save_hdr_config(config: dict):
 
 def load_hdr_setting() -> bool:
     """Load boolean HDR enabled toggle from GSettings."""
-    try:
-        settings = _get_hdr_settings()
-        if not settings:
-            return True
-        return settings.get_boolean("hdr-enabled")
-    except Exception:
-        return True
+    return load_hdr_mode() != "force-sdr"
 
 
 def save_hdr_setting(enabled: bool):
     """Save boolean HDR enabled toggle to GSettings."""
-    try:
-        settings = _get_hdr_settings()
-        if not settings:
-            return
-        settings.set_boolean("hdr-enabled", bool(enabled))
-    except (GLib.Error, AttributeError) as e:
-        logging.error(f"Error saving hdr-enabled to GSettings: {e}")
+    save_hdr_mode("auto" if enabled else "force-sdr")
 
 
 def load_hdr_mode() -> str:
@@ -160,17 +140,22 @@ class HdrController(GObject.Object):
 
         config = load_hdr_config()
         self._hdr_mode = config["hdr_mode"]
-        self._hdr_enabled = config["hdr_enabled"]
         self._hdr_target_peak = config["hdr_target_peak"]
         self._hdr_target_prim = config["hdr_target_prim"]
         self._is_hdr_content = False
         self._hdr_support_warned = False
 
+        self._initial_mpv_props = {}
+        for prop in ("target-colorspace-hint", "target-trc", "target-prim", "hdr-compute-peak", "target-peak"):
+            try:
+                self._initial_mpv_props[prop] = self.mpv[prop]
+            except Exception:
+                pass
+
         try:
             self._gsettings = _get_hdr_settings()
             if self._gsettings:
                 self._gsettings.connect("changed::hdr-mode", self._on_gsettings_changed)
-                self._gsettings.connect("changed::hdr-enabled", self._on_gsettings_changed)
                 self._gsettings.connect("changed::hdr-target-prim", self._on_gsettings_changed)
                 self._gsettings.connect("changed::hdr-target-peak", self._on_gsettings_changed)
         except Exception:
@@ -194,8 +179,6 @@ class HdrController(GObject.Object):
     def _on_gsettings_changed(self, settings: Gio.Settings, key: str):
         if key == "hdr-mode":
             self._hdr_mode = settings.get_string("hdr-mode")
-        elif key == "hdr-enabled":
-            self._hdr_enabled = settings.get_boolean("hdr-enabled")
         elif key == "hdr-target-prim":
             self._hdr_target_prim = settings.get_string("hdr-target-prim")
         elif key == "hdr-target-peak":
@@ -212,22 +195,33 @@ class HdrController(GObject.Object):
                 target_peak = "auto"
             peak_val = "auto" if target_peak == "auto" else int(float(target_peak))
 
+            target_prim = self._hdr_target_prim
+            valid_prims = ("auto", "bt.709", "bt.2020", "dci-p3", "display-p3", "apple", "adobe", "pro-photo", "cie-xyy", "dci-p3-d65")
+            if target_prim not in valid_prims:
+                target_prim = "auto"
+
             props = [
                 ("target-colorspace-hint", "yes"),
                 ("target-trc", "pq"),
-                ("target-prim", self._hdr_target_prim),
+                ("target-prim", target_prim),
                 ("hdr-compute-peak", "yes"),
                 ("target-peak", peak_val),
             ]
         else:
-            # Safe SDR fallback
-            props = [
-                ("target-colorspace-hint", "no"),
-                ("target-prim", "auto"),
-                ("target-peak", "auto"),
-                ("target-trc", "auto"),
-                ("hdr-compute-peak", "auto"),
-            ]
+            # Safe SDR fallback: restore initial mpv profile or defaults (P2-13)
+            defaults = {
+                "target-colorspace-hint": "no",
+                "target-prim": "auto",
+                "target-peak": "auto",
+                "target-trc": "auto",
+                "hdr-compute-peak": "auto",
+            }
+            props = []
+            for prop, default_val in defaults.items():
+                val = getattr(self, "_initial_mpv_props", {}).get(prop)
+                if val is None:
+                    val = default_val
+                props.append((prop, val))
 
         for prop, val in props:
             try:
@@ -248,19 +242,18 @@ class HdrController(GObject.Object):
             value = "auto"
         if self._hdr_mode != value:
             self._hdr_mode = value
-            self._hdr_enabled = (value != "force-sdr")
             self.apply_hdr_settings()
 
     @property
     def hdr_enabled(self) -> bool:
-        return self._hdr_enabled
+        return self._hdr_mode != "force-sdr"
 
     @hdr_enabled.setter
     def hdr_enabled(self, value: bool):
-        self._hdr_enabled = value
+        new_mode = "auto" if value else "force-sdr"
         if not value and self._hdr_mode == "force-hdr":
-            self._hdr_mode = "auto"
-        self.apply_hdr_settings()
+            new_mode = "auto"
+        self.hdr_mode = new_mode
 
     @property
     def hdr_target_peak(self) -> str:
@@ -268,8 +261,9 @@ class HdrController(GObject.Object):
 
     @hdr_target_peak.setter
     def hdr_target_peak(self, value: str):
-        self._hdr_target_peak = value
-        self.apply_hdr_settings()
+        if self._hdr_target_peak != str(value):
+            self._hdr_target_peak = str(value)
+            self.apply_hdr_settings()
 
     @property
     def hdr_target_prim(self) -> str:
@@ -277,8 +271,9 @@ class HdrController(GObject.Object):
 
     @hdr_target_prim.setter
     def hdr_target_prim(self, value: str):
-        self._hdr_target_prim = value
-        self.apply_hdr_settings()
+        if self._hdr_target_prim != str(value):
+            self._hdr_target_prim = str(value)
+            self.apply_hdr_settings()
 
     @property
     def is_hdr_content(self) -> bool:
@@ -295,7 +290,7 @@ class HdrController(GObject.Object):
         """Returns True if HDR color state should be applied to the GL texture."""
         if not check_hdr_support():
             return False
-        if self._hdr_mode == "force-sdr" or not self._hdr_enabled:
+        if self._hdr_mode == "force-sdr":
             return False
         if self._hdr_mode == "force-hdr":
             return True
@@ -303,7 +298,7 @@ class HdrController(GObject.Object):
 
     def check_unsupported_warning(self, gdk_display: Any):
         """Log a warning if HDR is requested and content is HDR, but display/GTK lacks support."""
-        requested = (self._hdr_mode == "force-hdr") or (self._hdr_mode == "auto" and self._hdr_enabled and self._is_hdr_content)
+        requested = (self._hdr_mode == "force-hdr") or (self._hdr_mode == "auto" and self._is_hdr_content)
         if requested and not check_hdr_support():
             if not self._hdr_support_warned:
                 reason = get_hdr_unsupported_reason(gdk_display)
