@@ -24,8 +24,21 @@ os.environ['GSETTINGS_SCHEMA_DIR'] = data_dir
 xdg_data = os.environ.get('XDG_DATA_DIRS', '/usr/local/share:/usr/share')
 os.environ['XDG_DATA_DIRS'] = f"{data_dir}:{xdg_data}"
 
+# Set up local translations
+locale_dir = os.path.join(build_dir, "po")
+try:
+    import locale
+    import gettext
+    locale.bindtextdomain('cine', locale_dir)
+    locale.textdomain('cine')
+    gettext.bindtextdomain('cine', locale_dir)
+    gettext.textdomain('cine')
+except Exception as e:
+    print(f"Cannot set locale/translations: {e}")
+
 gi.require_version('Gio', '2.0')
-from gi.repository import Gio
+gi.require_version('GLib', '2.0')
+from gi.repository import Gio, GLib
 
 try:
     resource = Gio.Resource.load(gresource_path)
@@ -33,6 +46,10 @@ try:
 except Exception as e:
     print(f"Failed to load gresource: {e}")
     sys.exit(1)
+
+from gettext import gettext as _
+GLib.set_prgname('cinehdr')
+GLib.set_application_name(_('CineHDR'))
 
 from src import main
 sys.exit(main.main('1.7.1-hdr-dev'))
