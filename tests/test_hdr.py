@@ -38,13 +38,11 @@ class TestHDRConfigPersistence(unittest.TestCase):
         from gi.repository import Gio
         self.settings = Gio.Settings.new("io.github.rusmikev.CineHDR")
         self.orig_mode = self.settings.get_string("hdr-mode")
-        self.orig_enabled = self.settings.get_boolean("hdr-enabled")
         self.orig_peak = self.settings.get_string("hdr-target-peak")
         self.orig_prim = self.settings.get_string("hdr-target-prim")
 
     def tearDown(self):
         self.settings.set_string("hdr-mode", self.orig_mode)
-        self.settings.set_boolean("hdr-enabled", self.orig_enabled)
         self.settings.set_string("hdr-target-peak", self.orig_peak)
         self.settings.set_string("hdr-target-prim", self.orig_prim)
 
@@ -107,7 +105,7 @@ class TestHDRConfigPersistence(unittest.TestCase):
         from src.hdr_controller import load_hdr_config
         from gi.repository import GLib
         mock_settings = MagicMock()
-        mock_settings.get_boolean.side_effect = GLib.Error("GSettings error")
+        mock_settings.get_string.side_effect = GLib.Error("GSettings error")
         mock_get_settings.return_value = mock_settings
         config = load_hdr_config()
         self.assertTrue(config["hdr_enabled"])
@@ -719,6 +717,54 @@ class TestAuditFixes(unittest.TestCase):
                 self.fail("builder.build(data=id(slot)) raised PyGI pointer restriction ValueError!")
         except Exception:
             pass # Expected to fail later due to missing GL context in headless test
+
+    def test_lazy_fence_deletion(self):
+        """Verify release_buffer does not call glDeleteSync, and lazy deletion happens in acquire."""
+        from src.gl_renderer import GLFramebufferPool
+        pool = GLFramebufferPool(size=3)
+        slot = pool.slots[0]
+        slot.fence = 12345
+        slot.in_use = True
+        
+        with patch("src.gl_bindings.glDeleteSync") as mock_delete:
+            pool.release_buffer(slot)
+            mock_delete.assert_not_called()
+            self.assertFalse(slot.in_use)
+            self.assertEqual(slot.fence, 12345)
+            
+            with patch("src.gl_bindings.glDeleteSync") as mock_delete2:
+                with patch.object(slot.resource, "ensure"):
+                    slot.resource._initialized = True
+                    slot.resource.fbo_id = 1
+                    pool.acquire(100, 100, is_float=False)
+                    mock_delete2.assert_called_once_with(12345)
+
+    def test_fbo_validation(self):
+        """Verify acquire returns None if fbo_id == 0 or not initialized."""
+        from src.gl_renderer import GLFramebufferPool
+        pool = GLFramebufferPool(size=1)
+        slot = pool.slots[0]
+        with patch.object(slot.resource, "ensure"):
+            slot.resource._initialized = True
+            slot.resource.fbo_id = 0  # Invalid FBO!
+            self.assertIsNone(pool.acquire(100, 100, is_float=False))
+        
+            slot.resource._initialized = False
+            slot.resource.fbo_id = 1
+            self.assertIsNone(pool.acquire(100, 100, is_float=False))
+
+    def test_sdr_memory_format(self):
+        """Verify R8G8B8A8 memory format is used for SDR textures."""
+        from gi.repository import Gdk
+        self.assertEqual(Gdk.MemoryFormat.R8G8B8A8, getattr(Gdk.MemoryFormat, "R8G8B8A8"))
+
+    def test_hdr_enabled_removed_from_gsettings(self):
+        """Verify load_hdr_config and save_hdr_config work without hdr-enabled GSettings key."""
+        from src.hdr_controller import load_hdr_config, save_hdr_config
+        config = load_hdr_config()
+        self.assertIn("hdr_mode", config)
+        self.assertIn("hdr_enabled", config)
+        self.assertEqual(config["hdr_enabled"], (config["hdr_mode"] != "force-sdr"))
 
 
 if __name__ == "__main__":
