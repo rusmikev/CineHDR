@@ -72,6 +72,17 @@
   </requires>
 
   <releases>
+    <release version="1.7.1" date="2026-07-07">
+      <description translate="no">
+        <ul>
+          <li>New: middle click progress bar to jump to start of chapter</li>
+          <li>Added Greek and Korean translations</li>
+          <li>Updated Arabic and French translations</li>
+          <li>Improved stylesheet and icons</li>
+          <li>Bug fixes and improvements</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.7.0" date="2026-06-28">
       <description translate="no">
         <ul>
