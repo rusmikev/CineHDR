@@ -18,6 +18,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+os.environ.setdefault("GSK_RENDERER", "gl")
 import gi
 import sys
 import subprocess

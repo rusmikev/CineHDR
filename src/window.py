@@ -42,7 +42,6 @@ from .utils import (
     get_display_param,
     idle_add_once,
     has_host_permission,
-    is_hdr_params,
     MBTN_MAP,
     KEY_REMAP,
     SUB_EXTS,
@@ -176,7 +175,6 @@ class CineWindow(Adw.ApplicationWindow):
         self.hide_timeout_id: int = 0
         self.is_fs: bool = False
         self.is_inactive: bool = False
-        self.mpv_ctx: mpv.MpvRenderContext
 
         self.mpv = mpv.MPV(
             # terminal=True,

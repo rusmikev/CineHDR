@@ -35,45 +35,13 @@ from gi.repository import (
 
 gtk = ctypes.CDLL("libgtk-4.so.1")
 
-_pending_idles = set()
-_pending_idles_lock = threading.Lock()
-
-
-def _to_hashable(obj):
-    """Convert any object (including gi.FunctionInfo/bound methods/lists/dicts) into a hashable representation."""
-    try:
-        hash(obj)
-        return obj
-    except TypeError:
-        if isinstance(obj, (list, tuple, set)):
-            return tuple(_to_hashable(x) for x in obj)
-        if isinstance(obj, dict):
-            return tuple(sorted((_to_hashable(k), _to_hashable(v)) for k, v in obj.items()))
-        self_obj = getattr(obj, "__self__", None)
-        name = getattr(obj, "__name__", None) or str(obj)
-        if self_obj is not None:
-            return (id(self_obj), name)
-        return id(obj)
-
-
 def idle_add_once(callback, *args, **kwargs):
-    """Schedule callback on GTK main thread via GLib.idle_add without redundant queueing (Audit Finding 6)."""
-    key = (_to_hashable(callback), _to_hashable(args), _to_hashable(kwargs))
-
-    with _pending_idles_lock:
-        if key in _pending_idles:
-            return
-        _pending_idles.add(key)
-
     def wrapper():
-        try:
-            callback(*args, **kwargs)
-        finally:
-            with _pending_idles_lock:
-                _pending_idles.discard(key)
+        callback(*args, **kwargs)
         return GLib.SOURCE_REMOVE
 
     GLib.idle_add(wrapper)
+
 
 xdg_pictures = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
 SCREENSHOT_DIR = os.path.join(xdg_pictures, "CineHDR Screenshots") if xdg_pictures else ""
@@ -336,10 +304,3 @@ SUB_EXTS: tuple = (
     ".vtt",
 )
 
-
-def is_hdr_params(params):
-    if not params or not isinstance(params, dict):
-        return False
-    primaries = params.get("primaries")
-    gamma = params.get("gamma")
-    return (primaries == "bt.2020") or (gamma in ("pq", "hlg"))
