@@ -24,9 +24,8 @@ Play your videos with HDR support
 
 **Changes in this fork / Изменения в этом форке:**
 * Replaced standard `GtkGLArea` with a custom high-precision float rendering pipeline (`GL_RGBA16F`).
-* Integrated Wayland HDR color state signaling (`rec2100-pq` / `srgb` textures) via GTK4 ColorState APIs.
+* Integrated Wayland HDR color state signaling (`rec2100-pq` / `srgb` textures) via GTK4 ColorState APIs to pass HDR signal to compatible compositors.
 * Added a dedicated **HDR Settings** control icon on the playback panel (visible when playing HDR content) for real-time SDR/HDR switching and peak/gamut adjustment.
-* Decoupled D-Bus naming flags (`NON_UNIQUE`) to allow running alongside the official Flatpak build.
 * Provided system integration launcher (**CineHDR**).
 
 ---
@@ -37,7 +36,7 @@ CineHDR combines a clean interface with a high-performance engine to deliver a s
 
 ### Features
 
-- **HDR Support** — Passthrough HDR10/HLG content to compatible monitors
+- **HDR Support** — Pass HDR10/HLG color state signal to compatible Wayland compositors
 - **Simple Design** — A refined, distraction-free interface
 - **MPV-Based** — Leverages the robust power of MPV for great playback and format support
 - **Audio and Subtitles** — Control track selection and synchronization for both

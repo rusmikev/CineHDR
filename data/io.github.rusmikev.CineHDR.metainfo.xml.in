@@ -19,9 +19,9 @@
   <name translate="no">CineHDR</name>
   <summary>Play your videos with HDR support</summary>
   <description>
-    <p>CineHDR is an HDR-enabled fork of Cine. It combines a clean interface with a high-performance MPV engine and adds HDR passthrough support for compatible displays.</p>
+    <p>CineHDR is an HDR-enabled fork of Cine. It combines a clean interface with a high-performance MPV engine and adds Wayland HDR color state signaling to pass HDR signal to compatible compositors.</p>
 		<ul>
-			<li>HDR Support: Passthrough HDR10/HLG content to compatible monitors</li>
+			<li>HDR Support: Pass HDR10/HLG color state signal to compatible Wayland compositors</li>
 			<li>Simple Design: A refined, distraction-free interface</li>
       <li>MPV-Based: Leverages the robust power of MPV for great playback and format support</li>
       <li>Audio and Subtitles: Control track selection and synchronization for both</li>
