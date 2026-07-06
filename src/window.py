@@ -60,6 +60,7 @@ from .preferences import settings, sync_mpv_with_settings
 from .shortcuts import INTERNAL_BINDINGS, populate_shortcuts_dialog_mpv
 from .mpris import MPRIS
 from .video_widget import MpvVideoWidget
+from .gl_bindings import libgl
 
 gi.require_version("Adw", "1")
 gi.require_version("Gio", "2.0")
@@ -68,16 +69,6 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("GObject", "2.0")
 from gi.repository import Adw, Gio, Gdk, GLib, Gtk, GObject
-
-libegl = ctypes.CDLL("libEGL.so.1")
-egl_get_proc_address = libegl.eglGetProcAddress
-egl_get_proc_address.restype = ctypes.c_void_p
-egl_get_proc_address.argtypes = [ctypes.c_char_p]
-
-GL_FRAMEBUFFER_BINDING = 0x8CA6
-libgl = ctypes.CDLL("libGL.so.1")
-glGetIntegerv = libgl.glGetIntegerv
-glGetIntegerv.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_int)]
 
 gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
 
@@ -2110,8 +2101,8 @@ class CineWindow(Adw.ApplicationWindow):
         @self.mpv.property_observer("video-params")
         def on_video_params_change(_name, params):
             def update_hdr_btn():
-                is_hdr = is_hdr_params(params)
-                self.hdr_menu_btn.set_visible(is_hdr)
+                from .video_widget import is_hdr_content, check_hdr_support
+                self.hdr_menu_btn.set_visible(is_hdr_content(params) and check_hdr_support())
             idle_add_once(update_hdr_btn)
 
         @self.mpv.property_observer("video-zoom")

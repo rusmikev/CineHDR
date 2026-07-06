@@ -27,7 +27,26 @@ class HdrMenuButton(Gtk.MenuButton):
         super().__init__(**kwargs)
         self._syncing_ui = False
         self.connect("realize", self._on_realize)
+        self.connect("unrealize", self._on_unrealize)
         self.connect("notify::active", self._on_active)
+        try:
+            from .video_widget import _get_hdr_settings
+            self._gsettings = _get_hdr_settings()
+            self._gsettings.connect("changed", self._on_gsettings_changed)
+        except Exception:
+            self._gsettings = None
+
+    def _on_unrealize(self, *arg):
+        if getattr(self, "_gsettings", None):
+            try:
+                self._gsettings.disconnect_by_func(self._on_gsettings_changed)
+            except Exception:
+                pass
+            self._gsettings = None
+
+    def _on_gsettings_changed(self, settings, key):
+        if self.get_active() and not self._syncing_ui:
+            self._on_active()
 
     def _on_realize(self, *arg):
         from .window import CineWindow

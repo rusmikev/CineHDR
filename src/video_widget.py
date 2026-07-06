@@ -24,115 +24,35 @@ from gettext import gettext as _
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gtk, Gdk, GLib, GObject
+from gi.repository import Gtk, Gdk, GLib, GObject, Gio
 
 import os
-import json
-from .utils import get_display_param, idle_add_once, CONFIG_DIR, is_hdr_params
-
-# Load OpenGL libraries and helper
-libgl = ctypes.CDLL("libGL.so.1")
-libegl = ctypes.CDLL("libEGL.so.1")
-egl_get_proc_address = libegl.eglGetProcAddress
-egl_get_proc_address.restype = ctypes.c_void_p
-egl_get_proc_address.argtypes = [ctypes.c_char_p]
-
-
-def get_gl_func(name, restype, argtypes):
-    addr = egl_get_proc_address(name.encode("utf-8"))
-    if addr:
-        prototype = ctypes.CFUNCTYPE(restype, *argtypes)
-        return prototype(addr)
-    try:
-        func = getattr(libgl, name)
-        func.restype = restype
-        func.argtypes = argtypes
-        return func
-    except AttributeError:
-        return None
-
-
-# OpenGL Constants
-GL_FRAMEBUFFER = 0x8D40
-GL_COLOR_ATTACHMENT0 = 0x8CE0
-GL_TEXTURE_2D = 0xDE1
-GL_TEXTURE_MIN_FILTER = 0x2801
-GL_TEXTURE_MAG_FILTER = 0x2800
-GL_LINEAR = 0x2601
-GL_RGBA = 0x1908
-GL_FLOAT = 0x1406
-GL_RGBA16F = 0x881A
-GL_FRAMEBUFFER_COMPLETE = 0x8CD5
-
-# OpenGL Bindings
-glGenFramebuffers = get_gl_func(
-    "glGenFramebuffers", None, [ctypes.c_int, ctypes.POINTER(ctypes.c_uint)]
-)
-glDeleteFramebuffers = get_gl_func(
-    "glDeleteFramebuffers", None, [ctypes.c_int, ctypes.POINTER(ctypes.c_uint)]
-)
-glBindFramebuffer = get_gl_func(
-    "glBindFramebuffer", None, [ctypes.c_uint, ctypes.c_uint]
-)
-glFramebufferTexture2D = get_gl_func(
-    "glFramebufferTexture2D",
-    None,
-    [ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_int],
-)
-glGenTextures = get_gl_func(
-    "glGenTextures", None, [ctypes.c_int, ctypes.POINTER(ctypes.c_uint)]
-)
-glDeleteTextures = get_gl_func(
-    "glDeleteTextures", None, [ctypes.c_int, ctypes.POINTER(ctypes.c_uint)]
-)
-glBindTexture = get_gl_func(
-    "glBindTexture", None, [ctypes.c_uint, ctypes.c_uint]
-)
-glTexImage2D = get_gl_func(
-    "glTexImage2D",
-    None,
-    [
-        ctypes.c_uint,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_uint,
-        ctypes.c_uint,
-        ctypes.c_void_p,
-    ],
-)
-glTexParameteri = get_gl_func(
-    "glTexParameteri", None, [ctypes.c_uint, ctypes.c_uint, ctypes.c_int]
-)
-glCheckFramebufferStatus = get_gl_func(
-    "glCheckFramebufferStatus", ctypes.c_uint, [ctypes.c_uint]
+from .utils import get_display_param, idle_add_once
+from .gl_bindings import (
+    GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+    GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
+    GL_RGBA, GL_FLOAT, GL_RGBA16F, GL_FRAMEBUFFER_COMPLETE,
+    glGenFramebuffers, glDeleteFramebuffers, glBindFramebuffer,
+    glFramebufferTexture2D, glGenTextures, glDeleteTextures,
+    glBindTexture, glTexImage2D, glTexParameteri, glCheckFramebufferStatus,
+    check_gl_error, egl_get_proc_address, get_proc_address
 )
 
 
-HDR_CONFIG_PATH = os.path.join(CONFIG_DIR, "hdr_config.json")
+def _get_hdr_settings():
+    return Gio.Settings.new("io.github.rusmikev.CineHDR")
 
 
-# [CineHDR Architecture Decision]
-# Why HDR settings use a standalone JSON file (hdr_config.json) instead of GSettings:
-# Bypassing GSettings/dconf for HDR parameters is an intentional design choice (Risk P-7).
-# Adding new schema keys to upstream gschema.xml would require recompiling glib schemas
-# and create structural divergence from the original diegopvlk/Cine repository.
-# Using a dedicated JSON file keeps HDR configuration decoupled, portable, and ensures
-# clean, conflict-free merges when synchronizing with upstream releases.
 def load_hdr_config():
     try:
-        if os.path.exists(HDR_CONFIG_PATH):
-            with open(HDR_CONFIG_PATH, "r") as f:
-                data = json.load(f)
-                return {
-                    "hdr_enabled": data.get("hdr_enabled", True),
-                    "hdr_target_peak": data.get("hdr_target_peak", "auto"),
-                    "hdr_target_prim": data.get("hdr_target_prim", "auto")
-                }
+        settings = _get_hdr_settings()
+        return {
+            "hdr_enabled": settings.get_boolean("hdr-enabled"),
+            "hdr_target_peak": settings.get_string("hdr-target-peak"),
+            "hdr_target_prim": settings.get_string("hdr-target-prim")
+        }
     except Exception as e:
-        print(f"Error loading HDR config: {e}")
+        print(f"Error loading HDR config from GSettings: {e}")
     return {
         "hdr_enabled": True,
         "hdr_target_peak": "auto",
@@ -142,24 +62,31 @@ def load_hdr_config():
 
 def save_hdr_config(config):
     try:
-        tmp_path = f"{HDR_CONFIG_PATH}.tmp"
-        with open(tmp_path, "w") as f:
-            json.dump(config, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, HDR_CONFIG_PATH)
+        settings = _get_hdr_settings()
+        if "hdr_enabled" in config:
+            settings.set_boolean("hdr-enabled", bool(config["hdr_enabled"]))
+        if "hdr_target_peak" in config:
+            settings.set_string("hdr-target-peak", str(config["hdr_target_peak"]))
+        if "hdr_target_prim" in config:
+            settings.set_string("hdr-target-prim", str(config["hdr_target_prim"]))
     except Exception as e:
-        print(f"Error saving HDR config: {e}")
+        print(f"Error saving HDR config to GSettings: {e}")
 
 
 def load_hdr_setting():
-    return load_hdr_config()["hdr_enabled"]
+    try:
+        settings = _get_hdr_settings()
+        return settings.get_boolean("hdr-enabled")
+    except Exception:
+        return True
 
 
 def save_hdr_setting(enabled):
-    cfg = load_hdr_config()
-    cfg["hdr_enabled"] = enabled
-    save_hdr_config(cfg)
+    try:
+        settings = _get_hdr_settings()
+        settings.set_boolean("hdr-enabled", bool(enabled))
+    except Exception as e:
+        print(f"Error saving hdr-enabled to GSettings: {e}")
 
 
 def check_hdr_support():
@@ -171,11 +98,112 @@ def check_hdr_support():
         display = Gdk.Display.get_default()
         if not display:
             return False
-        if "Wayland" not in display.__class__.__name__:
+        display_name = getattr(display, "get_name", lambda: "")()
+        is_wayland = ("wayland" in str(display_name).lower() or "wayland" in display.__class__.__name__.lower())
+        if not is_wayland:
             return False
+        # Verify that the display/compositor supports RGBA / color management
+        if hasattr(display, "is_composited") and not display.is_composited():
+            return False
+        if hasattr(display, "is_rgba") and not display.is_rgba():
+            return False
+        # Check if dmabuf formats are available (indicates modern Wayland buffer sharing and protocol support)
+        if hasattr(display, "get_dmabuf_formats"):
+            dmabuf = display.get_dmabuf_formats()
+            if dmabuf is not None and hasattr(dmabuf, "get_n_formats") and dmabuf.get_n_formats() == 0:
+                return False
         return True
     except Exception:
         return False
+
+
+def is_hdr_content(params):
+    if not params or not isinstance(params, dict):
+        return False
+    gamma = params.get("gamma", "")
+    sig_peak = params.get("sig-peak", 1.0)
+    try:
+        sig_peak = float(sig_peak) if sig_peak is not None else 1.0
+    except (ValueError, TypeError):
+        sig_peak = 1.0
+    return (gamma in ("pq", "hlg", "st2084", "slog", "slog2", "slog3")) or (sig_peak > 1.0)
+
+
+class GLFramebufferResource:
+    """RAII wrapper for OpenGL Framebuffer and 16-bit Float Texture."""
+    def __init__(self, width=0, height=0):
+        self.texture_id = ctypes.c_uint(0)
+        self.fbo_id = ctypes.c_uint(0)
+        self.width = width
+        self.height = height
+        self._initialized = False
+
+    def ensure(self, w, h):
+        """Ensure FBO and texture exist and match dimensions w x h without re-generating IDs."""
+        if w <= 0 or h <= 0:
+            return
+
+        if not self._initialized or self.texture_id.value == 0 or self.fbo_id.value == 0:
+            glGenTextures(1, ctypes.byref(self.texture_id))
+            check_gl_error("glGenTextures")
+            glGenFramebuffers(1, ctypes.byref(self.fbo_id))
+            check_gl_error("glGenFramebuffers")
+            self._initialized = True
+
+            glBindTexture(GL_TEXTURE_2D, self.texture_id.value)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            check_gl_error("glTexParameteri")
+
+            glTexImage2D(
+                GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0,
+                GL_RGBA, GL_FLOAT, None
+            )
+            check_gl_error("glTexImage2D initial")
+
+            glBindFramebuffer(GL_FRAMEBUFFER, self.fbo_id.value)
+            glFramebufferTexture2D(
+                GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                self.texture_id.value, 0
+            )
+            check_gl_error("glFramebufferTexture2D")
+
+            status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+            if status != GL_FRAMEBUFFER_COMPLETE:
+                print(f"Error: Framebuffer is not complete: {hex(status)}")
+            glBindFramebuffer(GL_FRAMEBUFFER, 0)
+            glBindTexture(GL_TEXTURE_2D, 0)
+            self.width = w
+            self.height = h
+        elif self.width != w or self.height != h:
+            # Resize existing texture without deleting/re-creating IDs!
+            glBindTexture(GL_TEXTURE_2D, self.texture_id.value)
+            glTexImage2D(
+                GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0,
+                GL_RGBA, GL_FLOAT, None
+            )
+            check_gl_error("glTexImage2D resize")
+            glBindTexture(GL_TEXTURE_2D, 0)
+            self.width = w
+            self.height = h
+
+    def release(self):
+        """Free OpenGL resources cleanly."""
+        if self.fbo_id and self.fbo_id.value != 0:
+            glDeleteFramebuffers(1, ctypes.byref(self.fbo_id))
+            self.fbo_id = ctypes.c_uint(0)
+        if self.texture_id and self.texture_id.value != 0:
+            glDeleteTextures(1, ctypes.byref(self.texture_id))
+            self.texture_id = ctypes.c_uint(0)
+        self._initialized = False
+        self.width = 0
+        self.height = 0
+
+    def __del__(self):
+        try:
+            self.release()
+        except Exception:
+            pass
 
 
 class MpvVideoWidget(Gtk.Widget):
@@ -195,12 +223,25 @@ class MpvVideoWidget(Gtk.Widget):
         self.gl_area.connect("realize", self._on_realize)
         self.gl_area.connect("unrealize", self._on_unrealize)
 
-        self.texture_id = None
-        self.fbo_id = None
-        self.tex_width = 0
-        self.tex_height = 0
+        self.fbo_resource = GLFramebufferResource()
         self.mpv_ctx = None
         self.current_texture = None
+
+    @property
+    def texture_id(self):
+        return getattr(self, "fbo_resource", GLFramebufferResource()).texture_id
+
+    @property
+    def fbo_id(self):
+        return getattr(self, "fbo_resource", GLFramebufferResource()).fbo_id
+
+    @property
+    def tex_width(self):
+        return getattr(self, "fbo_resource", GLFramebufferResource()).width
+
+    @property
+    def tex_height(self):
+        return getattr(self, "fbo_resource", GLFramebufferResource()).height
 
         config = load_hdr_config()
         self._hdr_enabled = config["hdr_enabled"]
@@ -208,14 +249,38 @@ class MpvVideoWidget(Gtk.Widget):
         self._hdr_target_prim = config["hdr_target_prim"]
         self._is_hdr_content = False
 
+        try:
+            self._gsettings = _get_hdr_settings()
+            self._gsettings.connect("changed::hdr-enabled", self._on_gsettings_changed)
+            self._gsettings.connect("changed::hdr-target-prim", self._on_gsettings_changed)
+            self._gsettings.connect("changed::hdr-target-peak", self._on_gsettings_changed)
+        except Exception:
+            self._gsettings = None
+
         @self.mpv.property_observer("video-params")
         def _on_video_params(_name, params):
-            is_hdr = is_hdr_params(params)
+            is_hdr = is_hdr_content(params)
             if getattr(self, "_is_hdr_content", None) != is_hdr:
                 self._is_hdr_content = is_hdr
                 idle_add_once(self.apply_hdr_settings)
 
+        @self.mpv.property_observer("display-hdr")
+        @self.mpv.property_observer("target-trc")
+        @self.mpv.property_observer("icc-profile")
+        def _on_mpv_color_param_changed(_name, _value):
+            idle_add_once(self.apply_hdr_settings)
+
         self.apply_hdr_settings()
+
+    def _on_gsettings_changed(self, settings, key):
+        if key == "hdr-enabled":
+            self._hdr_enabled = settings.get_boolean("hdr-enabled")
+        elif key == "hdr-target-prim":
+            self._hdr_target_prim = settings.get_string("hdr-target-prim")
+        elif key == "hdr-target-peak":
+            self._hdr_target_peak = settings.get_string("hdr-target-peak")
+        self.apply_hdr_settings()
+        self.queue_draw()
 
     def apply_hdr_settings(self):
         # Apply tone mapping parameters and target primaries for HDR playback
@@ -280,7 +345,7 @@ class MpvVideoWidget(Gtk.Widget):
         area.make_current()
 
         proc_address_fn = mpv.MpvGlGetProcAddressFn(
-            lambda _inst, name: egl_get_proc_address(name)
+            lambda _inst, name: get_proc_address(name)
         )
         display_param = get_display_param()
 
@@ -294,9 +359,7 @@ class MpvVideoWidget(Gtk.Widget):
         )
 
         self.mpv_ctx.update_cb = lambda: idle_add_once(self.queue_draw)
-
-        self.texture_id = ctypes.c_uint(0)
-        self.fbo_id = ctypes.c_uint(0)
+        self.fbo_resource.release()
 
     def _on_unrealize(self, area):
         area.make_current()
@@ -305,13 +368,14 @@ class MpvVideoWidget(Gtk.Widget):
             self.mpv_ctx.free()
             self.mpv_ctx = None
 
-        if self.fbo_id and self.fbo_id.value != 0:
-            glDeleteFramebuffers(1, ctypes.byref(self.fbo_id))
-            self.fbo_id = None
+        if getattr(self, "_gsettings", None):
+            try:
+                self._gsettings.disconnect_by_func(self._on_gsettings_changed)
+            except Exception:
+                pass
+            self._gsettings = None
 
-        if self.texture_id and self.texture_id.value != 0:
-            glDeleteTextures(1, ctypes.byref(self.texture_id))
-            self.texture_id = None
+        self.fbo_resource.release()
 
     def do_unroot(self):
         # Guarantee unrealize and OpenGL resource cleanup when removed from root/window (Risk P-4)
@@ -327,59 +391,7 @@ class MpvVideoWidget(Gtk.Widget):
 
     def setup_fbo(self, w, h):
         self.gl_area.make_current()
-
-        # Delete existing FBO and texture if size changes
-        if self.fbo_id.value != 0:
-            glDeleteFramebuffers(1, ctypes.byref(self.fbo_id))
-            self.fbo_id = ctypes.c_uint(0)
-
-        if self.texture_id.value != 0:
-            glDeleteTextures(1, ctypes.byref(self.texture_id))
-            self.texture_id = ctypes.c_uint(0)
-
-        # Generate new texture
-        glGenTextures(1, ctypes.byref(self.texture_id))
-        glBindTexture(GL_TEXTURE_2D, self.texture_id.value)
-
-        # Use 16-bit float format (GL_RGBA16F)
-        # to preserve HDR color space precision (10-bit or higher)
-        glTexImage2D(
-            GL_TEXTURE_2D,
-            0,
-            GL_RGBA16F,
-            w,
-            h,
-            0,
-            GL_RGBA,
-            GL_FLOAT,
-            None,
-        )
-
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-
-        # Generate FBO
-        glGenFramebuffers(1, ctypes.byref(self.fbo_id))
-        glBindFramebuffer(GL_FRAMEBUFFER, self.fbo_id.value)
-
-        # Attach texture to FBO
-        glFramebufferTexture2D(
-            GL_FRAMEBUFFER,
-            GL_COLOR_ATTACHMENT0,
-            GL_TEXTURE_2D,
-            self.texture_id.value,
-            0,
-        )
-
-        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
-        if status != GL_FRAMEBUFFER_COMPLETE:
-            print(f"Error: Framebuffer is not complete: {hex(status)}")
-
-        glBindFramebuffer(GL_FRAMEBUFFER, 0)
-        glBindTexture(GL_TEXTURE_2D, 0)
-
-        self.tex_width = w
-        self.tex_height = h
+        self.fbo_resource.ensure(w, h)
 
     def do_snapshot(self, snapshot):
         if not self.gl_area.get_realized():
@@ -431,7 +443,10 @@ class MpvVideoWidget(Gtk.Widget):
 
             # Determine color state (HDR vs SDR)
             try:
-                content_hdr = getattr(self, "_is_hdr_content", False)
+                content_hdr = is_hdr_content(self.mpv.video_params)
+                if getattr(self, "_is_hdr_content", None) != content_hdr:
+                    self._is_hdr_content = content_hdr
+                    idle_add_once(self.apply_hdr_settings)
                 hdr_supported = check_hdr_support()
                 is_hdr = self.hdr_enabled and content_hdr and hdr_supported
 
