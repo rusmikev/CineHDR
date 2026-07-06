@@ -221,6 +221,68 @@ class TestApplyHDRSettings(unittest.TestCase):
             mock_mpv["target-prim"] = prim
             self.assertEqual(props["target-prim"], prim)
 
+    @patch("src.video_widget.Gdk.Display")
+    @patch("src.video_widget.Gdk.ColorState")
+    def test_check_hdr_support_conditions(self, mock_colorstate, mock_display_class):
+        """test check_hdr_support returns True only on Wayland with GTK >= 4.16."""
+        from src.video_widget import check_hdr_support
+        
+        # Scenario 1: Gdk.ColorState doesn't have get_rec2100_pq
+        if hasattr(mock_colorstate, "get_rec2100_pq"):
+            delattr(mock_colorstate, "get_rec2100_pq")
+        self.assertFalse(check_hdr_support())
+        
+        # Scenario 2: Gdk.ColorState has get_rec2100_pq, but no default display
+        mock_colorstate.get_rec2100_pq = MagicMock()
+        with patch("src.video_widget.Gdk.Display.get_default", return_value=None):
+            self.assertFalse(check_hdr_support())
+            
+        # Scenario 3: Display is X11
+        mock_display = MagicMock()
+        mock_display.__class__.__name__ = "GdkX11Display"
+        with patch("src.video_widget.Gdk.Display.get_default", return_value=mock_display):
+            self.assertFalse(check_hdr_support())
+            
+        # Scenario 4: Display is Wayland
+        mock_display.__class__.__name__ = "GdkWaylandDisplay"
+        with patch("src.video_widget.Gdk.Display.get_default", return_value=mock_display):
+            self.assertTrue(check_hdr_support())
+
+    @patch("src.video_widget.check_hdr_support")
+    def test_apply_hdr_settings_with_support_check(self, mock_support):
+        """apply_hdr_settings applies HDR only if check_hdr_support is True."""
+        from src.video_widget import MpvVideoWidget
+        import types
+        
+        mock_mpv, props = self._make_mock_mpv()
+        
+        # Create a lightweight dummy widget bypass GTK init issues
+        class DummyWidget:
+            pass
+            
+        widget = DummyWidget()
+        widget.mpv = mock_mpv
+        widget._hdr_enabled = True
+        widget._hdr_target_peak = "1000"
+        widget._hdr_target_prim = "dci-p3"
+        widget._is_hdr_content = True
+        widget.apply_hdr_settings = types.MethodType(MpvVideoWidget.apply_hdr_settings, widget)
+        
+        # Case A: check_hdr_support is False (e.g. X11) -> should fall back to SDR
+        mock_support.return_value = False
+        widget.apply_hdr_settings()
+        self.assertEqual(props.get("target-colorspace-hint"), "no")
+        self.assertEqual(props.get("hdr-compute-peak"), "auto")
+        
+        # Case B: check_hdr_support is True (Wayland + GTK >= 4.16) -> should apply PQ
+        mock_support.return_value = True
+        widget.apply_hdr_settings()
+        self.assertEqual(props.get("target-colorspace-hint"), "yes")
+        self.assertEqual(props.get("target-trc"), "pq")
+        self.assertEqual(props.get("target-prim"), "dci-p3")
+        self.assertEqual(props.get("hdr-compute-peak"), "yes")
+        self.assertEqual(props.get("target-peak"), 1000)
+
 
 # ──────────────────────────────────────────────────────────────
 # 3. Tests for UI handler mapping (options.py callback logic)
