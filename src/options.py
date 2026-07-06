@@ -62,7 +62,6 @@ class OptionsMenuButton(Gtk.MenuButton):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._syncing_ui = False
         self.connect("realize", self._on_realize)
         self.connect("notify::active", self._on_active)
 
@@ -106,8 +105,6 @@ class OptionsMenuButton(Gtk.MenuButton):
         if not self.get_active():
             return
 
-        self._syncing_ui = True
-
         hwdec_on = settings.get_boolean("hwdec")
         hwdec = str(self.win.mpv.hwdec_current)
         self.flip_box.props.visible = not (hwdec_on and "-copy" not in hwdec)
@@ -149,8 +146,6 @@ class OptionsMenuButton(Gtk.MenuButton):
         set_open_val(self.sub_delay_spin, float(self.win.mpv["sub-delay"] or 0))
         set_open_val(self.audio_delay_spin, float(self.win.mpv["audio-delay"] or 0))
         set_open_val(self.speed_spin, float(self.win.mpv["speed"] or 1.0))
-
-        self._syncing_ui = False
 
         try:
             crop_str = cast(str, self.win.mpv["video-crop"])

@@ -67,13 +67,6 @@ class CineApplication(Adw.Application):
         Adw.Application.do_startup(self)
         Adw.StyleManager.get_default().props.color_scheme = Adw.ColorScheme.FORCE_DARK
 
-        display = Gdk.Display.get_default()
-        if display:
-            icon_theme = Gtk.IconTheme.get_for_display(display)
-            dev_icons = os.path.join(os.path.dirname(__file__), "..", "data", "icons")
-            if os.path.exists(dev_icons):
-                icon_theme.add_search_path(os.path.abspath(dev_icons))
-
         self._create_action("new-window", lambda *a: self.activate(), ["<primary>n"])
         self._create_action("quit", lambda *a: self.quit(), ["<primary>q"])
         self._create_action("about", self._on_about_action)

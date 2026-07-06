@@ -51,5 +51,18 @@ from gettext import gettext as _
 GLib.set_prgname('cinehdr')
 GLib.set_application_name(_('CineHDR'))
 
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Gdk
 from src import main
-sys.exit(main.main('1.7.1-hdr-dev'))
+
+app = main.CineApplication()
+def _on_startup(application):
+    display = Gdk.Display.get_default()
+    if display:
+        icon_theme = Gtk.IconTheme.get_for_display(display)
+        icons_path = os.path.join(root_dir, "data", "icons")
+        if os.path.exists(icons_path):
+            icon_theme.add_search_path(icons_path)
+app.connect('startup', _on_startup)
+sys.exit(app.run(sys.argv))
