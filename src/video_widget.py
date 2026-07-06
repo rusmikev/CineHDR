@@ -78,6 +78,9 @@ class MpvVideoWidget(Gtk.Widget):
         self._render_pending = False
         self._cached_hdr_support = False
         self._cached_hdr_support_valid = False
+        self._monitor_signal_id: Optional[int] = None
+        self._connected_monitors: Optional[Any] = None
+        self._fallback_slot: Optional[Any] = None
 
         # Delegate HDR state and mpv property observers to HdrController
         self.hdr_controller = HdrController(
@@ -132,6 +135,14 @@ class MpvVideoWidget(Gtk.Widget):
         self.hdr_controller.apply_hdr_settings()
 
     def _on_realize(self, area: Gtk.GLArea):
+        self._shutting_down = False
+        if self.mpv_ctx:
+            try:
+                self.mpv_ctx.free()
+            except Exception:
+                pass
+            self.mpv_ctx = None
+
         area.make_current()
         self._update_cached_hdr_support()
 
@@ -140,7 +151,8 @@ class MpvVideoWidget(Gtk.Widget):
             monitors = display.get_monitors()
             if monitors and hasattr(monitors, "connect"):
                 try:
-                    monitors.connect("items-changed", self._update_cached_hdr_support)
+                    self._monitor_signal_id = monitors.connect("items-changed", self._update_cached_hdr_support)
+                    self._connected_monitors = monitors
                 except Exception:
                     pass
 
@@ -169,6 +181,10 @@ class MpvVideoWidget(Gtk.Widget):
         self._render_pending = False
         if self._shutting_down or not self.mpv_ctx:
             return GLib.SOURCE_REMOVE
+
+        if getattr(self, "_fallback_slot", None):
+            self.fbo_pool.release_buffer(self._fallback_slot)
+            self._fallback_slot = None
 
         try:
             if not self.mpv_ctx.update():
@@ -227,7 +243,7 @@ class MpvVideoWidget(Gtk.Widget):
         if use_float:
             builder.set_format(Gdk.MemoryFormat.R16G16B16A16_FLOAT)
         else:
-            builder.set_format(Gdk.MemoryFormat.B8G8R8A8)
+            builder.set_format(Gdk.MemoryFormat.R8G8B8A8)
 
         if is_hdr:
             try:
@@ -253,7 +269,7 @@ class MpvVideoWidget(Gtk.Widget):
             texture = builder.build(destroy=on_texture_release, data=id(slot))
         except (TypeError, ValueError):
             texture = builder.build()
-            self.fbo_pool.release_buffer(slot)
+            self._fallback_slot = slot
 
         self.current_texture = texture
         self.queue_draw()
@@ -281,10 +297,14 @@ class MpvVideoWidget(Gtk.Widget):
             self.hdr_controller.disconnect()
 
     def _on_unrealize(self, area: Gtk.GLArea):
+        if self._connected_monitors and self._monitor_signal_id:
+            try:
+                self._connected_monitors.disconnect(self._monitor_signal_id)
+            except Exception:
+                pass
+            self._monitor_signal_id = None
+            self._connected_monitors = None
         self.shutdown_render_context()
-
-    def do_unroot(self):
-        Gtk.Widget.do_unroot(self)
 
     def do_dispose(self):
         if hasattr(self, "gl_area") and self.gl_area and self.gl_area.get_parent() == self:
@@ -306,4 +326,10 @@ class MpvVideoWidget(Gtk.Widget):
 
     def queue_render(self):
         self.queue_draw()
+
+    def clear_frame(self):
+        """Clear current texture and queue redraw to release VRAM on video stop/idle (P1-4)."""
+        self.current_texture = None
+        self.queue_draw()
+
 

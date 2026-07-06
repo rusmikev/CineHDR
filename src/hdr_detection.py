@@ -45,9 +45,12 @@ def check_hdr_support() -> bool:
         bool: True if HDR rendering is safely supported by the system, False otherwise.
     """
     try:
-        if not hasattr(Gdk.ColorState, "get_rec2100_pq"):
+        import os
+        if os.environ.get("GSK_RENDERER", "").lower() == "gl":
             return False
-        if not hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT"):
+        if not hasattr(Gdk, "ColorState") or not hasattr(Gdk.ColorState, "get_rec2100_pq"):
+            return False
+        if not hasattr(Gdk, "MemoryFormat") or not hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT"):
             return False
 
         display = Gdk.Display.get_default()
@@ -120,7 +123,10 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
     Returns:
         str: Human-readable explanation of missing HDR requirements.
     """
-    if not hasattr(Gdk.ColorState, "get_rec2100_pq") or not hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT"):
+    import os
+    if os.environ.get("GSK_RENDERER", "").lower() == "gl":
+        return "GSK_RENDERER=gl forces legacy 8-bit OpenGL rendering without HDR support"
+    if not hasattr(Gdk, "ColorState") or not hasattr(Gdk.ColorState, "get_rec2100_pq") or not hasattr(Gdk, "MemoryFormat") or not hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT"):
         return "Gdk.ColorState is not available (requires GTK >= 4.16)"
     if not display:
         display = Gdk.Display.get_default()

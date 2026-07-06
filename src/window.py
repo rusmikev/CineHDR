@@ -2013,6 +2013,8 @@ class CineWindow(Adw.ApplicationWindow):
                     self.revealer_ui.set_reveal_child(True)
                     self.set_title(_("CineHDR"))
                     self.hide_icon_indicator = True
+                    if hasattr(self.gl_area, "clear_frame"):
+                        self.gl_area.clear_frame()
                     if isinstance(self.visible_dialog, Playlist):
                         self.visible_dialog.close()
 
@@ -2097,8 +2099,11 @@ class CineWindow(Adw.ApplicationWindow):
         def on_vid_change(_name, value):
             idle_add_once(self.audio_only_icon.set_visible, not bool(value))
             if not value:
-                # clear the last frame, which sometimes can still be present
-                idle_add_once(self.gl_area.queue_render)
+                # clear the last frame and free VRAM (~63 MB in 4K)
+                if hasattr(self.gl_area, "clear_frame"):
+                    idle_add_once(self.gl_area.clear_frame)
+                else:
+                    idle_add_once(self.gl_area.queue_render)
                 idle_add_once(self.hdr_menu_btn.set_visible, False)
 
 

@@ -4,6 +4,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import ctypes
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Load OpenGL libraries and helper
 libgl = ctypes.CDLL("libGL.so.1")
@@ -116,4 +119,4 @@ def check_gl_error(step=""):
         return
     err = glGetError()
     if err != GL_NO_ERROR:
-        print(f"OpenGL error at {step}: 0x{err:04x}")
+        logger.error(f"OpenGL error at {step}: 0x{err:04x}")

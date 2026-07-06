@@ -26,6 +26,7 @@ before wrapping them into Gdk.GLTexture for GTK 4 presentation.
 """
 
 import ctypes
+import logging
 from .gl_bindings import (
     GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
     GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
@@ -35,6 +36,8 @@ from .gl_bindings import (
     glBindTexture, glTexImage2D, glTexParameteri, glCheckFramebufferStatus,
     check_gl_error
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GLFramebufferResource:
@@ -99,7 +102,7 @@ class GLFramebufferResource:
 
             status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
             if status != GL_FRAMEBUFFER_COMPLETE:
-                print(f"Error: Framebuffer is not complete: {hex(status)}")
+                logger.error(f"Error: Framebuffer is not complete: {hex(status)}")
                 glBindFramebuffer(GL_FRAMEBUFFER, 0)
                 glBindTexture(GL_TEXTURE_2D, 0)
                 self.release()
@@ -158,10 +161,20 @@ class GLFramebufferPool:
 
     def acquire(self, w: int, h: int, is_float: bool = True) -> FramebufferSlot | None:
         """Acquire an available buffer slot from the ring pool."""
+        from .gl_bindings import glDeleteSync
         for slot in self.slots:
             if not slot.in_use:
                 slot.in_use = True
+                if slot.fence and glDeleteSync:
+                    try:
+                        glDeleteSync(slot.fence)
+                    except Exception:
+                        pass
+                    slot.fence = None
                 slot.resource.ensure(w, h, is_float=is_float)
+                if not slot.resource._initialized or slot.resource.fbo_id == 0:
+                    slot.in_use = False
+                    return None
                 return slot
 
         # Pool exhausted: all buffers are currently held by GTK compositor
@@ -169,14 +182,7 @@ class GLFramebufferPool:
         return None
 
     def release_buffer(self, slot: FramebufferSlot):
-        """Release a buffer slot back to the pool, deleting its sync fence."""
-        from .gl_bindings import glDeleteSync
-        if slot.fence and glDeleteSync:
-            try:
-                glDeleteSync(slot.fence)
-            except Exception:
-                pass
-            slot.fence = None
+        """Release a buffer slot back to the pool."""
         slot.in_use = False
 
     def release_all(self):
