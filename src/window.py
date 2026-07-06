@@ -221,6 +221,11 @@ class CineWindow(Adw.ApplicationWindow):
         )
 
         self.gl_area = MpvVideoWidget(self.mpv)
+        def update_hdr_btn():
+            from .hdr_detection import check_hdr_support
+            is_vis = self.gl_area.hdr_controller.is_hdr_content and check_hdr_support()
+            self.hdr_menu_btn.set_visible(is_vis)
+        self.gl_area.hdr_controller.on_content_change_cb = lambda: idle_add_once(update_hdr_btn)
         self.offload = Gtk.GraphicsOffload(child=self.gl_area)
         self.offload.set_black_background(True)
 
@@ -2096,12 +2101,6 @@ class CineWindow(Adw.ApplicationWindow):
                 idle_add_once(self.gl_area.queue_render)
                 idle_add_once(self.hdr_menu_btn.set_visible, False)
 
-        @self.mpv.property_observer("video-params")
-        def on_video_params_change(_name, params):
-            def update_hdr_btn():
-                from .hdr_detection import is_hdr_content, check_hdr_support
-                self.hdr_menu_btn.set_visible(is_hdr_content(params) and check_hdr_support())
-            idle_add_once(update_hdr_btn)
 
         @self.mpv.property_observer("video-zoom")
         def on_zoom_change(_name, value):

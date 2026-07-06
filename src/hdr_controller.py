@@ -185,8 +185,8 @@ class HdrController(GObject.Object):
             if self._is_hdr_content != is_hdr:
                 self._is_hdr_content = is_hdr
                 idle_add_once(self.apply_hdr_settings)
-                if hasattr(self, "on_content_change_cb") and self.on_content_change_cb:
-                    idle_add_once(self.on_content_change_cb)
+            if hasattr(self, "on_content_change_cb") and self.on_content_change_cb:
+                idle_add_once(self.on_content_change_cb)
         self._mpv_observers.append(("video-params", _on_video_params))
 
         self.apply_hdr_settings()
