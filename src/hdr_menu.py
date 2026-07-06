@@ -11,7 +11,7 @@ from gettext import gettext as _
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
 
-from .video_widget import load_hdr_config, save_hdr_config
+from .hdr_controller import load_hdr_config, save_hdr_config
 
 @Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/hdr_menu.ui")
 class HdrMenuButton(Gtk.MenuButton):
@@ -30,7 +30,7 @@ class HdrMenuButton(Gtk.MenuButton):
         self.connect("unrealize", self._on_unrealize)
         self.connect("notify::active", self._on_active)
         try:
-            from .video_widget import _get_hdr_settings
+            from .hdr_controller import _get_hdr_settings
             self._gsettings = _get_hdr_settings()
             self._gsettings.connect("changed", self._on_gsettings_changed)
         except Exception:

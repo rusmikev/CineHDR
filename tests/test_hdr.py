@@ -38,7 +38,7 @@ class TestHDRConfigPersistence(unittest.TestCase):
 
     def test_load_defaults(self):
         """load_hdr_config returns valid keys and types."""
-        from src.video_widget import load_hdr_config
+        from src.hdr_controller import load_hdr_config
         config = load_hdr_config()
         self.assertIn("hdr_enabled", config)
         self.assertIn("hdr_target_peak", config)
@@ -49,7 +49,7 @@ class TestHDRConfigPersistence(unittest.TestCase):
 
     def test_save_and_load_roundtrip(self):
         """Saving config and loading it back returns the same values."""
-        from src.video_widget import load_hdr_config, save_hdr_config
+        from src.hdr_controller import load_hdr_config, save_hdr_config
         test_config = {
             "hdr_enabled": False,
             "hdr_target_peak": "600",
@@ -63,14 +63,14 @@ class TestHDRConfigPersistence(unittest.TestCase):
 
     def test_load_hdr_setting_returns_bool(self):
         """load_hdr_setting returns just the boolean enabled state."""
-        from src.video_widget import load_hdr_setting, save_hdr_config
+        from src.hdr_controller import load_hdr_setting, save_hdr_config
         save_hdr_config({"hdr_enabled": False, "hdr_target_peak": "auto", "hdr_target_prim": "auto"})
         result = load_hdr_setting()
         self.assertFalse(result)
 
     def test_save_hdr_setting_preserves_other_keys(self):
         """save_hdr_setting updates only hdr_enabled without losing peak/prim."""
-        from src.video_widget import save_hdr_setting, load_hdr_config, save_hdr_config
+        from src.hdr_controller import save_hdr_setting, load_hdr_config, save_hdr_config
         initial = {"hdr_enabled": True, "hdr_target_peak": "1000", "hdr_target_prim": "bt.709"}
         save_hdr_config(initial)
         save_hdr_setting(False)
@@ -81,7 +81,7 @@ class TestHDRConfigPersistence(unittest.TestCase):
 
     def test_load_partial_config_fills_defaults(self):
         """Saving partial config preserves existing keys in GSettings."""
-        from src.video_widget import load_hdr_config, save_hdr_config
+        from src.hdr_controller import load_hdr_config, save_hdr_config
         save_hdr_config({"hdr_enabled": True, "hdr_target_peak": "400", "hdr_target_prim": "dci-p3"})
         save_hdr_config({"hdr_enabled": False})
         config = load_hdr_config()
@@ -89,10 +89,10 @@ class TestHDRConfigPersistence(unittest.TestCase):
         self.assertEqual(config["hdr_target_peak"], "400")
         self.assertEqual(config["hdr_target_prim"], "dci-p3")
 
-    @patch("src.video_widget._get_hdr_settings")
+    @patch("src.hdr_controller._get_hdr_settings")
     def test_load_error_returns_defaults(self, mock_get_settings):
         """If GSettings fails, load_hdr_config returns sensible defaults without crashing."""
-        from src.video_widget import load_hdr_config
+        from src.hdr_controller import load_hdr_config
         mock_settings = MagicMock()
         mock_settings.get_boolean.side_effect = Exception("GSettings error")
         mock_get_settings.return_value = mock_settings
@@ -165,7 +165,7 @@ class TestApplyHDRSettings(unittest.TestCase):
 
     def test_hlg_and_pq_detection_logic(self):
         """Gamma pq/hlg/st2084 or sig-peak > 1.0 correctly identify HDR content (excluding bt.2020 solo trigger)."""
-        from src.video_widget import is_hdr_content
+        from src.hdr_detection import is_hdr_content
         test_cases = [
             ({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1.0}, False),
             ({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 600.0}, True),
@@ -208,11 +208,11 @@ class TestApplyHDRSettings(unittest.TestCase):
             mock_mpv["target-prim"] = prim
             self.assertEqual(props["target-prim"], prim)
 
-    @patch("src.video_widget.Gdk.Display")
-    @patch("src.video_widget.Gdk.ColorState")
+    @patch("src.hdr_detection.Gdk.Display")
+    @patch("src.hdr_detection.Gdk.ColorState")
     def test_check_hdr_support_conditions(self, mock_colorstate, mock_display_class):
         """test check_hdr_support returns True only on Wayland with GTK >= 4.16."""
-        from src.video_widget import check_hdr_support
+        from src.hdr_detection import check_hdr_support
         
         # Scenario 1: Gdk.ColorState doesn't have get_rec2100_pq
         if hasattr(mock_colorstate, "get_rec2100_pq"):
@@ -221,29 +221,29 @@ class TestApplyHDRSettings(unittest.TestCase):
         
         # Scenario 2: Gdk.ColorState has get_rec2100_pq, but no default display
         mock_colorstate.get_rec2100_pq = MagicMock()
-        with patch("src.video_widget.Gdk.Display.get_default", return_value=None):
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=None):
             self.assertFalse(check_hdr_support())
             
         # Scenario 3: Display is X11
         mock_display = MagicMock()
         mock_display.__class__.__name__ = "GdkX11Display"
-        with patch("src.video_widget.Gdk.Display.get_default", return_value=mock_display):
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
             
         # Scenario 4: Display is Wayland
         mock_display.__class__.__name__ = "GdkWaylandDisplay"
-        with patch("src.video_widget.Gdk.Display.get_default", return_value=mock_display):
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertTrue(check_hdr_support())
 
         # Scenario 5: Display is Wayland but not composited
         mock_display.is_composited.return_value = False
-        with patch("src.video_widget.Gdk.Display.get_default", return_value=mock_display):
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
         mock_display.is_composited.return_value = True
 
         # Scenario 6: Display is Wayland but no RGBA
         mock_display.is_rgba.return_value = False
-        with patch("src.video_widget.Gdk.Display.get_default", return_value=mock_display):
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
         mock_display.is_rgba.return_value = True
 
@@ -251,39 +251,31 @@ class TestApplyHDRSettings(unittest.TestCase):
         mock_dmabuf = MagicMock()
         mock_dmabuf.get_n_formats.return_value = 0
         mock_display.get_dmabuf_formats.return_value = mock_dmabuf
-        with patch("src.video_widget.Gdk.Display.get_default", return_value=mock_display):
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
         mock_dmabuf.get_n_formats.return_value = 10
 
-    @patch("src.video_widget.check_hdr_support")
+    @patch("src.hdr_controller.check_hdr_support")
     def test_apply_hdr_settings_with_support_check(self, mock_support):
         """apply_hdr_settings applies HDR only if check_hdr_support is True."""
-        from src.video_widget import MpvVideoWidget
-        import types
+        from src.hdr_controller import HdrController
         
         mock_mpv, props = self._make_mock_mpv()
-        
-        # Create a lightweight dummy widget bypass GTK init issues
-        class DummyWidget:
-            pass
-            
-        widget = DummyWidget()
-        widget.mpv = mock_mpv
-        widget._hdr_enabled = True
-        widget._hdr_target_peak = "1000"
-        widget._hdr_target_prim = "dci-p3"
-        widget._is_hdr_content = True
-        widget.apply_hdr_settings = types.MethodType(MpvVideoWidget.apply_hdr_settings, widget)
+        controller = HdrController(mock_mpv)
+        controller._hdr_enabled = True
+        controller._hdr_target_peak = "1000"
+        controller._hdr_target_prim = "dci-p3"
+        controller._is_hdr_content = True
         
         # Case A: check_hdr_support is False (e.g. X11) -> should fall back to SDR
         mock_support.return_value = False
-        widget.apply_hdr_settings()
+        controller.apply_hdr_settings()
         self.assertEqual(props.get("target-colorspace-hint"), "no")
         self.assertEqual(props.get("hdr-compute-peak"), "auto")
         
         # Case B: check_hdr_support is True (Wayland + GTK >= 4.16) -> should apply PQ
         mock_support.return_value = True
-        widget.apply_hdr_settings()
+        controller.apply_hdr_settings()
         self.assertEqual(props.get("target-colorspace-hint"), "yes")
         self.assertEqual(props.get("target-trc"), "pq")
         self.assertEqual(props.get("target-prim"), "dci-p3")
@@ -394,8 +386,8 @@ class TestColorStateSelection(unittest.TestCase):
     """Tests for the HDR/SDR color state decision in do_snapshot."""
 
     def _is_hdr(self, hdr_enabled, primaries, gamma, sig_peak=1.0):
-        """Use is_hdr_content from video_widget.py."""
-        from src.video_widget import is_hdr_content
+        """Use is_hdr_content from hdr_detection.py."""
+        from src.hdr_detection import is_hdr_content
         return hdr_enabled and is_hdr_content({"primaries": primaries, "gamma": gamma, "sig-peak": sig_peak})
 
     def test_hdr_bt2020_pq(self):
@@ -432,7 +424,7 @@ class TestColorStateSelection(unittest.TestCase):
 
     def test_file_supports_hdr_detection(self):
         """Test file HDR detection logic for showing/hiding HDR menu button."""
-        from src.video_widget import is_hdr_content
+        from src.hdr_detection import is_hdr_content
         self.assertTrue(is_hdr_content({"primaries": "bt.2020", "gamma": "pq"}))
         self.assertTrue(is_hdr_content({"primaries": "bt.709", "gamma": "hlg"}))
         self.assertTrue(is_hdr_content({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1000}))
@@ -445,7 +437,7 @@ class TestGLFramebufferResource(unittest.TestCase):
     """Tests for RAII OpenGL Framebuffer Resource management."""
 
     def test_init_defaults(self):
-        from src.video_widget import GLFramebufferResource
+        from src.gl_renderer import GLFramebufferResource
         res = GLFramebufferResource()
         self.assertEqual(res.texture_id.value, 0)
         self.assertEqual(res.fbo_id.value, 0)
@@ -454,7 +446,7 @@ class TestGLFramebufferResource(unittest.TestCase):
         self.assertFalse(res._initialized)
 
     def test_ensure_invalid_dimensions_noop(self):
-        from src.video_widget import GLFramebufferResource
+        from src.gl_renderer import GLFramebufferResource
         res = GLFramebufferResource()
         res.ensure(0, 100)
         res.ensure(100, -5)
@@ -463,23 +455,23 @@ class TestGLFramebufferResource(unittest.TestCase):
         self.assertEqual(res.height, 0)
 
     def test_release_uninitialized_noop(self):
-        from src.video_widget import GLFramebufferResource
+        from src.gl_renderer import GLFramebufferResource
         res = GLFramebufferResource()
         res.release()
         self.assertEqual(res.texture_id.value, 0)
         self.assertEqual(res.fbo_id.value, 0)
         self.assertFalse(res._initialized)
 
-    @unittest.mock.patch("src.video_widget.glGenTextures")
-    @unittest.mock.patch("src.video_widget.glGenFramebuffers")
-    @unittest.mock.patch("src.video_widget.glBindTexture")
-    @unittest.mock.patch("src.video_widget.glTexParameteri")
-    @unittest.mock.patch("src.video_widget.glTexImage2D")
-    @unittest.mock.patch("src.video_widget.glBindFramebuffer")
-    @unittest.mock.patch("src.video_widget.glFramebufferTexture2D")
-    @unittest.mock.patch("src.video_widget.glCheckFramebufferStatus")
+    @unittest.mock.patch("src.gl_renderer.glGenTextures")
+    @unittest.mock.patch("src.gl_renderer.glGenFramebuffers")
+    @unittest.mock.patch("src.gl_renderer.glBindTexture")
+    @unittest.mock.patch("src.gl_renderer.glTexParameteri")
+    @unittest.mock.patch("src.gl_renderer.glTexImage2D")
+    @unittest.mock.patch("src.gl_renderer.glBindFramebuffer")
+    @unittest.mock.patch("src.gl_renderer.glFramebufferTexture2D")
+    @unittest.mock.patch("src.gl_renderer.glCheckFramebufferStatus")
     def test_ensure_creation_and_resize(self, mock_status, mock_fb_tex, mock_bind_fb, mock_tex_img, mock_tex_param, mock_bind_tex, mock_gen_fb, mock_gen_tex):
-        from src.video_widget import GLFramebufferResource
+        from src.gl_renderer import GLFramebufferResource
         from src.gl_bindings import GL_FRAMEBUFFER_COMPLETE
 
         mock_status.return_value = GL_FRAMEBUFFER_COMPLETE
@@ -516,10 +508,10 @@ class TestGLFramebufferResource(unittest.TestCase):
         self.assertEqual(mock_gen_fb.call_count, 1)   # NOT called again!
         self.assertEqual(mock_tex_img.call_count, 2)  # glTexImage2D called for resize!
 
-    @unittest.mock.patch("src.video_widget.glDeleteFramebuffers")
-    @unittest.mock.patch("src.video_widget.glDeleteTextures")
+    @unittest.mock.patch("src.gl_renderer.glDeleteFramebuffers")
+    @unittest.mock.patch("src.gl_renderer.glDeleteTextures")
     def test_release_cleans_resources(self, mock_del_tex, mock_del_fb):
-        from src.video_widget import GLFramebufferResource
+        from src.gl_renderer import GLFramebufferResource
         res = GLFramebufferResource()
         res.texture_id = ctypes.c_uint(10)
         res.fbo_id = ctypes.c_uint(20)

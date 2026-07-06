@@ -2101,7 +2101,7 @@ class CineWindow(Adw.ApplicationWindow):
         @self.mpv.property_observer("video-params")
         def on_video_params_change(_name, params):
             def update_hdr_btn():
-                from .video_widget import is_hdr_content, check_hdr_support
+                from .hdr_detection import is_hdr_content, check_hdr_support
                 self.hdr_menu_btn.set_visible(is_hdr_content(params) and check_hdr_support())
             idle_add_once(update_hdr_btn)
 
