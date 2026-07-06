@@ -29,7 +29,7 @@ import ctypes
 from .gl_bindings import (
     GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
     GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
-    GL_RGBA, GL_FLOAT, GL_RGBA16F, GL_FRAMEBUFFER_COMPLETE,
+    GL_RGBA, GL_FLOAT, GL_RGBA16F, GL_RGBA8, GL_UNSIGNED_BYTE, GL_FRAMEBUFFER_COMPLETE,
     glGenFramebuffers, glDeleteFramebuffers, glBindFramebuffer,
     glFramebufferTexture2D, glGenTextures, glDeleteTextures,
     glBindTexture, glTexImage2D, glTexParameteri, glCheckFramebufferStatus,
@@ -39,7 +39,7 @@ from .gl_bindings import (
 
 class GLFramebufferResource:
     """
-    RAII wrapper for OpenGL Framebuffer Object (FBO) and 16-bit Float Texture.
+    RAII wrapper for OpenGL Framebuffer Object (FBO) and Texture (16-bit Float or 8-bit Int).
 
     Manages the lifecycle of GPU textures and framebuffers to prevent VRAM leaks.
     Optimizes resizing by reusing existing OpenGL texture/FBO handles when possible,
@@ -50,21 +50,26 @@ class GLFramebufferResource:
         self.fbo_id = ctypes.c_uint(0)
         self.width = width
         self.height = height
+        self.is_float = True
         self._initialized = False
 
-    def ensure(self, w: int, h: int):
+    def ensure(self, w: int, h: int, is_float: bool = True):
         """
-        Ensure FBO and texture exist and match dimensions w x h without re-generating IDs.
+        Ensure FBO and texture exist and match dimensions w x h and format without re-generating IDs.
 
         If uninitialized, generates texture and FBO handles and binds attachment.
-        If already initialized but dimensions changed, updates texture storage in-place.
+        If already initialized but dimensions or format changed, updates texture storage in-place.
 
         Args:
             w (int): Target width in pixels.
             h (int): Target height in pixels.
+            is_float (bool): True for GL_RGBA16F (HDR float), False for GL_RGBA8 (SDR fallback int).
         """
         if w <= 0 or h <= 0:
             return
+
+        internal_format = GL_RGBA16F if is_float else GL_RGBA8
+        data_type = GL_FLOAT if is_float else GL_UNSIGNED_BYTE
 
         if not self._initialized or self.texture_id.value == 0 or self.fbo_id.value == 0:
             glGenTextures(1, ctypes.byref(self.texture_id))
@@ -72,6 +77,7 @@ class GLFramebufferResource:
             glGenFramebuffers(1, ctypes.byref(self.fbo_id))
             check_gl_error("glGenFramebuffers")
             self._initialized = True
+            self.is_float = is_float
 
             glBindTexture(GL_TEXTURE_2D, self.texture_id.value)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
@@ -79,8 +85,8 @@ class GLFramebufferResource:
             check_gl_error("glTexParameteri")
 
             glTexImage2D(
-                GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0,
-                GL_RGBA, GL_FLOAT, None
+                GL_TEXTURE_2D, 0, internal_format, w, h, 0,
+                GL_RGBA, data_type, None
             )
             check_gl_error("glTexImage2D initial")
 
@@ -94,18 +100,24 @@ class GLFramebufferResource:
             status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
             if status != GL_FRAMEBUFFER_COMPLETE:
                 print(f"Error: Framebuffer is not complete: {hex(status)}")
+                glBindFramebuffer(GL_FRAMEBUFFER, 0)
+                glBindTexture(GL_TEXTURE_2D, 0)
+                self.release()
+                return
+
             glBindFramebuffer(GL_FRAMEBUFFER, 0)
             glBindTexture(GL_TEXTURE_2D, 0)
             self.width = w
             self.height = h
-        elif self.width != w or self.height != h:
-            # Resize existing texture without deleting/re-creating IDs!
+        elif self.width != w or self.height != h or self.is_float != is_float:
+            # Resize or reformat existing texture without deleting/re-creating IDs!
+            self.is_float = is_float
             glBindTexture(GL_TEXTURE_2D, self.texture_id.value)
             glTexImage2D(
-                GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0,
-                GL_RGBA, GL_FLOAT, None
+                GL_TEXTURE_2D, 0, internal_format, w, h, 0,
+                GL_RGBA, data_type, None
             )
-            check_gl_error("glTexImage2D resize")
+            check_gl_error("glTexImage2D resize/reformat")
             glBindTexture(GL_TEXTURE_2D, 0)
             self.width = w
             self.height = h
@@ -122,8 +134,3 @@ class GLFramebufferResource:
         self.width = 0
         self.height = 0
 
-    def __del__(self):
-        try:
-            self.release()
-        except Exception:
-            pass

@@ -29,13 +29,12 @@ import ctypes
 import gi
 import mpv
 from gettext import gettext as _
+from typing import Any, Optional
+from gi.repository import Gtk, Gdk, GLib, GObject
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gtk, Gdk, GLib, GObject, Gio
 
-import os
-from .utils import get_display_param, idle_add_once
 from .gl_bindings import (
     GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
     GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
@@ -46,13 +45,9 @@ from .gl_bindings import (
     check_gl_error, egl_get_proc_address, get_proc_address
 )
 
-# Re-export modules and helpers for backward compatibility with existing imports and tests
-from .hdr_detection import check_hdr_support, is_hdr_content
 from .gl_renderer import GLFramebufferResource
-from .hdr_controller import (
-    load_hdr_config, save_hdr_config, load_hdr_setting, save_hdr_setting,
-    HdrController, _get_hdr_settings
-)
+from .hdr_controller import HdrController
+from .utils import idle_add_once, get_display_param
 
 
 class MpvVideoWidget(Gtk.Widget):
@@ -60,7 +55,7 @@ class MpvVideoWidget(Gtk.Widget):
 
     __gtype_name__ = "MpvVideoWidget"
 
-    def __init__(self, mpv_player):
+    def __init__(self, mpv_player: mpv.MPV):
         super().__init__()
         self.mpv = mpv_player
         self.set_layout_manager(Gtk.BinLayout())
@@ -73,8 +68,8 @@ class MpvVideoWidget(Gtk.Widget):
         self.gl_area.connect("unrealize", self._on_unrealize)
 
         self.fbo_resource = GLFramebufferResource()
-        self.mpv_ctx = None
-        self.current_texture = None
+        self.mpv_ctx: Optional[mpv.MpvRenderContext] = None
+        self.current_texture: Optional[Gdk.Texture] = None
 
         # Delegate HDR state and mpv property observers to HdrController
         self.hdr_controller = HdrController(
@@ -83,86 +78,58 @@ class MpvVideoWidget(Gtk.Widget):
         )
 
     @property
-    def texture_id(self):
+    def texture_id(self) -> Any:
         return getattr(self, "fbo_resource", GLFramebufferResource()).texture_id
 
     @property
-    def fbo_id(self):
+    def fbo_id(self) -> Any:
         return getattr(self, "fbo_resource", GLFramebufferResource()).fbo_id
 
     @property
-    def tex_width(self):
+    def tex_width(self) -> int:
         return getattr(self, "fbo_resource", GLFramebufferResource()).width
 
     @property
-    def tex_height(self):
+    def tex_height(self) -> int:
         return getattr(self, "fbo_resource", GLFramebufferResource()).height
 
-    # Forwarding properties and methods to HdrController for backward compatibility
+    # Public delegator properties for HdrController
     @property
-    def hdr_enabled(self):
+    def hdr_mode(self) -> str:
+        return self.hdr_controller.hdr_mode
+
+    @hdr_mode.setter
+    def hdr_mode(self, value: str):
+        self.hdr_controller.hdr_mode = value
+
+    @property
+    def hdr_enabled(self) -> bool:
         return self.hdr_controller.hdr_enabled
 
     @hdr_enabled.setter
-    def hdr_enabled(self, value):
+    def hdr_enabled(self, value: bool):
         self.hdr_controller.hdr_enabled = value
 
     @property
-    def _hdr_enabled(self):
-        return self.hdr_controller.hdr_enabled
-
-    @_hdr_enabled.setter
-    def _hdr_enabled(self, value):
-        self.hdr_controller.hdr_enabled = value
-
-    @property
-    def hdr_target_peak(self):
+    def hdr_target_peak(self) -> Any:
         return self.hdr_controller.hdr_target_peak
 
     @hdr_target_peak.setter
-    def hdr_target_peak(self, value):
+    def hdr_target_peak(self, value: Any):
         self.hdr_controller.hdr_target_peak = value
 
     @property
-    def _hdr_target_peak(self):
-        return self.hdr_controller.hdr_target_peak
-
-    @_hdr_target_peak.setter
-    def _hdr_target_peak(self, value):
-        self.hdr_controller.hdr_target_peak = value
-
-    @property
-    def hdr_target_prim(self):
+    def hdr_target_prim(self) -> str:
         return self.hdr_controller.hdr_target_prim
 
     @hdr_target_prim.setter
-    def hdr_target_prim(self, value):
+    def hdr_target_prim(self, value: str):
         self.hdr_controller.hdr_target_prim = value
-
-    @property
-    def _hdr_target_prim(self):
-        return self.hdr_controller.hdr_target_prim
-
-    @_hdr_target_prim.setter
-    def _hdr_target_prim(self, value):
-        self.hdr_controller.hdr_target_prim = value
-
-    @property
-    def _is_hdr_content(self):
-        return self.hdr_controller.is_hdr_content
-
-    @_is_hdr_content.setter
-    def _is_hdr_content(self, value):
-        self.hdr_controller.is_hdr_content = value
-
-    @property
-    def _gsettings(self):
-        return getattr(self.hdr_controller, "_gsettings", None)
 
     def apply_hdr_settings(self):
         self.hdr_controller.apply_hdr_settings()
 
-    def _on_realize(self, area):
+    def _on_realize(self, area: Gtk.GLArea):
         area.make_current()
 
         proc_address_fn = mpv.MpvGlGetProcAddressFn(
@@ -182,7 +149,7 @@ class MpvVideoWidget(Gtk.Widget):
         self.mpv_ctx.update_cb = lambda: idle_add_once(self.queue_draw)
         self.fbo_resource.release()
 
-    def _on_unrealize(self, area):
+    def _on_unrealize(self, area: Gtk.GLArea):
         area.make_current()
         if self.mpv_ctx:
             self.mpv_ctx.update_cb = None
@@ -195,9 +162,7 @@ class MpvVideoWidget(Gtk.Widget):
         self.fbo_resource.release()
 
     def do_unroot(self):
-        # Guarantee unrealize and OpenGL resource cleanup when removed from root/window (Risk P-4)
-        if hasattr(self, "gl_area") and self.gl_area and self.gl_area.get_realized():
-            self._on_unrealize(self.gl_area)
+        # Allow GTK standard lifecycle signal emission ("unrealize") without double execution (Audit Finding 12)
         Gtk.Widget.do_unroot(self)
 
     def do_dispose(self):
@@ -206,11 +171,11 @@ class MpvVideoWidget(Gtk.Widget):
             self.gl_area.unparent()
         Gtk.Widget.do_dispose(self)
 
-    def setup_fbo(self, w, h):
+    def setup_fbo(self, w: int, h: int, is_float: bool = True):
         self.gl_area.make_current()
-        self.fbo_resource.ensure(w, h)
+        self.fbo_resource.ensure(w, h, is_float=is_float)
 
-    def do_snapshot(self, snapshot):
+    def do_snapshot(self, snapshot: Gtk.Snapshot):
         if not self.gl_area.get_realized():
             return
 
@@ -223,13 +188,24 @@ class MpvVideoWidget(Gtk.Widget):
         scaled_w = int(w * scale)
         scaled_h = int(h * scale)
 
-        # Recreate texture only if size changed significantly (> 1px) or not initialized (Risk P-5)
+        # Determine color state and float format support via HdrController (Audit Finding 2)
+        try:
+            is_hdr = self.hdr_controller.is_hdr_active
+            self.hdr_controller.check_unsupported_warning(Gdk.Display.get_default())
+        except Exception:
+            is_hdr = False
+
+        has_float = hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT")
+        use_float = is_hdr and has_float
+
+        # Recreate texture if size changed (> 1px), not initialized, or format changed (Risk P-5 / Audit Finding 2)
         if (
             self.texture_id.value == 0
             or abs(self.tex_width - scaled_w) > 1
             or abs(self.tex_height - scaled_h) > 1
+            or getattr(self.fbo_resource, "is_float", True) != use_float
         ):
-            self.setup_fbo(scaled_w, scaled_h)
+            self.setup_fbo(scaled_w, scaled_h, is_float=use_float)
 
         if self.mpv_ctx and self.fbo_id.value != 0:
             self.gl_area.make_current()
@@ -252,18 +228,11 @@ class MpvVideoWidget(Gtk.Widget):
             builder.set_id(self.texture_id.value)
             builder.set_width(scaled_w)
             builder.set_height(scaled_h)
-            try:
-                texture_format = Gdk.MemoryFormat.R16G16B16A16_FLOAT
-            except AttributeError:
-                texture_format = Gdk.MemoryFormat.B8G8R8A8
-            builder.set_format(texture_format)
 
-            # Determine color state via HdrController
-            try:
-                is_hdr = self.hdr_controller.is_hdr_active
-                self.hdr_controller.check_unsupported_warning(Gdk.Display.get_default())
-            except Exception:
-                is_hdr = False
+            if use_float:
+                builder.set_format(Gdk.MemoryFormat.R16G16B16A16_FLOAT)
+            else:
+                builder.set_format(Gdk.MemoryFormat.B8G8R8A8)
 
             if is_hdr:
                 try:

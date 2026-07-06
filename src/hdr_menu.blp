@@ -41,7 +41,7 @@ template $HdrMenuButton: MenuButton {
             }
 
             Label {
-              label: _("HDR Playback");
+              label: _("HDR Mode");
               wrap: true;
               natural-wrap-mode: none;
               halign: start;
@@ -58,9 +58,18 @@ template $HdrMenuButton: MenuButton {
             margin-end: 2;
           }
 
-          Switch hdr_switch {
+          DropDown hdr_mode_dropdown {
             halign: end;
-            notify::active => $_on_hdr_toggled();
+            width-request: 140;
+            focus-on-click: false;
+            model: StringList {
+              strings [
+                _("Auto"),
+                _("Force HDR"),
+                _("Force SDR"),
+              ]
+            };
+            notify::selected => $_on_hdr_mode_changed();
           }
         }
 
@@ -157,6 +166,20 @@ template $HdrMenuButton: MenuButton {
             };
             notify::selected => $_on_hdr_peak_changed();
           }
+        }
+
+        Separator {
+          margin-top: 4;
+          margin-bottom: 4;
+        }
+
+        Button diag_btn {
+          label: _("HDR Diagnostics…");
+          halign: center;
+          styles [
+            "pill",
+          ]
+          clicked => $_on_hdr_diagnostics();
         }
       }
     }

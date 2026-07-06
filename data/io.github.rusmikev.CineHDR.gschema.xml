@@ -55,6 +55,9 @@
 		<key name="right-click" type="i">
 			<default>0</default>
 		</key>
+		<key name="hdr-mode" type="s">
+			<default>"auto"</default>
+		</key>
 		<key name="hdr-enabled" type="b">
 			<default>true</default>
 		</key>

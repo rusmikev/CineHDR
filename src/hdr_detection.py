@@ -105,3 +105,27 @@ def is_hdr_content(params: dict) -> bool:
 
     hdr_gammas = ("pq", "hlg", "st2084", "slog", "slog2", "slog3")
     return (gamma in hdr_gammas) or (sig_peak > 1.0)
+
+
+def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
+    """
+    Return a descriptive string explaining why HDR is not supported on this system.
+
+    Args:
+        display (Gdk.Display, optional): GTK display object to inspect.
+
+    Returns:
+        str: Human-readable explanation of missing HDR requirements.
+    """
+    if not hasattr(Gdk.ColorState, "get_rec2100_pq") or not hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT"):
+        return "Gdk.ColorState is not available (requires GTK >= 4.16)"
+    if not display:
+        display = Gdk.Display.get_default()
+    if not display:
+        return "No active Gdk.Display found"
+    display_name = getattr(display, "get_name", lambda: "")()
+    is_wayland = ("wayland" in str(display_name).lower() or "wayland" in display.__class__.__name__.lower())
+    if not is_wayland:
+        return f"HDR signaling is not supported under {display.__class__.__name__} (requires Wayland)"
+    return "Wayland compositor does not support HDR/color management"
+

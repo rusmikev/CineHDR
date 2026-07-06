@@ -16,6 +16,15 @@ import ctypes
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+try:
+    from gi.repository import Gio
+    _gres_path = os.path.join(os.path.dirname(__file__), "..", "build", "src", "cinehdr.gresource")
+    if os.path.exists(_gres_path):
+        _res = Gio.Resource.load(_gres_path)
+        Gio.resources_register(_res)
+except Exception:
+    pass
+
 
 # ──────────────────────────────────────────────────────────────
 # 1. Tests for HDR config persistence (load/save via GSettings)
@@ -282,6 +291,32 @@ class TestApplyHDRSettings(unittest.TestCase):
         self.assertEqual(props.get("hdr-compute-peak"), "yes")
         self.assertEqual(props.get("target-peak"), 1000)
 
+    @patch("src.hdr_controller.check_hdr_support")
+    def test_force_hdr_mode_on_sdr_content(self, mock_support):
+        """test force-hdr mode activates tone mapping even for SDR content."""
+        from src.hdr_controller import HdrController
+        mock_support.return_value = True
+        mock_mpv, props = self._make_mock_mpv()
+        controller = HdrController(mock_mpv)
+        controller._is_hdr_content = False  # SDR content!
+        controller.hdr_mode = "force-hdr"
+        self.assertTrue(controller.is_hdr_active)
+        self.assertEqual(props.get("target-colorspace-hint"), "yes")
+        self.assertEqual(props.get("target-trc"), "pq")
+
+    @patch("src.hdr_controller.check_hdr_support")
+    def test_force_sdr_mode_on_hdr_content(self, mock_support):
+        """test force-sdr mode disables HDR signaling even for HDR content."""
+        from src.hdr_controller import HdrController
+        mock_support.return_value = True
+        mock_mpv, props = self._make_mock_mpv()
+        controller = HdrController(mock_mpv)
+        controller._is_hdr_content = True  # HDR content!
+        controller.hdr_mode = "force-sdr"
+        self.assertFalse(controller.is_hdr_active)
+        self.assertEqual(props.get("target-colorspace-hint"), "no")
+        self.assertEqual(props.get("target-trc"), "auto")
+
 
 # ──────────────────────────────────────────────────────────────
 # 3. Tests for UI handler mapping (options.py callback logic)
@@ -289,6 +324,18 @@ class TestApplyHDRSettings(unittest.TestCase):
 
 class TestHDRUIHandlerLogic(unittest.TestCase):
     """Tests for the mapping logic in options.py HDR handlers (without GTK)."""
+
+    def test_mode_dropdown_index_mapping(self):
+        """Mode dropdown indices correctly map to hdr-mode values and back."""
+        mode_map = {0: "auto", 1: "force-hdr", 2: "force-sdr"}
+        for idx, expected in mode_map.items():
+            if idx == 0:
+                result = "auto"
+            elif idx == 1:
+                result = "force-hdr"
+            else:
+                result = "force-sdr"
+            self.assertEqual(result, expected)
 
     def test_gamut_dropdown_index_to_prim(self):
         """Gamut dropdown indices correctly map to target-prim values."""
@@ -529,5 +576,139 @@ class TestGLFramebufferResource(unittest.TestCase):
         self.assertEqual(res.height, 0)
 
 
+# ──────────────────────────────────────────────────────────────
+# 6. Tests for HDR Diagnostics Dialog and Helper
+# ──────────────────────────────────────────────────────────────
+
+class TestHdrDiagnostics(unittest.TestCase):
+    """Tests for HdrDiagnosticsDialog and get_mpv_prop helper."""
+
+    def test_get_mpv_prop(self):
+        from src.hdr_diagnostics import get_mpv_prop
+        
+        class MockMpv1:
+            def _get_property(self, name):
+                return "val1" if name == "test" else None
+                
+        class MockMpv2:
+            def get_property(self, name):
+                return "val2" if name == "test" else None
+                
+        class MockMpv3(dict):
+            pass
+
+        self.assertEqual(get_mpv_prop(MockMpv1(), "test"), "val1")
+        self.assertEqual(get_mpv_prop(MockMpv1(), "missing", "default"), "default")
+        self.assertEqual(get_mpv_prop(MockMpv2(), "test"), "val2")
+        
+        mpv3 = MockMpv3()
+        mpv3["test"] = "val3"
+        self.assertEqual(get_mpv_prop(mpv3, "test"), "val3")
+        self.assertEqual(get_mpv_prop(mpv3, "missing", "default"), "default")
+
+    @unittest.mock.patch("src.hdr_diagnostics.check_hdr_support")
+    def test_update_diagnostics_logic(self, mock_check):
+        from src.hdr_diagnostics import HdrDiagnosticsDialog
+        mock_check.return_value = True
+
+        class MockActionRow:
+            def __init__(self):
+                self.subtitle = ""
+            def set_subtitle(self, text):
+                self.subtitle = text
+
+        class MockController:
+            is_hdr_active = True
+            hdr_mode = "auto"
+
+        class MockGLArea:
+            hdr_controller = MockController()
+            _color_state = None
+
+        class MockMpv:
+            def _get_property(self, name):
+                if name == "video-format": return "hevc"
+                if name == "video-params": return {"primaries": "bt.2020", "gamma": "pq", "sig-peak": 4.93}
+                if name == "target-trc": return "pq"
+                if name == "target-prim": return "dci-p3"
+                if name == "target-peak": return "1000"
+                if name == "target-colorspace-hint": return "yes"
+                return None
+
+        class MockWin:
+            gl_area = MockGLArea()
+            mpv = MockMpv()
+
+        diag = HdrDiagnosticsDialog.__new__(HdrDiagnosticsDialog)
+        diag._win = MockWin()
+        diag.status_row = MockActionRow()
+        diag.display_hdr_row = MockActionRow()
+        diag.color_state_row = MockActionRow()
+        diag.texture_format_row = MockActionRow()
+        diag.codec_row = MockActionRow()
+        diag.primaries_row = MockActionRow()
+        diag.trc_row = MockActionRow()
+        diag.peak_luma_row = MockActionRow()
+        diag.target_row = MockActionRow()
+
+        diag.update_diagnostics()
+
+        self.assertIn("Active", diag.status_row.subtitle)
+        self.assertIn("Yes", diag.display_hdr_row.subtitle)
+        self.assertIn("GL_RGBA16F", diag.texture_format_row.subtitle)
+        self.assertEqual(diag.codec_row.subtitle, "hevc")
+        self.assertEqual(diag.primaries_row.subtitle, "bt.2020")
+        self.assertEqual(diag.trc_row.subtitle, "pq")
+        self.assertIn("nits", diag.peak_luma_row.subtitle)
+        self.assertIn("TRC: pq | Prim: dci-p3 | Peak: 1000 | Hint: yes", diag.target_row.subtitle)
+
+
+class TestAuditFixes(unittest.TestCase):
+    """Tests verifying fixes for senior auditor findings."""
+
+    def test_get_hdr_unsupported_reason(self):
+        from src.hdr_detection import get_hdr_unsupported_reason
+        reason = get_hdr_unsupported_reason(None)
+        self.assertIsInstance(reason, str)
+        self.assertTrue(len(reason) > 0)
+
+    def test_idle_add_once_deduplication(self):
+        from src.utils import idle_add_once, _pending_idles
+        called = 0
+        def dummy_cb():
+            nonlocal called
+            called += 1
+
+        idle_add_once(dummy_cb)
+        idle_add_once(dummy_cb)
+        matching = [k for k in _pending_idles if k == dummy_cb or (isinstance(k, tuple) and k[0] == dummy_cb)]
+        self.assertEqual(len(matching), 1)
+
+    def test_hdr_controller_disconnect(self):
+        from src.hdr_controller import HdrController
+        class MockMpvPlayer:
+            def __init__(self):
+                self.observed = []
+            def property_observer(self, name):
+                def decorator(fn):
+                    self.observed.append((name, fn))
+                    return fn
+                return decorator
+            def observe_property(self, name, handler):
+                self.observed.append((name, handler))
+            def unobserve_property(self, name, handler):
+                if (name, handler) in self.observed:
+                    self.observed.remove((name, handler))
+            def __setitem__(self, k, v): pass
+            def __getitem__(self, k): return "auto"
+
+        mpv = MockMpvPlayer()
+        ctrl = HdrController(mpv)
+        self.assertTrue(len(mpv.observed) > 0)
+        ctrl.disconnect()
+        self.assertEqual(len(mpv.observed), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
+

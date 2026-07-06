@@ -1,0 +1,81 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $HdrDiagnosticsDialog: Adw.Dialog {
+  title: _("HDR Diagnostics");
+  name: "hdr-diagnostics";
+  content-width: 520;
+  content-height: 480;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [end]
+      Button refresh_btn {
+        icon-name: "view-refresh-symbolic";
+        tooltip-text: _("Refresh");
+        styles [
+          "flat",
+        ]
+        clicked => $_on_refresh();
+      }
+    }
+
+    content: Adw.PreferencesPage {
+      Adw.PreferencesGroup {
+        title: _("Output & Color State");
+        description: _("Current GTK and OpenGL rendering surface status.");
+
+        Adw.ActionRow status_row {
+          title: _("HDR Status");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow display_hdr_row {
+          title: _("Display HDR Supported");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow color_state_row {
+          title: _("Gdk.ColorState");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow texture_format_row {
+          title: _("Surface Format");
+          subtitle: "Checking...";
+        }
+      }
+
+      Adw.PreferencesGroup {
+        title: _("Video Signal (libmpv)");
+        description: _("Parameters detected from the playing video stream.");
+
+        Adw.ActionRow codec_row {
+          title: _("Video Codec / Format");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow primaries_row {
+          title: _("Color Primaries");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow trc_row {
+          title: _("Transfer Characteristics (Gamma)");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow peak_luma_row {
+          title: _("Peak Luminance");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow target_row {
+          title: _("Target Tone Mapping");
+          subtitle: "Checking...";
+        }
+      }
+    };
+  }
+}

@@ -27,20 +27,34 @@ OpenGL rendering widgets from HDR business logic. It handles:
 3. Computing tone mapping rules and safe SDR fallbacks.
 """
 
+from typing import Any, Optional
 from gi.repository import GObject, Gio
 from .utils import idle_add_once
-from .hdr_detection import is_hdr_content, check_hdr_support
+from .hdr_detection import is_hdr_content, check_hdr_support, get_hdr_unsupported_reason
 
 
-def _get_hdr_settings():
-    return Gio.Settings.new("io.github.rusmikev.CineHDR")
+def _get_hdr_settings() -> Optional[Gio.Settings]:
+    """Get GSettings instance if schema is installed, else None."""
+    try:
+        schema_source = Gio.SettingsSchemaSource.get_default()
+        if not schema_source or not schema_source.lookup("io.github.rusmikev.CineHDR", True):
+            return None
+        return Gio.Settings.new("io.github.rusmikev.CineHDR")
+    except Exception:
+        return None
 
 
 def load_hdr_config() -> dict:
     """Load full HDR configuration from GSettings."""
     try:
         settings = _get_hdr_settings()
+        if not settings:
+            raise RuntimeError("GSettings schema not available")
+        mode = settings.get_string("hdr-mode")
+        if not mode or mode not in ("auto", "force-hdr", "force-sdr"):
+            mode = "auto"
         return {
+            "hdr_mode": mode,
             "hdr_enabled": settings.get_boolean("hdr-enabled"),
             "hdr_target_peak": settings.get_string("hdr-target-peak"),
             "hdr_target_prim": settings.get_string("hdr-target-prim")
@@ -48,6 +62,7 @@ def load_hdr_config() -> dict:
     except Exception as e:
         print(f"Error loading HDR config from GSettings: {e}")
     return {
+        "hdr_mode": "auto",
         "hdr_enabled": True,
         "hdr_target_peak": "auto",
         "hdr_target_prim": "auto"
@@ -58,6 +73,10 @@ def save_hdr_config(config: dict):
     """Save updated HDR configuration dict to GSettings."""
     try:
         settings = _get_hdr_settings()
+        if not settings:
+            return
+        if "hdr_mode" in config:
+            settings.set_string("hdr-mode", str(config["hdr_mode"]))
         if "hdr_enabled" in config:
             settings.set_boolean("hdr-enabled", bool(config["hdr_enabled"]))
         if "hdr_target_peak" in config:
@@ -72,6 +91,8 @@ def load_hdr_setting() -> bool:
     """Load boolean HDR enabled toggle from GSettings."""
     try:
         settings = _get_hdr_settings()
+        if not settings:
+            return True
         return settings.get_boolean("hdr-enabled")
     except Exception:
         return True
@@ -81,9 +102,38 @@ def save_hdr_setting(enabled: bool):
     """Save boolean HDR enabled toggle to GSettings."""
     try:
         settings = _get_hdr_settings()
+        if not settings:
+            return
         settings.set_boolean("hdr-enabled", bool(enabled))
     except Exception as e:
         print(f"Error saving hdr-enabled to GSettings: {e}")
+
+
+def load_hdr_mode() -> str:
+    """Load string HDR mode from GSettings."""
+    try:
+        settings = _get_hdr_settings()
+        if not settings:
+            return "auto"
+        mode = settings.get_string("hdr-mode")
+        if mode in ("auto", "force-hdr", "force-sdr"):
+            return mode
+    except Exception:
+        pass
+    return "auto"
+
+
+def save_hdr_mode(mode: str):
+    """Save string HDR mode to GSettings."""
+    try:
+        if mode not in ("auto", "force-hdr", "force-sdr"):
+            mode = "auto"
+        settings = _get_hdr_settings()
+        if not settings:
+            return
+        settings.set_string("hdr-mode", mode)
+    except Exception as e:
+        print(f"Error saving hdr-mode to GSettings: {e}")
 
 
 class HdrController(GObject.Object):
@@ -94,12 +144,13 @@ class HdrController(GObject.Object):
     metadata and display capabilities to automatically toggle HDR color signaling or fall
     back to SDR protection.
     """
-    def __init__(self, mpv_player, on_change_cb=None):
+    def __init__(self, mpv_player: Any, on_change_cb: Optional[Any] = None):
         super().__init__()
         self.mpv = mpv_player
         self.on_change_cb = on_change_cb
 
         config = load_hdr_config()
+        self._hdr_mode = config["hdr_mode"]
         self._hdr_enabled = config["hdr_enabled"]
         self._hdr_target_peak = config["hdr_target_peak"]
         self._hdr_target_prim = config["hdr_target_prim"]
@@ -108,11 +159,15 @@ class HdrController(GObject.Object):
 
         try:
             self._gsettings = _get_hdr_settings()
-            self._gsettings.connect("changed::hdr-enabled", self._on_gsettings_changed)
-            self._gsettings.connect("changed::hdr-target-prim", self._on_gsettings_changed)
-            self._gsettings.connect("changed::hdr-target-peak", self._on_gsettings_changed)
+            if self._gsettings:
+                self._gsettings.connect("changed::hdr-mode", self._on_gsettings_changed)
+                self._gsettings.connect("changed::hdr-enabled", self._on_gsettings_changed)
+                self._gsettings.connect("changed::hdr-target-prim", self._on_gsettings_changed)
+                self._gsettings.connect("changed::hdr-target-peak", self._on_gsettings_changed)
         except Exception:
             self._gsettings = None
+
+        self._mpv_observers = []
 
         @self.mpv.property_observer("video-params")
         def _on_video_params(_name, params):
@@ -120,17 +175,24 @@ class HdrController(GObject.Object):
             if self._is_hdr_content != is_hdr:
                 self._is_hdr_content = is_hdr
                 idle_add_once(self.apply_hdr_settings)
+        self._mpv_observers.append(("video-params", _on_video_params))
 
-        @self.mpv.property_observer("display-hdr")
-        @self.mpv.property_observer("target-trc")
-        @self.mpv.property_observer("icc-profile")
         def _on_mpv_color_param_changed(_name, _value):
             idle_add_once(self.apply_hdr_settings)
 
+        for prop in ("display-hdr", "target-trc", "icc-profile"):
+            try:
+                self.mpv.observe_property(prop, _on_mpv_color_param_changed)
+                self._mpv_observers.append((prop, _on_mpv_color_param_changed))
+            except Exception:
+                pass
+
         self.apply_hdr_settings()
 
-    def _on_gsettings_changed(self, settings, key):
-        if key == "hdr-enabled":
+    def _on_gsettings_changed(self, settings: Gio.Settings, key: str):
+        if key == "hdr-mode":
+            self._hdr_mode = settings.get_string("hdr-mode")
+        elif key == "hdr-enabled":
             self._hdr_enabled = settings.get_boolean("hdr-enabled")
         elif key == "hdr-target-prim":
             self._hdr_target_prim = settings.get_string("hdr-target-prim")
@@ -142,32 +204,50 @@ class HdrController(GObject.Object):
 
     def apply_hdr_settings(self):
         """Apply tone mapping parameters and target primaries for HDR playback."""
-        try:
-            hdr_supported = check_hdr_support()
-            if self._hdr_enabled and self._is_hdr_content and hdr_supported:
-                self.mpv["target-colorspace-hint"] = "yes"
-                self.mpv["target-trc"] = "pq"
-                self.mpv["target-prim"] = self._hdr_target_prim
-                self.mpv["hdr-compute-peak"] = "yes"
-                target_peak = self._hdr_target_peak
-                if target_peak not in ("auto", "200", "400", "600", "1000", "1600"):
-                    target_peak = "auto"
+        if self.is_hdr_active:
+            target_peak = self._hdr_target_peak
+            if target_peak not in ("auto", "200", "400", "600", "1000", "1600"):
+                target_peak = "auto"
+            peak_val = "auto" if target_peak == "auto" else int(float(target_peak))
 
-                if target_peak == "auto":
-                    self.mpv["target-peak"] = "auto"
-                else:
-                    self.mpv["target-peak"] = int(float(target_peak))
-            else:
-                # Safe SDR fallback
-                self.mpv["target-colorspace-hint"] = "no"
-                self.mpv["target-prim"] = "auto"
-                self.mpv["target-peak"] = "auto"
-                self.mpv["target-trc"] = "auto"
-                self.mpv["hdr-compute-peak"] = "auto"
-        except Exception as e:
-            print(f"Error applying HDR settings: {e}")
+            props = [
+                ("target-colorspace-hint", "yes"),
+                ("target-trc", "pq"),
+                ("target-prim", self._hdr_target_prim),
+                ("hdr-compute-peak", "yes"),
+                ("target-peak", peak_val),
+            ]
+        else:
+            # Safe SDR fallback
+            props = [
+                ("target-colorspace-hint", "no"),
+                ("target-prim", "auto"),
+                ("target-peak", "auto"),
+                ("target-trc", "auto"),
+                ("hdr-compute-peak", "auto"),
+            ]
+
+        for prop, val in props:
+            try:
+                self.mpv[prop] = val
+            except Exception as e:
+                print(f"Warning: Failed to set mpv property '{prop}' to '{val}': {e}")
+
         if self.on_change_cb:
             self.on_change_cb()
+
+    @property
+    def hdr_mode(self) -> str:
+        return self._hdr_mode
+
+    @hdr_mode.setter
+    def hdr_mode(self, value: str):
+        if value not in ("auto", "force-hdr", "force-sdr"):
+            value = "auto"
+        if self._hdr_mode != value:
+            self._hdr_mode = value
+            self._hdr_enabled = (value != "force-sdr")
+            self.apply_hdr_settings()
 
     @property
     def hdr_enabled(self) -> bool:
@@ -176,6 +256,8 @@ class HdrController(GObject.Object):
     @hdr_enabled.setter
     def hdr_enabled(self, value: bool):
         self._hdr_enabled = value
+        if not value and self._hdr_mode == "force-hdr":
+            self._hdr_mode = "auto"
         self.apply_hdr_settings()
 
     @property
@@ -209,27 +291,37 @@ class HdrController(GObject.Object):
     @property
     def is_hdr_active(self) -> bool:
         """Returns True if HDR color state should be applied to the GL texture."""
-        return self._hdr_enabled and self._is_hdr_content and check_hdr_support()
+        if not check_hdr_support():
+            return False
+        if self._hdr_mode == "force-sdr" or not self._hdr_enabled:
+            return False
+        if self._hdr_mode == "force-hdr":
+            return True
+        return self._is_hdr_content
 
-    def check_unsupported_warning(self, gdk_display):
+    def check_unsupported_warning(self, gdk_display: Any):
         """Log a warning if HDR is requested and content is HDR, but display/GTK lacks support."""
-        if self._hdr_enabled and self._is_hdr_content and not check_hdr_support():
+        requested = (self._hdr_mode == "force-hdr") or (self._hdr_mode == "auto" and self._hdr_enabled and self._is_hdr_content)
+        if requested and not check_hdr_support():
             if not self._hdr_support_warned:
-                reason = "Gdk.ColorState is not available (requires GTK >= 4.16)"
-                from gi.repository import Gdk
-                if hasattr(Gdk.ColorState, "get_rec2100_pq"):
-                    if gdk_display and "Wayland" not in gdk_display.__class__.__name__:
-                        reason = f"HDR signaling is not supported under {gdk_display.__class__.__name__} (requires Wayland)"
-                    else:
-                        reason = "Wayland compositor does not support HDR/color management"
+                reason = get_hdr_unsupported_reason(gdk_display)
                 print(f"WARNING: HDR playback is active but target output is unsupported: {reason}. Falling back to SDR tonemapping.")
                 self._hdr_support_warned = True
 
     def disconnect(self):
-        """Disconnect GSettings observers."""
+        """Disconnect GSettings and libmpv property observers."""
         if getattr(self, "_gsettings", None):
             try:
                 self._gsettings.disconnect_by_func(self._on_gsettings_changed)
             except Exception:
                 pass
             self._gsettings = None
+
+        for prop_name, handler in getattr(self, "_mpv_observers", []):
+            try:
+                self.mpv.unobserve_property(prop_name, handler)
+            except Exception:
+                pass
+        self._mpv_observers = []
+
+

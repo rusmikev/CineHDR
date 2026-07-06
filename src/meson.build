@@ -9,6 +9,7 @@ blueprints = custom_target('blueprints',
     'preferences.blp',
     'options.blp',
     'hdr_menu.blp',
+    'hdr_diagnostics.blp',
     'shortcuts-dialog.blp',
     'window.blp',
   ),
@@ -43,6 +44,10 @@ configure_file(
 
 cine_sources = [
   '__init__.py',
+  'gl_renderer.py',
+  'hdr_controller.py',
+  'hdr_detection.py',
+  'hdr_diagnostics.py',
   'hdr_menu.py',
   'history.py',
   'main.py',

@@ -7,6 +7,7 @@
     <file preprocess="xml-stripblanks">preferences.ui</file>
     <file preprocess="xml-stripblanks">options.ui</file>
     <file preprocess="xml-stripblanks">hdr_menu.ui</file>
+    <file preprocess="xml-stripblanks">hdr_diagnostics.ui</file>
     <file preprocess="xml-stripblanks">window.ui</file>
     <file preprocess="xml-stripblanks">shortcuts-dialog.ui</file>
   </gresource>
