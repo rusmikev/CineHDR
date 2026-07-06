@@ -88,6 +88,7 @@ DEFAULT_WIDTH, DEFAULT_HEIGHT = 1120, 630
 class CineWindow(Adw.ApplicationWindow):
     __gtype_name__ = "CineWindow"
 
+    window_handle: Gtk.WindowHandle = Gtk.Template.Child()
     toast_overlay: Adw.ToastOverlay = Gtk.Template.Child()
     video_overlay: Gtk.Overlay = Gtk.Template.Child()
     start_page: Adw.StatusPage = Gtk.Template.Child()
@@ -178,7 +179,6 @@ class CineWindow(Adw.ApplicationWindow):
         self.click_delay_id: int = 0
         ck_time: int = gtk_setts.props.gtk_double_click_time if gtk_setts else 400
         self.click_time: int = max(ck_time, min(200, 425))
-        self.click_hold_id: int = 0
         self.click_holding: bool = False
         self.prev_speed: float = 1.0
         self.wheel_accum_x: float = 0.0
@@ -439,9 +439,13 @@ class CineWindow(Adw.ApplicationWindow):
             click_gesture = Gtk.GestureClick(button=btn_num)
             click_gesture.connect("pressed", self._on_click_pressed)
             click_gesture.connect("released", self._on_click_released)
-            click_gesture.connect("cancel", self._cancel_click_hold)
-            click_gesture.connect("unpaired-release", self._cancel_click_hold)
             self.video_overlay.add_controller(click_gesture)
+
+        long_press = Gtk.GestureLongPress.new()
+        long_press.connect("pressed", self._on_click_hold)
+        long_press.connect("end", self._cancel_click_hold)
+        long_press.connect("cancelled", self._cancel_click_hold)
+        self.window_handle.add_controller(long_press)
 
         @self._connect("notify::visible-dialog")
         def on_vis_dialog_change(*args):
@@ -461,6 +465,7 @@ class CineWindow(Adw.ApplicationWindow):
             if self.props.is_active:
                 timeout_add_once(200, setattr, self, "is_inactive", False)
             else:
+                self._cancel_click_hold()
                 self.space_holding = False
                 self._set_space_holding(False)
                 self.is_inactive = True
@@ -1540,20 +1545,19 @@ class CineWindow(Adw.ApplicationWindow):
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             return
 
-        if button == "MBTN_LEFT" and n_press == 1:
-            if self.click_hold_id:
-                GLib.source_remove(self.click_hold_id)
-
-            self.click_hold_id = timeout_add_once(500, self._on_click_hold, gesture)
-
         self._show_ui()
         self._hide_ui_timeout()
 
-    def _on_click_hold(self, gesture):
-        self.click_hold_id = 0
+    def _on_click_hold(self, gesture, *args):
         try:
-            if self.space_holding:
+            controls_hover = self.motion_controls.props.contains_pointer
+            header_hover = self.motion_header.props.contains_pointer
+            separator_hover = self.motion_controls_separator.props.contains_pointer
+            hovering = (controls_hover or header_hover) and not separator_hover
+
+            if self.space_holding or hovering:
                 return
+
             self.click_holding = True
             self.mpv.pause = False
             self.prev_speed = cast(float, self.mpv["speed"])
@@ -1614,14 +1618,10 @@ class CineWindow(Adw.ApplicationWindow):
             run_command(cmd_str)
 
     def _cancel_click_hold(self, *args):
-        if self.click_hold_id:
-            GLib.source_remove(self.click_hold_id)
-            self.click_hold_id = 0
-
         if self.click_holding:
             self.mpv["speed"] = self.prev_speed
             self.mpv.show_text(f"{self.mpv['speed']:g}×")
-            timeout_add_once(self.click_time, setattr, self, "click_holding", False)
+            self.click_holding = False
 
     def _on_mouse_scroll(self, controller, dx, dy):
         event: Gdk.ScrollEvent = controller.get_current_event()
