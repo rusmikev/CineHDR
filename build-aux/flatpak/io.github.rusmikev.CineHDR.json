@@ -11,7 +11,7 @@
         "--device=dri",
         "--socket=wayland",
         "--socket=pulseaudio",
-        "--filesystem=xdg-pictures/Cine Screenshots:create",
+        "--filesystem=xdg-pictures/CineHDR Screenshots:create",
         "--filesystem=xdg-run/pipewire-0:ro",
         "--filesystem=xdg-run/gvfs",
         "--filesystem=xdg-run/gvfsd",

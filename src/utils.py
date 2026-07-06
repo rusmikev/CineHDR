@@ -33,13 +33,12 @@ from gi.repository import (
 )
 
 gtk = ctypes.CDLL("libgtk-4.so.1")
-display = Gdk.Display.get_default()
 
 xdg_pictures = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
-SCREENSHOT_DIR = os.path.join(xdg_pictures, "Cine Screenshots") if xdg_pictures else ""
+SCREENSHOT_DIR = os.path.join(xdg_pictures, "CineHDR Screenshots") if xdg_pictures else ""
 
 base_config = GLib.get_user_config_dir()
-CONFIG_DIR = os.path.join(base_config, "cine")
+CONFIG_DIR = os.path.join(base_config, "cinehdr")
 INPUT_CONF = os.path.join(CONFIG_DIR, "input.conf")
 MPV_CONF = os.path.join(CONFIG_DIR, "mpv.conf")
 WATCH_HISTORY_JSONL = os.path.join(CONFIG_DIR, "watch_history.jsonl")
@@ -132,6 +131,7 @@ def idle_add_once(callback, *args, **kwargs):
 
 
 def get_gpu_vendor(libgl):
+    display = Gdk.Display.get_default()
     if not display:
         return None
     try:
@@ -153,6 +153,9 @@ def get_gpu_vendor(libgl):
 
 def get_display_param():
     param = {}
+    display = Gdk.Display.get_default()
+    if not display:
+        return param
 
     # see https://gist.github.com/omnp/6ac3385e2b3f6cab987d84e6477e636a
 
@@ -299,3 +302,11 @@ SUB_EXTS: tuple = (
     ".txt",
     ".vtt",
 )
+
+
+def is_hdr_params(params):
+    if not params or not isinstance(params, dict):
+        return False
+    primaries = params.get("primaries")
+    gamma = params.get("gamma")
+    return (primaries == "bt.2020") or (gamma in ("pq", "hlg"))

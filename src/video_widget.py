@@ -28,7 +28,7 @@ from gi.repository import Gtk, Gdk, GLib, GObject
 
 import os
 import json
-from .utils import get_display_param, idle_add_once, CONFIG_DIR
+from .utils import get_display_param, idle_add_once, CONFIG_DIR, is_hdr_params
 
 # Load OpenGL libraries and helper
 libgl = ctypes.CDLL("libGL.so.1")
@@ -166,6 +166,8 @@ def check_hdr_support():
     try:
         if not hasattr(Gdk.ColorState, "get_rec2100_pq"):
             return False
+        if not hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT"):
+            return False
         display = Gdk.Display.get_default()
         if not display:
             return False
@@ -208,11 +210,7 @@ class MpvVideoWidget(Gtk.Widget):
 
         @self.mpv.property_observer("video-params")
         def _on_video_params(_name, params):
-            is_hdr = False
-            if params and isinstance(params, dict):
-                primaries = params.get("primaries")
-                gamma = params.get("gamma")
-                is_hdr = ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
+            is_hdr = is_hdr_params(params)
             if getattr(self, "_is_hdr_content", None) != is_hdr:
                 self._is_hdr_content = is_hdr
                 idle_add_once(self.apply_hdr_settings)
@@ -232,13 +230,14 @@ class MpvVideoWidget(Gtk.Widget):
                 self.mpv["target-trc"] = "pq"
                 self.mpv["target-prim"] = self._hdr_target_prim
                 self.mpv["hdr-compute-peak"] = "yes"
-                if self._hdr_target_peak == "auto":
+                target_peak = self._hdr_target_peak
+                if target_peak not in ("auto", "200", "400", "600", "1000", "1600"):
+                    target_peak = "auto"
+
+                if target_peak == "auto":
                     self.mpv["target-peak"] = "auto"
                 else:
-                    try:
-                        self.mpv["target-peak"] = int(float(self._hdr_target_peak))
-                    except (ValueError, TypeError):
-                        self.mpv["target-peak"] = str(self._hdr_target_peak)
+                    self.mpv["target-peak"] = int(float(target_peak))
             else:
                 # Safe SDR fallback: do not force PQ tone mapping on SDR content,
                 # or if the session does not support Wayland HDR signaling!
@@ -424,31 +423,25 @@ class MpvVideoWidget(Gtk.Widget):
             builder.set_id(self.texture_id.value)
             builder.set_width(scaled_w)
             builder.set_height(scaled_h)
-            builder.set_format(Gdk.MemoryFormat.R16G16B16A16_FLOAT)
+            try:
+                texture_format = Gdk.MemoryFormat.R16G16B16A16_FLOAT
+            except AttributeError:
+                texture_format = Gdk.MemoryFormat.B8G8R8A8
+            builder.set_format(texture_format)
 
             # Determine color state (HDR vs SDR)
             try:
-                params = self.mpv.video_params
-                if params:
-                    primaries = params.get("primaries")
-                    gamma = params.get("gamma")
-                    content_hdr = ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
-                else:
-                    content_hdr = False
-                if getattr(self, "_is_hdr_content", None) != content_hdr:
-                    self._is_hdr_content = content_hdr
-                    idle_add_once(self.apply_hdr_settings)
-
+                content_hdr = getattr(self, "_is_hdr_content", False)
                 hdr_supported = check_hdr_support()
                 is_hdr = self.hdr_enabled and content_hdr and hdr_supported
 
                 if self.hdr_enabled and content_hdr and not hdr_supported:
                     if not getattr(self, "_hdr_support_warned", False):
-                        display = Gdk.Display.get_default()
+                        display_obj = Gdk.Display.get_default()
                         reason = "Gdk.ColorState is not available (requires GTK >= 4.16)"
                         if hasattr(Gdk.ColorState, "get_rec2100_pq"):
-                            if display and "Wayland" not in display.__class__.__name__:
-                                reason = f"HDR signaling is not supported under {display.__class__.__name__} (requires Wayland)"
+                            if display_obj and "Wayland" not in display_obj.__class__.__name__:
+                                reason = f"HDR signaling is not supported under {display_obj.__class__.__name__} (requires Wayland)"
                             else:
                                 reason = "Wayland compositor does not support HDR/color management"
                         print(f"WARNING: HDR playback is active but target output is unsupported: {reason}. Falling back to SDR tonemapping.")

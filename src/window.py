@@ -41,8 +41,8 @@ from .utils import (
     format_time,
     get_display_param,
     idle_add_once,
-    display,
     has_host_permission,
+    is_hdr_params,
     MBTN_MAP,
     KEY_REMAP,
     SUB_EXTS,
@@ -896,7 +896,8 @@ class CineWindow(Adw.ApplicationWindow):
                 if parsed.scheme in cast(list, self.mpv.protocol_list):
                     entry_row.insert_text(text, 0)
 
-        if display and (clipboard := display.get_clipboard()):
+        display_obj = Gdk.Display.get_default()
+        if display_obj and (clipboard := display_obj.get_clipboard()):
             clipboard.read_text_async(None, on_clipboard_read)
 
         btn_open.connect("clicked", open_url)
@@ -2109,11 +2110,7 @@ class CineWindow(Adw.ApplicationWindow):
         @self.mpv.property_observer("video-params")
         def on_video_params_change(_name, params):
             def update_hdr_btn():
-                is_hdr = False
-                if params and isinstance(params, dict):
-                    primaries = params.get("primaries")
-                    gamma = params.get("gamma")
-                    is_hdr = ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
+                is_hdr = is_hdr_params(params)
                 self.hdr_menu_btn.set_visible(is_hdr)
             idle_add_once(update_hdr_btn)
 

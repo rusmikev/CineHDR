@@ -36,8 +36,6 @@ from .preferences import Preferences, settings
 from .mpris import MPRIS
 from .save_session import is_same_playlist
 
-os.environ["GSK_RENDERER"] = "gl"
-
 # Set the icon shown in gnome sound settings
 os.environ["PIPEWIRE_PROPS"] = '{application.icon-name="io.github.rusmikev.CineHDR"}'
 

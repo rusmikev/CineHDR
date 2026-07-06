@@ -176,6 +176,7 @@ class TestApplyHDRSettings(unittest.TestCase):
 
     def test_hlg_and_pq_detection_logic(self):
         """Primaries bt.2020 or gamma pq/hlg correctly identify HDR content (Risk P-8)."""
+        from src.utils import is_hdr_params
         test_cases = [
             ({"primaries": "bt.2020", "gamma": "bt.1886"}, True),
             ({"primaries": "bt.709", "gamma": "pq"}, True),
@@ -185,12 +186,7 @@ class TestApplyHDRSettings(unittest.TestCase):
             (None, False)
         ]
         for params, expected in test_cases:
-            if params and isinstance(params, dict):
-                primaries = params.get("primaries")
-                gamma = params.get("gamma")
-                is_hdr = ((primaries == "bt.2020") or (gamma in ("pq", "hlg")))
-            else:
-                is_hdr = False
+            is_hdr = is_hdr_params(params)
             self.assertEqual(is_hdr, expected, f"Failed detection for {params}")
 
     def test_hdr_auto_peak(self):
