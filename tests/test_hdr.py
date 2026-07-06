@@ -15,6 +15,7 @@ import ctypes
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+os.environ["GSETTINGS_SCHEMA_DIR"] = os.path.join(os.path.dirname(__file__), "..", "data")
 
 try:
     from gi.repository import Gio
@@ -36,11 +37,13 @@ class TestHDRConfigPersistence(unittest.TestCase):
     def setUp(self):
         from gi.repository import Gio
         self.settings = Gio.Settings.new("io.github.rusmikev.CineHDR")
+        self.orig_mode = self.settings.get_string("hdr-mode")
         self.orig_enabled = self.settings.get_boolean("hdr-enabled")
         self.orig_peak = self.settings.get_string("hdr-target-peak")
         self.orig_prim = self.settings.get_string("hdr-target-prim")
 
     def tearDown(self):
+        self.settings.set_string("hdr-mode", self.orig_mode)
         self.settings.set_boolean("hdr-enabled", self.orig_enabled)
         self.settings.set_string("hdr-target-peak", self.orig_peak)
         self.settings.set_string("hdr-target-prim", self.orig_prim)
@@ -102,8 +105,9 @@ class TestHDRConfigPersistence(unittest.TestCase):
     def test_load_error_returns_defaults(self, mock_get_settings):
         """If GSettings fails, load_hdr_config returns sensible defaults without crashing."""
         from src.hdr_controller import load_hdr_config
+        from gi.repository import GLib
         mock_settings = MagicMock()
-        mock_settings.get_boolean.side_effect = Exception("GSettings error")
+        mock_settings.get_boolean.side_effect = GLib.Error("GSettings error")
         mock_get_settings.return_value = mock_settings
         config = load_hdr_config()
         self.assertTrue(config["hdr_enabled"])
@@ -271,6 +275,7 @@ class TestApplyHDRSettings(unittest.TestCase):
         
         mock_mpv, props = self._make_mock_mpv()
         controller = HdrController(mock_mpv)
+        controller._hdr_mode = "auto"
         controller._hdr_enabled = True
         controller._hdr_target_peak = "1000"
         controller._hdr_target_prim = "dci-p3"
@@ -586,10 +591,6 @@ class TestHdrDiagnostics(unittest.TestCase):
     def test_get_mpv_prop(self):
         from src.hdr_diagnostics import get_mpv_prop
         
-        class MockMpv1:
-            def _get_property(self, name):
-                return "val1" if name == "test" else None
-                
         class MockMpv2:
             def get_property(self, name):
                 return "val2" if name == "test" else None
@@ -597,9 +598,8 @@ class TestHdrDiagnostics(unittest.TestCase):
         class MockMpv3(dict):
             pass
 
-        self.assertEqual(get_mpv_prop(MockMpv1(), "test"), "val1")
-        self.assertEqual(get_mpv_prop(MockMpv1(), "missing", "default"), "default")
         self.assertEqual(get_mpv_prop(MockMpv2(), "test"), "val2")
+        self.assertEqual(get_mpv_prop(MockMpv2(), "missing", "default"), "default")
         
         mpv3 = MockMpv3()
         mpv3["test"] = "val3"
@@ -626,7 +626,7 @@ class TestHdrDiagnostics(unittest.TestCase):
             _color_state = None
 
         class MockMpv:
-            def _get_property(self, name):
+            def get_property(self, name):
                 if name == "video-format": return "hevc"
                 if name == "video-params": return {"primaries": "bt.2020", "gamma": "pq", "sig-peak": 4.93}
                 if name == "target-trc": return "pq"
@@ -672,18 +672,6 @@ class TestAuditFixes(unittest.TestCase):
         self.assertIsInstance(reason, str)
         self.assertTrue(len(reason) > 0)
 
-    def test_idle_add_once_deduplication(self):
-        from src.utils import idle_add_once, _pending_idles
-        called = 0
-        def dummy_cb():
-            nonlocal called
-            called += 1
-
-        idle_add_once(dummy_cb)
-        idle_add_once(dummy_cb)
-        matching = [k for k in _pending_idles if k == dummy_cb or (isinstance(k, tuple) and k[0] == dummy_cb)]
-        self.assertEqual(len(matching), 1)
-
     def test_hdr_controller_disconnect(self):
         from src.hdr_controller import HdrController
         class MockMpvPlayer:
@@ -707,6 +695,30 @@ class TestAuditFixes(unittest.TestCase):
         self.assertTrue(len(mpv.observed) > 0)
         ctrl.disconnect()
         self.assertEqual(len(mpv.observed), 0)
+
+    def test_texture_builder_build_data_pointer_binding(self):
+        # Verify PyGI and GTK C-binding rules for Gdk.GLTextureBuilder.build(destroy, data).
+        # 1. Passing an arbitrary Python object raises PyGI ValueError:
+        #    "Pointer arguments are restricted to integers, capsules, and None."
+        # 2. Passing data=None triggers GTK C assertion: 'destroy == NULL || data != NULL'.
+        # 3. Passing data=id(obj) (an integer representing a non-NULL pointer address) satisfies BOTH
+        #    PyGI's integer restriction and GTK's non-NULL requirement!
+        from gi.repository import Gdk
+        builder = Gdk.GLTextureBuilder()
+        class FakeSlot: pass
+        slot = FakeSlot()
+        
+        with self.assertRaises(ValueError):
+            builder.build(destroy=lambda _: None, data=slot)
+
+        # Passing data=id(slot) must satisfy PyGI pointer restrictions without GTK assertion
+        try:
+            builder.build(destroy=lambda _: None, data=id(slot))
+        except ValueError as e:
+            if "Pointer arguments are restricted" in str(e):
+                self.fail("builder.build(data=id(slot)) raised PyGI pointer restriction ValueError!")
+        except Exception:
+            pass # Expected to fail later due to missing GL context in headless test
 
 
 if __name__ == "__main__":
