@@ -14,17 +14,6 @@ from gi.repository import Gtk
 from .hdr_controller import load_hdr_config, save_hdr_config, _get_hdr_settings
 
 
-def _disable_dropdown_autohide(widget: Gtk.Widget):
-    """Recursively find Gtk.Popover inside dropdown and disable autohide (Audit Finding 10)."""
-    child = widget.get_first_child()
-    while child:
-        if isinstance(child, Gtk.Popover):
-            child.set_autohide(False)
-        else:
-            _disable_dropdown_autohide(child)
-        child = child.get_next_sibling()
-
-
 @Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/hdr_menu.ui")
 class HdrMenuButton(Gtk.MenuButton):
     __gtype_name__ = "HdrMenuButton"
@@ -48,6 +37,24 @@ class HdrMenuButton(Gtk.MenuButton):
         except Exception:
             self._gsettings = None
 
+        for dropdown in [self.hdr_mode_dropdown, self.hdr_gamut_dropdown, self.hdr_peak_dropdown]:
+            self._disable_dropdown_autohide(dropdown)
+
+    def _disable_dropdown_autohide(self, dropdown: Gtk.DropDown):
+        # Workaround for GTK4 bug: opening a DropDown inside a Popover breaks parent Popover autohide/close.
+        # Per GEMINI.md §11, this technical debt (#13) is marked as ОТЛОЖЕН because GTK4 lacks public API
+        # to access the dropdown's popover, and removing this workaround breaks closing the HDR menu.
+        try:
+            child = dropdown.get_first_child()
+            while child:
+                if isinstance(child, Gtk.Popover):
+                    child.set_autohide(False)
+                    break
+                child = child.get_next_sibling()
+        except Exception as e:
+            import logging
+            logging.warning(f"Could not disable autohide for dropdown: {e}")
+
     def _on_unrealize(self, *arg):
         if getattr(self, "_gsettings", None):
             try:
@@ -63,11 +70,6 @@ class HdrMenuButton(Gtk.MenuButton):
     def _on_realize(self, *arg):
         from .window import CineWindow
         self.win = cast(CineWindow, self.get_root())
-
-        # Prevent dropdown popovers from stealing autohide safely (Audit Finding 10)
-        _disable_dropdown_autohide(self.hdr_mode_dropdown)
-        _disable_dropdown_autohide(self.hdr_gamut_dropdown)
-        _disable_dropdown_autohide(self.hdr_peak_dropdown)
 
     def _on_active(self, *arg):
         if not self.get_active():
@@ -197,5 +199,9 @@ class HdrMenuButton(Gtk.MenuButton):
             "hdr_target_prim": ctrl.hdr_target_prim,
             "hdr_target_peak": ctrl.hdr_target_peak
         }
-        save_hdr_config(config)
+        self._syncing_ui = True
+        try:
+            save_hdr_config(config)
+        finally:
+            self._syncing_ui = False
 

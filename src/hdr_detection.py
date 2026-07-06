@@ -104,7 +104,10 @@ def is_hdr_content(params: dict) -> bool:
         sig_peak = 1.0
 
     hdr_gammas = ("pq", "hlg", "st2084", "slog", "slog2", "slog3")
-    return (gamma in hdr_gammas) or (sig_peak > 1.0)
+    if gamma in hdr_gammas or sig_peak > 1.0:
+        return True
+    return False
+
 
 
 def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:

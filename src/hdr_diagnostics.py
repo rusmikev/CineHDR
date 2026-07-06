@@ -18,9 +18,7 @@ from .hdr_detection import check_hdr_support
 
 def get_mpv_prop(mpv, name, default=None):
     try:
-        if hasattr(mpv, "_get_property"):
-            res = mpv._get_property(name)
-        elif hasattr(mpv, "get_property"):
+        if hasattr(mpv, "get_property"):
             res = mpv.get_property(name)
         else:
             res = mpv[name]
