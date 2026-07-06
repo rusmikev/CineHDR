@@ -76,6 +76,24 @@ class HdrMenuButton(Gtk.MenuButton):
         self.hdr_switch.set_active(True)
         self.hdr_gamut_dropdown.set_selected(0)  # Default Auto (Recommended)
         self.hdr_peak_dropdown.set_selected(0)   # Default Auto
+        self.win.gl_area.hdr_enabled = True
+        self.win.gl_area.hdr_target_prim = "auto"
+        self.win.gl_area.hdr_target_peak = "auto"
+        self.win.gl_area.queue_draw()
+        self._save_hdr_full_config()
+
+    @Gtk.Template.Callback()
+    def _on_hdr_gamut_reset(self, *args):
+        self.hdr_gamut_dropdown.set_selected(0)
+        self.win.gl_area.hdr_target_prim = "auto"
+        self.win.gl_area.queue_draw()
+        self._save_hdr_full_config()
+
+    @Gtk.Template.Callback()
+    def _on_hdr_peak_reset(self, *args):
+        self.hdr_peak_dropdown.set_selected(0)
+        self.win.gl_area.hdr_target_peak = "auto"
+        self.win.gl_area.queue_draw()
         self._save_hdr_full_config()
 
     @Gtk.Template.Callback()

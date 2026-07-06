@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-06 06:42+0500\n"
+"POT-Creation-Date: 2026-07-06 06:48+0500\n"
 "PO-Revision-Date: 2026-04-30 07:09+0000\n"
 "Last-Translator: Diego Povliuk <diego.pvlk@gmail.com>\n"
 "Language-Team: Italian <https://hosted.weblate.org/projects/cine/app/it/>\n"
@@ -613,29 +613,39 @@ msgstr "Reimposta la tonalità"
 msgid "HDR Playback"
 msgstr "Riproduzione"
 
-#: src/hdr_menu.blp:67
-msgid "HDR Gamut Mapping"
-msgstr ""
-
-#: src/hdr_menu.blp:80
-msgid "Auto (Recommended)"
+#: src/hdr_menu.blp:73
+msgid "Reset HDR Gamut Mapping"
 msgstr ""
 
 #: src/hdr_menu.blp:81
+msgid "HDR Gamut Mapping"
+msgstr ""
+
+#: src/hdr_menu.blp:104
+msgid "Auto (Recommended)"
+msgstr ""
+
+#: src/hdr_menu.blp:105
 msgid "DCI-P3"
 msgstr ""
 
-#: src/hdr_menu.blp:82
+#: src/hdr_menu.blp:106
 msgid "sRGB (Standard)"
 msgstr ""
 
-#: src/hdr_menu.blp:94
+#: src/hdr_menu.blp:119
+#, fuzzy
+#| msgid "Reset Brightness"
+msgid "Reset HDR Peak Brightness"
+msgstr "Reimposta la luminosità"
+
+#: src/hdr_menu.blp:127
 #, fuzzy
 #| msgid "Reset Brightness"
 msgid "HDR Peak Brightness"
 msgstr "Reimposta la luminosità"
 
-#: src/hdr_menu.blp:107
+#: src/hdr_menu.blp:150
 msgid "Auto"
 msgstr ""
 

@@ -19,100 +19,144 @@ template $HdrMenuButton: MenuButton {
       "popover-scrolled",
     ]
 
-    Box {
-      orientation: vertical;
-      spacing: 12;
-      margin-top: 12;
-      margin-bottom: 12;
-      margin-start: 12;
-      margin-end: 12;
+    ScrolledWindow {
+      propagate-natural-height: true;
+      propagate-natural-width: true;
 
       Box {
-        orientation: horizontal;
+        orientation: vertical;
         spacing: 8;
 
-        Button reset_btn {
-          icon-name: "edit-undo-symbolic";
-          tooltip-text: _("Reset HDR");
-          styles [
-            "flat",
-          ]
-          clicked => $_on_hdr_reset();
+        Box {
+          Box {
+            halign: start;
+
+            Button reset_btn {
+              icon-name: "edit-undo-symbolic";
+              tooltip-text: _("Reset HDR");
+              styles [
+                "flat",
+              ]
+              clicked => $_on_hdr_reset();
+            }
+
+            Label {
+              label: _("HDR Playback");
+              wrap: true;
+              natural-wrap-mode: none;
+              halign: start;
+              margin-start: 8;
+              styles [
+                "heading",
+              ]
+            }
+          }
+
+          Separator {
+            hexpand: true;
+            opacity: 0;
+            margin-end: 2;
+          }
+
+          Switch hdr_switch {
+            halign: end;
+            notify::active => $_on_hdr_toggled();
+          }
         }
 
-        Label {
-          label: _("HDR Playback");
-          halign: start;
-          styles [
-            "heading",
-          ]
+        Box hdr_gamut_row {
+          Box {
+            halign: start;
+
+            Button reset_gamut_btn {
+              icon-name: "edit-undo-symbolic";
+              tooltip-text: _("Reset HDR Gamut Mapping");
+              styles [
+                "flat",
+              ]
+              clicked => $_on_hdr_gamut_reset();
+            }
+
+            Label {
+              label: _("HDR Gamut Mapping");
+              wrap: true;
+              natural-wrap-mode: none;
+              halign: start;
+              margin-start: 8;
+              styles [
+                "heading",
+              ]
+            }
+          }
+
+          Separator {
+            hexpand: true;
+            opacity: 0;
+            margin-end: 2;
+          }
+
+          DropDown hdr_gamut_dropdown {
+            halign: end;
+            width-request: 108;
+            focus-on-click: false;
+            model: StringList {
+              strings [
+                _("Auto (Recommended)"),
+                _("DCI-P3"),
+                _("sRGB (Standard)"),
+              ]
+            };
+            notify::selected => $_on_hdr_gamut_changed();
+          }
         }
 
-        Separator {
-          hexpand: true;
-          opacity: 0;
-        }
+        Box hdr_peak_row {
+          Box {
+            halign: start;
 
-        Switch hdr_switch {
-          halign: end;
-          notify::active => $_on_hdr_toggled();
-        }
-      }
+            Button reset_peak_btn {
+              icon-name: "edit-undo-symbolic";
+              tooltip-text: _("Reset HDR Peak Brightness");
+              styles [
+                "flat",
+              ]
+              clicked => $_on_hdr_peak_reset();
+            }
 
-      Box hdr_gamut_row {
-        orientation: horizontal;
-        spacing: 8;
+            Label {
+              label: _("HDR Peak Brightness");
+              wrap: true;
+              natural-wrap-mode: none;
+              halign: start;
+              margin-start: 8;
+              styles [
+                "heading",
+              ]
+            }
+          }
 
-        Label {
-          label: _("HDR Gamut Mapping");
-          halign: start;
-        }
+          Separator {
+            hexpand: true;
+            opacity: 0;
+            margin-end: 2;
+          }
 
-        Separator {
-          hexpand: true;
-          opacity: 0;
-        }
-
-        DropDown hdr_gamut_dropdown {
-          halign: end;
-          model: StringList {
-            strings [
-              _("Auto (Recommended)"),
-              _("DCI-P3"),
-              _("sRGB (Standard)"),
-            ]
-          };
-          notify::selected => $_on_hdr_gamut_changed();
-        }
-      }
-
-      Box hdr_peak_row {
-        orientation: horizontal;
-        spacing: 8;
-
-        Label {
-          label: _("HDR Peak Brightness");
-          halign: start;
-        }
-
-        Separator {
-          hexpand: true;
-          opacity: 0;
-        }
-
-        DropDown hdr_peak_dropdown {
-          halign: end;
-          model: StringList {
-            strings [
-              _("Auto"),
-              "200 nits",
-              "400 nits",
-              "600 nits",
-              "1000 nits",
-              "1600 nits",
-            ]
-          };
-          notify::selected => $_on_hdr_peak_changed();
+          DropDown hdr_peak_dropdown {
+            halign: end;
+            width-request: 108;
+            focus-on-click: false;
+            model: StringList {
+              strings [
+                _("Auto"),
+                "200 nits",
+                "400 nits",
+                "600 nits",
+                "1000 nits",
+                "1600 nits",
+              ]
+            };
+            notify::selected => $_on_hdr_peak_changed();
+          }
         }
       }
     }

@@ -152,19 +152,7 @@ button:active:not(.close):not(.maximize):not(.minimize):not(.pill):not(
   outline-offset: -4px;
 }
 
-/* Golden-yellow HDR badge button styling */
-#hdr-options {
-  color: #ffd700;
-}
-#hdr-options:hover {
-  color: #ffe033;
-  text-shadow: 0 0 8px rgba(255, 215, 0, 0.6);
-}
-#hdr-options > button:checked {
-  background: linear-gradient(135deg, #ffd700 0%, #ff9900 100%);
-  color: #000000;
-  box-shadow: 0 0 12px rgba(255, 215, 0, 0.8);
-}
+
 
 .osd.controls .time-separator {
   background-color: #ddd;
