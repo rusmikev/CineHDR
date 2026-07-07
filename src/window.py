@@ -556,15 +556,16 @@ class CineWindow(Adw.ApplicationWindow):
         except mpv.ShutdownError:
             pass
 
-        if gtk_setts:
-            layout = gtk_setts.get_property("gtk-decoration-layout")
+        if not gtk_setts:
+            return
 
-            if is_fullscreen:
-                left_side, _, _right_side = layout.partition(":")
-                close_only = "close:" if "close" in left_side else ":close"
-                self.headerbar.set_decoration_layout(close_only)
-            else:
-                self.headerbar.set_decoration_layout(layout)
+        layout = gtk_setts.get_property("gtk-decoration-layout")
+
+        if is_fullscreen:
+            left_side, _colon, _right_side = layout.partition(":")
+            layout = "close:" if "close" in left_side else ":close"
+
+        self.headerbar.set_decoration_layout(layout)
 
     def _show_ui(self):
         self.set_cursor_from_name(None)
@@ -1526,7 +1527,7 @@ class CineWindow(Adw.ApplicationWindow):
         except mpv.ShutdownError:
             pass
 
-    def _on_click_pressed(self, gesture, n_press, _x, _y):
+    def _on_click_pressed(self, gesture, _n_press, _x, _y):
         button = MBTN_MAP.get(gesture.get_button())
         self.left_clk = settings.get_int("left-click")
         self.right_clk = settings.get_int("right-click")
