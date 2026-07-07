@@ -403,6 +403,8 @@ class CineWindow(Adw.ApplicationWindow):
         self.popover_content_box.append(self.time_popover_label)
         self.time_popover.set_child(self.popover_content_box)
 
+        self._set_time_margin()
+
         self.gl_area.connect("realize", self._on_realize_area)
         self.gl_area.connect("render", self._on_render_area)
 
@@ -1119,13 +1121,16 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.volume_menu_btn.props.icon_name = icon
 
+    def _set_time_margin(self):
+        self.time_elapsed_label.props.margin_end = 3 if self.show_remaining else 0
+
     @Gtk.Template.Callback()
     def _toggle_elapsed_remaining(self, _btn):
         self.show_remaining = not self.show_remaining
         settings.set_boolean("show-remaining", self.show_remaining)
         pos = float(self.mpv.time_pos or 0)
         self._update_progress(pos, update_bar=False)
-        self.time_elapsed_label.props.margin_end = 3 if self.show_remaining else 0
+        self._set_time_margin()
 
     def _update_progress(self, curr_time, update_bar=True):
         curr_time = round(curr_time, 1)
