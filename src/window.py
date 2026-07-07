@@ -518,6 +518,7 @@ class CineWindow(Adw.ApplicationWindow):
 
                 popover.connect("closed", on_popv_closed)
 
+        # TODO: remove for gnome 51
         # Somehow because the options menu contains other menus popovers inside,
         # when closing it, contains_pointer from header/controls still returns True,
         # even if not hovering; setting Gtk.PropagationLimit.NONE seems to be the only way to fix it

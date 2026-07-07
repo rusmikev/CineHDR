@@ -44,6 +44,7 @@ RATIOS = [
 class OptionsMenuButton(Gtk.MenuButton):
     __gtype_name__ = "OptionsMenuButton"
 
+    popover: Gtk.Popover = Gtk.Template.Child()
     aspect_reset_btn: Gtk.Button = Gtk.Template.Child()
     crop_reset_btn: Gtk.Button = Gtk.Template.Child()
     rotate_reset_btn: Gtk.Button = Gtk.Template.Child()
@@ -107,12 +108,18 @@ class OptionsMenuButton(Gtk.MenuButton):
             spin_down.props.width_request = 50
             spin_up.props.width_request = 50
 
-        # This is not pretty, but for some reason is not possible
-        # to close OptionsMenuButton popover after opening dropdown
-        popover_aspect = self.aspect_dropdown.get_first_child().get_next_sibling()  # type: ignore
-        popover_aspect.set_autohide(False)  # type: ignore
-        popover_crop = self.crop_dropdown.get_first_child().get_next_sibling()  # type: ignore
-        popover_crop.set_autohide(False)  # type: ignore
+        # TODO: remove for gnome 51
+        # GTK bug: not possible to close popover after opening dropdown
+        self.popv_motion = Gtk.EventControllerMotion()
+        for btn_num in range(1, 4):
+            gesture_click = Gtk.GestureClick(button=btn_num)
+            gesture_click.connect("pressed", self._popdown)
+            self.popover.add_controller(gesture_click)
+        self.popover.add_controller(self.popv_motion)
+
+    def _popdown(self, *args):
+        if not self.popv_motion.props.contains_pointer:
+            self.popover.popdown()
 
     def _on_active_changed(self, *arg):
         if not self.get_active():
