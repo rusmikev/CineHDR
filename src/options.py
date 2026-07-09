@@ -119,7 +119,9 @@ class OptionsMenuButton(Gtk.MenuButton):
 
     def _popdown(self, *args):
         if not self.popv_motion.props.contains_pointer:
+            self.grab_focus()
             self.popover.popdown()
+            self.grab_focus()
 
     def _on_active_changed(self, *arg):
         if not self.get_active():
