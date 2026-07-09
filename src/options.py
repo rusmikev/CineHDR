@@ -84,8 +84,6 @@ class OptionsMenuButton(Gtk.MenuButton):
 
         self.win = cast(CineWindow, self.get_root())
 
-        self.add_css_class("options-menu-btn")
-
         for spin in [
             self.zoom_spin,
             self.contrast_spin,

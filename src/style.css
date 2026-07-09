@@ -301,13 +301,18 @@ time-popover label {
   text-shadow: none;
 }
 
-.options-menu-btn popover button,
-.options-menu-btn popover cine-spinbutton {
+#options popover button,
+#options popover cine-spinbutton {
   min-height: 22px;
 }
-
 #options dropdown button * {
   background: none;
+}
+#options popover scrollbar:dir(ltr) {
+  margin-right: -10px;
+}
+#options popover scrollbar:dir(rtl) {
+  margin-left: -10px;
 }
 
 cine-list-view {
@@ -387,6 +392,9 @@ cine-list-view row:last-child > box {
       0 0 12px 2px rgba(245, 245, 255, 0.1),
       0 0 6px 2px rgba(0, 0, 6, 0.25);
   }
+  popover scrollbar range trough {
+    background-color: transparent;
+  }
 }
 
 @media (prefers-contrast: more) {
@@ -418,5 +426,9 @@ cine-list-view row:last-child > box {
 
   cine-list-view row > box {
     border: 1px solid var(--border-color);
+  }
+
+  popover scrollbar range trough {
+    background-color: rgb(from currentColor r g b / calc(alpha * 0.15));
   }
 }
