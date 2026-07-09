@@ -150,10 +150,6 @@ class Playlist(Adw.Dialog):
         self.playlist_list_view.set_model(model)
         self.playlist_list_view.remove_css_class("view")
 
-        self.factory.connect("setup", self._on_factory_setup)
-        self.factory.connect("bind", self._on_factory_bind)
-        self.factory.connect("unbind", self._on_factory_unbind)
-
         drop_target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
         drop_target.set_gtypes([Gdk.FileList, GObject.TYPE_STRING])
         drop_target.connect("enter", self._on_drop_enter)
@@ -193,6 +189,7 @@ class Playlist(Adw.Dialog):
             btn.set_tooltip_text(_("Save Playlist"))
             btn.set_sensitive(True)
 
+    @Gtk.Template.Callback()
     def _on_factory_setup(self, _factory, list_item):
         row = Gtk.Box(height_request=46)
         list_item.icon = Gtk.Image(margin_start=14)
@@ -232,6 +229,7 @@ class Playlist(Adw.Dialog):
 
         list_item.set_child(row)
 
+    @Gtk.Template.Callback()
     def _on_factory_bind(self, _factory, list_item):
         obj = list_item.get_item()
 
@@ -297,6 +295,7 @@ class Playlist(Adw.Dialog):
 
         list_item.handler_id = obj.connect("notify::playing", set_playing_item)
 
+    @Gtk.Template.Callback()
     def _on_factory_unbind(self, _factory, list_item):
         obj = list_item.get_item()
         obj.disconnect(list_item.handler_id)

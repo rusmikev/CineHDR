@@ -68,7 +68,11 @@ template $Playlist: Adw.Dialog {
 							activate => $_on_list_item_activate();
 							css-name: "cine-list-view";
 
-							factory: SignalListItemFactory factory {};
+							factory: SignalListItemFactory factory {
+								setup => $_on_factory_setup();
+								bind => $_on_factory_bind();
+								unbind => $_on_factory_unbind();
+							};
 						}
 					}
 				};

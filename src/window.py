@@ -256,8 +256,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.mpv.command("change-list", "watch-later-options", "remove", "sub-scale")
 
         self._setup_actions()
-        self._setup_elements()
-        self._setup_event_handlers()
+        self._setup_widgets()
         self._setup_observers()
 
         self.mpv.command("load-input-conf", f"memory://{INTERNAL_BINDINGS}")
@@ -331,7 +330,7 @@ class CineWindow(Adw.ApplicationWindow):
         history_dialog = HistoryDialog(self)
         history_dialog.present(self)
 
-    def _setup_elements(self):
+    def _setup_widgets(self):
         self.set_default_size(DEFAULT_WIDTH, DEFAULT_HEIGHT)
 
         for widget in [
@@ -348,17 +347,9 @@ class CineWindow(Adw.ApplicationWindow):
         max_vol = cast(int, self.mpv.volume_max)
         self.volume_scale_adj.set_upper(max_vol)
 
-        self.play_pause_btn.connect("clicked", self._on_play_pause_clicked)
-        self.previous_btn.connect("clicked", self._on_previous_clicked)
-        self.next_btn.connect("clicked", self._on_next_clicked)
-
         self.mute_handler_id = self.mute_toggle_btn.connect(
             "toggled", lambda btn: setattr(self.mpv, "mute", btn.get_active())
         )
-
-        self.shuffle_toggle_btn.connect("toggled", self._on_shuffle_toggled)
-        self.loop_playlist_btn.connect("toggled", self._on_loop_playlist_toggled)
-        self.loop_file_btn.connect("toggled", self._on_loop_file_toggled)
 
         self.fullscreen_btn.connect(
             "clicked",
@@ -408,7 +399,6 @@ class CineWindow(Adw.ApplicationWindow):
         self.gl_area.connect("realize", self._on_realize_area)
         self.gl_area.connect("render", self._on_render_area)
 
-    def _setup_event_handlers(self):
         key_controller = Gtk.EventControllerKey()
         key_controller.connect("key-pressed", self._on_key_event, "keypress")
         key_controller.connect("key-released", self._on_key_event, "keyup")
@@ -1186,9 +1176,11 @@ class CineWindow(Adw.ApplicationWindow):
         if count > 0:
             self.mpv.playlist_pos = (pos + direction) % count
 
+    @Gtk.Template.Callback()
     def _on_previous_clicked(self, *args):
         self._navigate_playlist(-1)
 
+    @Gtk.Template.Callback()
     def _on_next_clicked(self, *args):
         self._navigate_playlist(+1)
 
@@ -1257,12 +1249,14 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.time_elapsed_label.set_width_chars(chars)
 
+    @Gtk.Template.Callback()
     def _on_play_pause_clicked(self, _button):
         self.mpv.pause = not self.mpv.pause
 
     def _on_progress_adjusted(self, adjustment):
         self.mpv.command_async("seek", adjustment.props.value, "absolute")
 
+    @Gtk.Template.Callback()
     def _on_shuffle_toggled(self, button):
         active = button.props.active
 
@@ -1289,9 +1283,11 @@ class CineWindow(Adw.ApplicationWindow):
                 self.mpv.loop_playlist = "no"
                 self.loop_playlist_btn.set_active(False)
 
+    @Gtk.Template.Callback()
     def _on_loop_playlist_toggled(self, button):
         self._set_loop_state("playlist", button.props.active)
 
+    @Gtk.Template.Callback()
     def _on_loop_file_toggled(self, button):
         self._set_loop_state("file", button.props.active)
 
@@ -1939,9 +1935,9 @@ class CineWindow(Adw.ApplicationWindow):
                 self.fullscreen_btn.set_tooltip_text(text)
                 self.fullscreen_btn.set_icon_name(icon)
                 self._sync_fullscreen(value)
-                self._hide_ui_timeout()
 
             idle_add_once(update)
+            self._hide_ui_timeout()
 
         @self.mpv.property_observer("time-pos")
         def on_time_change(_name, value):
