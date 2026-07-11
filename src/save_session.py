@@ -53,13 +53,20 @@ def save_last_playlist_file(win_mpv):
 def restore_last_playlist(window, app, win_mpv):
     """Restore the last playlist if its the first window."""
 
-    if len(app.get_windows()) > 1 or os.path.getsize(LAST_PLAYLIST_FILE) == 0:
-        return
+    try:
+        if len(app.get_windows()) > 1:
+            return
 
-    if os.path.exists(LAST_PLAYLIST_FILE):
+        FILE = LAST_PLAYLIST_FILE
+
+        if not os.path.exists(FILE) or os.path.getsize(FILE) == 0:
+            return
+
         window.start_page.set_sensitive(False)
         window._show_toast(_("Restoring Session…"), force_dismiss=True)
         idle_add_once(win_mpv.loadfile, LAST_PLAYLIST_FILE, "replace")
+    except Exception as e:
+        print(f"Error restoring last playlist file: {e}")
 
 
 def is_same_playlist(mpv_playlist):
