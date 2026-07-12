@@ -403,6 +403,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.time_popover.set_child(self.popover_content_box)
 
         self._set_time_margin()
+        self._setup_event_handlers()
 
     def _setup_event_handlers(self):
         key_controller = Gtk.EventControllerKey()
@@ -1745,6 +1746,12 @@ class CineWindow(Adw.ApplicationWindow):
             timeout_add_once(350, self.revealer_icon_indicator.set_reveal_child, False)
 
     def do_close_request(self) -> bool:
+        try:
+            if hasattr(self, "gl_area") and hasattr(self.gl_area, "shutdown_render_context"):
+                self.gl_area.shutdown_render_context()
+        except Exception as e:
+            logging.error(f"Error shutting down render context: {e}")
+
         try:
             same_playlist = is_same_playlist(self.mpv.playlist)
             save_pos = settings.get_boolean("save-video-position")

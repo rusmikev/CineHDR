@@ -253,26 +253,26 @@ class CineApplication(Adw.Application):
         )
 
         about.add_link(
-            "Sponsor on GitHub",
+            "Sponsor upstream author on GitHub",
             "https://github.com/sponsors/diegopvlk",
         )
 
         about.add_link(
-            "Donate (PayPal)",
+            "Donate to upstream author (PayPal)",
             "https://www.paypal.com/donate?hosted_button_id=DVL7H35GA66X6",
         )
 
         about.add_link(
-            "Doar (Pix): diego.pvlk@gmail.com",
+            "Doar / Pix (upstream author): diego.pvlk@gmail.com",
             "diego.pvlk@gmail.com",
         )
 
         about.add_other_app(
-            "io.github.diegopvlk.Dosage", "Dosage", "Keep track of your treatments"
+            "io.github.diegopvlk.Dosage", "Dosage (by upstream author)", "Keep track of your treatments"
         )
 
         about.add_other_app(
-            "io.github.diegopvlk.Tomatillo", "Tomatillo", "Focus better, work smarter"
+            "io.github.diegopvlk.Tomatillo", "Tomatillo (by upstream author)", "Focus better, work smarter"
         )
 
         about.present(self.props.active_window)

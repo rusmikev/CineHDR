@@ -28,23 +28,24 @@ OpenGL resource lifecycle to GLFramebufferResource.
 import ctypes
 import logging
 import gi
-import mpv
-from gettext import gettext as _
-from typing import Any, Optional
-from gi.repository import Gtk, Gdk, GLib, GObject, Graphene
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 
+from gi.repository import Gtk, Gdk, GLib, GObject, Graphene
+import mpv
+from gettext import gettext as _
+from typing import Any, Optional
+
 from .gl_bindings import (
-    GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-    GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
-    GL_RGBA, GL_FLOAT, GL_RGBA16F, GL_FRAMEBUFFER_COMPLETE,
-    GL_SYNC_GPU_COMMANDS_COMPLETE, glFenceSync, glDeleteSync,
-    glGenFramebuffers, glDeleteFramebuffers, glBindFramebuffer,
-    glFramebufferTexture2D, glGenTextures, glDeleteTextures,
-    glBindTexture, glTexImage2D, glTexParameteri, glCheckFramebufferStatus,
-    check_gl_error, egl_get_proc_address, get_proc_address
+    GL_FRAMEBUFFER,
+    GL_SYNC_GPU_COMMANDS_COMPLETE,
+    GL_SYNC_FLUSH_COMMANDS_BIT,
+    GL_TIMEOUT_IGNORED,
+    glFenceSync,
+    glFlush,
+    glClientWaitSync,
+    glBindFramebuffer,
 )
 
 from .gl_renderer import GLFramebufferPool, FramebufferSlot
@@ -89,6 +90,8 @@ class MpvVideoWidget(Gtk.Widget):
         )
 
     def _update_cached_hdr_support(self, *args):
+        from .hdr_detection import invalidate_hdr_support_cache
+        invalidate_hdr_support_cache()
         self._cached_hdr_support = check_hdr_support()
         self._cached_hdr_support_valid = True
 
@@ -256,11 +259,25 @@ class MpvVideoWidget(Gtk.Widget):
             except AttributeError:
                 pass
 
+        has_set_sync = False
         if slot.fence and hasattr(builder, "set_sync"):
             try:
                 builder.set_sync(slot.fence)
+                has_set_sync = True
             except AttributeError:
                 pass
+
+        if not has_set_sync:
+            if glFlush:
+                try:
+                    glFlush()
+                except Exception:
+                    pass
+            if slot.fence and glClientWaitSync:
+                try:
+                    glClientWaitSync(slot.fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED)
+                except Exception:
+                    pass
 
         def on_texture_release(user_data):
             self.fbo_pool.release_buffer(slot)
@@ -268,6 +285,7 @@ class MpvVideoWidget(Gtk.Widget):
         try:
             texture = builder.build(destroy=on_texture_release, data=id(slot))
         except (TypeError, ValueError):
+            logging.warning("Gdk.GLTextureBuilder.build with destroy-notify not supported. Using fallback release mechanism.")
             texture = builder.build()
             self._fallback_slot = slot
 

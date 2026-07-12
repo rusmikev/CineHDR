@@ -172,7 +172,7 @@ class GLFramebufferPool:
                         pass
                     slot.fence = None
                 slot.resource.ensure(w, h, is_float=is_float)
-                if not slot.resource._initialized or slot.resource.fbo_id == 0:
+                if not slot.resource._initialized or slot.resource.fbo_id.value == 0:
                     slot.in_use = False
                     return None
                 return slot

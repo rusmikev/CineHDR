@@ -9,31 +9,50 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Load OpenGL libraries and helper
-libgl = ctypes.CDLL("libGL.so.1")
-libegl = ctypes.CDLL("libEGL.so.1")
-egl_get_proc_address = libegl.eglGetProcAddress
-egl_get_proc_address.restype = ctypes.c_void_p
-egl_get_proc_address.argtypes = [ctypes.c_char_p]
+libgl = None
+libegl = None
+egl_get_proc_address = None
+
+try:
+    libegl = ctypes.CDLL("libEGL.so.1")
+    egl_get_proc_address = libegl.eglGetProcAddress
+    egl_get_proc_address.restype = ctypes.c_void_p
+    egl_get_proc_address.argtypes = [ctypes.c_char_p]
+except Exception as e:
+    logger.warning(f"Could not load libEGL.so.1: {e}")
+
+try:
+    libgl = ctypes.CDLL("libGL.so.1")
+except Exception as e:
+    logger.warning(f"Could not load libGL.so.1: {e}")
 
 
 def get_proc_address(name):
+    if not egl_get_proc_address:
+        return None
     if isinstance(name, str):
         name = name.encode("utf-8")
     return egl_get_proc_address(name)
 
 
 def get_gl_func(name, restype, argtypes):
-    addr = egl_get_proc_address(name.encode("utf-8"))
-    if addr:
-        prototype = ctypes.CFUNCTYPE(restype, *argtypes)
-        return prototype(addr)
-    try:
-        func = getattr(libgl, name)
-        func.restype = restype
-        func.argtypes = argtypes
-        return func
-    except AttributeError:
-        return None
+    if egl_get_proc_address:
+        try:
+            addr = egl_get_proc_address(name.encode("utf-8"))
+            if addr:
+                prototype = ctypes.CFUNCTYPE(restype, *argtypes)
+                return prototype(addr)
+        except Exception:
+            pass
+    if libgl:
+        try:
+            func = getattr(libgl, name)
+            func.restype = restype
+            func.argtypes = argtypes
+            return func
+        except AttributeError:
+            return None
+    return None
 
 
 # OpenGL Constants
@@ -108,9 +127,11 @@ glDeleteSync = get_gl_func(
 glClientWaitSync = get_gl_func(
     "glClientWaitSync", ctypes.c_uint, [ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint64]
 )
+glFlush = get_gl_func("glFlush", None, [])
 
 # Sync Constants
 GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117
+GL_SYNC_FLUSH_COMMANDS_BIT = 0x00000001
 GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFF
 
 

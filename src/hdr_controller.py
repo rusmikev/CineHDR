@@ -195,10 +195,9 @@ class HdrController(GObject.Object):
                 target_peak = "auto"
             peak_val = "auto" if target_peak == "auto" else int(float(target_peak))
 
-            target_prim = self._hdr_target_prim
-            valid_prims = ("auto", "bt.709", "bt.2020", "dci-p3", "display-p3", "apple", "adobe", "pro-photo", "cie-xyy", "dci-p3-d65")
-            if target_prim not in valid_prims:
-                target_prim = "auto"
+            # When HDR is active, Gdk.ColorState is Rec.2100 PQ (BT.2020 + PQ).
+            # Force mpv to render in bt.2020 primaries to prevent color shift (F7).
+            target_prim = "bt.2020"
 
             props = [
                 ("target-colorspace-hint", "yes"),

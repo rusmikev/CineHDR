@@ -14,8 +14,33 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import ctypes
 
 # Add src to path
+# Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-os.environ["GSETTINGS_SCHEMA_DIR"] = os.path.join(os.path.dirname(__file__), "..", "data")
+
+# Make tests hermetic and isolated (F13)
+import tempfile
+import shutil
+import subprocess
+import atexit
+
+temp_schema_dir = tempfile.mkdtemp()
+schema_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+# Copy schema file to temp dir
+shutil.copy(
+    os.path.join(schema_src, "io.github.rusmikev.CineHDR.gschema.xml"),
+    os.path.join(temp_schema_dir, "io.github.rusmikev.CineHDR.gschema.xml")
+)
+# Compile
+subprocess.run(["glib-compile-schemas", temp_schema_dir], check=True)
+os.environ["GSETTINGS_SCHEMA_DIR"] = temp_schema_dir
+os.environ["GSETTINGS_BACKEND"] = "memory"
+
+def cleanup_temp_schemas():
+    try:
+        shutil.rmtree(temp_schema_dir)
+    except Exception:
+        pass
+atexit.register(cleanup_temp_schemas)
 
 try:
     from gi.repository import Gio
@@ -229,40 +254,46 @@ class TestApplyHDRSettings(unittest.TestCase):
             self.assertEqual(props["target-prim"], prim)
 
     @patch("src.hdr_detection.Gdk.Display")
-    @patch("src.hdr_detection.Gdk.ColorState")
+    @patch("src.hdr_detection.Gdk.ColorState", create=True)
     def test_check_hdr_support_conditions(self, mock_colorstate, mock_display_class):
         """test check_hdr_support returns True only on Wayland with GTK >= 4.16."""
-        from src.hdr_detection import check_hdr_support
-        
+        from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
+
         # Scenario 1: Gdk.ColorState doesn't have get_rec2100_pq
         if hasattr(mock_colorstate, "get_rec2100_pq"):
             delattr(mock_colorstate, "get_rec2100_pq")
+        invalidate_hdr_support_cache()
         self.assertFalse(check_hdr_support())
-        
+
         # Scenario 2: Gdk.ColorState has get_rec2100_pq, but no default display
         mock_colorstate.get_rec2100_pq = MagicMock()
+        invalidate_hdr_support_cache()
         with patch("src.hdr_detection.Gdk.Display.get_default", return_value=None):
             self.assertFalse(check_hdr_support())
-            
+
         # Scenario 3: Display is X11
         mock_display = MagicMock()
         mock_display.__class__.__name__ = "GdkX11Display"
+        invalidate_hdr_support_cache()
         with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
-            
+
         # Scenario 4: Display is Wayland
         mock_display.__class__.__name__ = "GdkWaylandDisplay"
+        invalidate_hdr_support_cache()
         with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertTrue(check_hdr_support())
 
         # Scenario 5: Display is Wayland but not composited
         mock_display.is_composited.return_value = False
+        invalidate_hdr_support_cache()
         with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
         mock_display.is_composited.return_value = True
 
         # Scenario 6: Display is Wayland but no RGBA
         mock_display.is_rgba.return_value = False
+        invalidate_hdr_support_cache()
         with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
         mock_display.is_rgba.return_value = True
@@ -279,7 +310,7 @@ class TestApplyHDRSettings(unittest.TestCase):
     def test_apply_hdr_settings_with_support_check(self, mock_support):
         """apply_hdr_settings applies HDR only if check_hdr_support is True."""
         from src.hdr_controller import HdrController
-        
+
         mock_mpv, props = self._make_mock_mpv()
         controller = HdrController(mock_mpv)
         controller._hdr_mode = "auto"
@@ -287,19 +318,19 @@ class TestApplyHDRSettings(unittest.TestCase):
         controller._hdr_target_peak = "1000"
         controller._hdr_target_prim = "dci-p3"
         controller._is_hdr_content = True
-        
+
         # Case A: check_hdr_support is False (e.g. X11) -> should fall back to SDR
         mock_support.return_value = False
         controller.apply_hdr_settings()
         self.assertEqual(props.get("target-colorspace-hint"), "no")
         self.assertEqual(props.get("hdr-compute-peak"), "auto")
-        
+
         # Case B: check_hdr_support is True (Wayland + GTK >= 4.16) -> should apply PQ
         mock_support.return_value = True
         controller.apply_hdr_settings()
         self.assertEqual(props.get("target-colorspace-hint"), "yes")
         self.assertEqual(props.get("target-trc"), "pq")
-        self.assertEqual(props.get("target-prim"), "dci-p3")
+        self.assertEqual(props.get("target-prim"), "bt.2020")
         self.assertEqual(props.get("hdr-compute-peak"), "yes")
         self.assertEqual(props.get("target-peak"), 1000)
 
@@ -597,17 +628,17 @@ class TestHdrDiagnostics(unittest.TestCase):
 
     def test_get_mpv_prop(self):
         from src.hdr_diagnostics import get_mpv_prop
-        
+
         class MockMpv2:
             def get_property(self, name):
                 return "val2" if name == "test" else None
-                
+
         class MockMpv3(dict):
             pass
 
         self.assertEqual(get_mpv_prop(MockMpv2(), "test"), "val2")
         self.assertEqual(get_mpv_prop(MockMpv2(), "missing", "default"), "default")
-        
+
         mpv3 = MockMpv3()
         mpv3["test"] = "val3"
         self.assertEqual(get_mpv_prop(mpv3, "test"), "val3")
@@ -714,7 +745,7 @@ class TestAuditFixes(unittest.TestCase):
         builder = Gdk.GLTextureBuilder()
         class FakeSlot: pass
         slot = FakeSlot()
-        
+
         with self.assertRaises(ValueError):
             builder.build(destroy=lambda _: None, data=slot)
 
@@ -737,17 +768,17 @@ class TestAuditFixes(unittest.TestCase):
         slot = pool.slots[0]
         slot.fence = 12345
         slot.in_use = True
-        
+
         with patch("src.gl_bindings.glDeleteSync") as mock_delete:
             pool.release_buffer(slot)
             mock_delete.assert_not_called()
             self.assertFalse(slot.in_use)
             self.assertEqual(slot.fence, 12345)
-            
+
             with patch("src.gl_bindings.glDeleteSync") as mock_delete2:
                 with patch.object(slot.resource, "ensure"):
                     slot.resource._initialized = True
-                    slot.resource.fbo_id = 1
+                    slot.resource.fbo_id = ctypes.c_uint(1)
                     pool.acquire(100, 100, is_float=False)
                     mock_delete2.assert_called_once_with(12345)
 
@@ -758,11 +789,11 @@ class TestAuditFixes(unittest.TestCase):
         slot = pool.slots[0]
         with patch.object(slot.resource, "ensure"):
             slot.resource._initialized = True
-            slot.resource.fbo_id = 0  # Invalid FBO!
+            slot.resource.fbo_id = ctypes.c_uint(0)  # Invalid FBO!
             self.assertIsNone(pool.acquire(100, 100, is_float=False))
-        
+
             slot.resource._initialized = False
-            slot.resource.fbo_id = 1
+            slot.resource.fbo_id = ctypes.c_uint(1)
             self.assertIsNone(pool.acquire(100, 100, is_float=False))
 
     def test_sdr_memory_format(self):

@@ -45,8 +45,8 @@ class HdrMenuButton(Gtk.MenuButton):
 
     def _disable_dropdown_autohide(self, dropdown: Gtk.DropDown):
         # Workaround for GTK4 bug: opening a DropDown inside a Popover breaks parent Popover autohide/close.
-        # Per GEMINI.md §11, this technical debt (#13) is marked as ОТЛОЖЕН because GTK4 lacks public API
-        # to access the dropdown's popover, and removing this workaround breaks closing the HDR menu.
+        # This workaround is required because GTK4 lacks a public API to access the dropdown's popover,
+        # and removing this workaround breaks closing the HDR menu.
         try:
             child = dropdown.get_first_child()
             while child:

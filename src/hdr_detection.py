@@ -31,18 +31,25 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk
 
 
+_cached_support = None
+
+
+def invalidate_hdr_support_cache():
+    global _cached_support
+    _cached_support = None
+
+
 def check_hdr_support() -> bool:
+    global _cached_support
+    if _cached_support is not None:
+        return _cached_support
+    _cached_support = _check_hdr_support_uncached()
+    return _cached_support
+
+
+def _check_hdr_support_uncached() -> bool:
     """
     Check if the current desktop session and GTK runtime support HDR rendering.
-
-    HDR output in GTK 4 requires:
-    - GTK >= 4.16 with Gdk.ColorState support (specifically get_rec2100_pq).
-    - 16-bit floating-point memory format (Gdk.MemoryFormat.R16G16B16A16_FLOAT).
-    - Wayland display server (X11 protocol lacks HDR color signaling extensions).
-    - Compositor support for RGBA visual channels and dmabuf buffer sharing.
-
-    Returns:
-        bool: True if HDR rendering is safely supported by the system, False otherwise.
     """
     try:
         import os
@@ -86,7 +93,7 @@ def is_hdr_content(params: dict) -> bool:
     Criteria evaluated from mpv 'video-params' / 'video-out-params':
     - Transfer function (gamma / trc): PQ (st2084), HLG, or S-Log curves.
     - Signal peak luminance (sig-peak): Greater than 1.0 (relative to SDR reference 100 nits).
-    
+
     Note: Primaries being BT.2020 alone without HDR gamma or peak > 1.0 is NOT considered
     HDR (prevents false triggering on WCG SDR content).
 

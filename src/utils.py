@@ -36,13 +36,6 @@ from gi.repository import (
 gtk = ctypes.CDLL("libgtk-4.so.1")
 display = Gdk.Display.get_default()
 
-def idle_add_once(callback, *args, **kwargs):
-    def wrapper():
-        callback(*args, **kwargs)
-        return GLib.SOURCE_REMOVE
-
-    GLib.idle_add(wrapper)
-
 
 try:
     xdg_pictures = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
