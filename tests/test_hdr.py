@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import ctypes
 
 # Add src to path
-# Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Make tests hermetic and isolated (F13)
@@ -23,23 +22,37 @@ import shutil
 import subprocess
 import atexit
 
-temp_schema_dir = tempfile.mkdtemp()
-schema_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
-# Copy schema file to temp dir
-shutil.copy(
-    os.path.join(schema_src, "io.github.rusmikev.CineHDR.gschema.xml"),
-    os.path.join(temp_schema_dir, "io.github.rusmikev.CineHDR.gschema.xml")
-)
-# Compile
-subprocess.run(["glib-compile-schemas", temp_schema_dir], check=True)
-os.environ["GSETTINGS_SCHEMA_DIR"] = temp_schema_dir
+temp_schema_dir = None
+try:
+    temp_schema_dir = tempfile.mkdtemp()
+    schema_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+    # Copy schema file to temp dir
+    shutil.copy(
+        os.path.join(schema_src, "io.github.rusmikev.CineHDR.gschema.xml"),
+        os.path.join(temp_schema_dir, "io.github.rusmikev.CineHDR.gschema.xml")
+    )
+    # Compile
+    subprocess.run(["glib-compile-schemas", temp_schema_dir], check=True)
+    os.environ["GSETTINGS_SCHEMA_DIR"] = temp_schema_dir
+except Exception:
+    # Fallback to the project's data schema dir (where gschemas.compiled is pre-built)
+    os.environ["GSETTINGS_SCHEMA_DIR"] = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+    if temp_schema_dir:
+        try:
+            shutil.rmtree(temp_schema_dir)
+        except Exception:
+            pass
+        temp_schema_dir = None
+
+# Always use memory backend to isolate tests from host dconf (F13)
 os.environ["GSETTINGS_BACKEND"] = "memory"
 
 def cleanup_temp_schemas():
-    try:
-        shutil.rmtree(temp_schema_dir)
-    except Exception:
-        pass
+    if temp_schema_dir:
+        try:
+            shutil.rmtree(temp_schema_dir)
+        except Exception:
+            pass
 atexit.register(cleanup_temp_schemas)
 
 try:
