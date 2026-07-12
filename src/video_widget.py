@@ -41,7 +41,8 @@ from .gl_bindings import (
     GL_FRAMEBUFFER,
     GL_SYNC_GPU_COMMANDS_COMPLETE,
     GL_SYNC_FLUSH_COMMANDS_BIT,
-    GL_TIMEOUT_IGNORED,
+    GL_TIMEOUT_EXPIRED,
+    GL_WAIT_FAILED,
     glFenceSync,
     glFlush,
     glClientWaitSync,
@@ -53,6 +54,12 @@ from .gl_renderer import GLFramebufferPool, FramebufferSlot
 from .hdr_controller import HdrController
 from .hdr_detection import check_hdr_support
 from .utils import idle_add_once, get_display_param
+
+# CPU-side wait budget for the GTK < 4.16 fallback path (no
+# GdkGLTextureBuilder.set_sync). glClientWaitSync takes a real timeout in
+# nanoseconds — GL_TIMEOUT_IGNORED is only valid for glWaitSync and would
+# block the UI thread indefinitely on a stalled driver (F5).
+GL_CLIENT_WAIT_TIMEOUT_NS = 100_000_000  # 100 ms
 
 
 class MpvVideoWidget(Gtk.Widget):
@@ -238,6 +245,15 @@ class MpvVideoWidget(Gtk.Widget):
         else:
             slot.fence = None
 
+        # Submit the fence and pending GL commands to the GPU now: a fence
+        # that was never flushed may never signal when another context
+        # (GTK's renderer) waits on it via set_sync (F5).
+        if glFlush:
+            try:
+                glFlush()
+            except Exception:
+                pass
+
         builder = Gdk.GLTextureBuilder()
         builder.set_context(self.gl_area.get_context())
         builder.set_id(slot.resource.texture_id.value)
@@ -268,17 +284,23 @@ class MpvVideoWidget(Gtk.Widget):
             except AttributeError:
                 pass
 
-        if not has_set_sync:
-            if glFlush:
-                try:
-                    glFlush()
-                except Exception:
-                    pass
-            if slot.fence and glClientWaitSync:
-                try:
-                    glClientWaitSync(slot.fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED)
-                except Exception:
-                    pass
+        if not has_set_sync and slot.fence and glClientWaitSync:
+            # GTK < 4.16: no GdkGLTextureBuilder.set_sync, so wait for the
+            # GPU on the CPU side before publishing the texture. The timeout
+            # is bounded so a stalled driver cannot freeze the UI thread; on
+            # timeout the frame is published anyway (worst case is a torn
+            # frame — same as having no synchronization at all) (F5).
+            try:
+                wait_result = glClientWaitSync(
+                    slot.fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_CLIENT_WAIT_TIMEOUT_NS
+                )
+                if wait_result in (GL_TIMEOUT_EXPIRED, GL_WAIT_FAILED):
+                    logging.warning(
+                        f"glClientWaitSync returned 0x{wait_result:04x}; "
+                        "publishing frame without GPU sync"
+                    )
+            except Exception:
+                pass
 
         def on_texture_release(user_data):
             self.fbo_pool.release_buffer(slot)

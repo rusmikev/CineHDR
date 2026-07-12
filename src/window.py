@@ -18,6 +18,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+import logging
 import gi
 import mpv
 import ctypes

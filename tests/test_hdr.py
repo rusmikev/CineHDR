@@ -73,6 +73,20 @@ try:
 except Exception:
     pass
 
+# Gtk.Template classes (HdrDiagnosticsDialog) need the compiled gresource.
+# Verify the actual resource path is resolvable so the dependent tests can
+# be skipped cleanly instead of erroring on machines without a build dir.
+GRESOURCE_AVAILABLE = False
+try:
+    from gi.repository import Gio as _Gio
+    _Gio.resources_get_info(
+        "/io/github/rusmikev/CineHDR/hdr_diagnostics.ui",
+        _Gio.ResourceLookupFlags.NONE,
+    )
+    GRESOURCE_AVAILABLE = True
+except Exception:
+    GRESOURCE_AVAILABLE = False
+
 
 # ──────────────────────────────────────────────────────────────
 # 1. Tests for HDR config persistence (load/save via GSettings)
@@ -636,6 +650,10 @@ class TestGLFramebufferResource(unittest.TestCase):
 # 6. Tests for HDR Diagnostics Dialog and Helper
 # ──────────────────────────────────────────────────────────────
 
+@unittest.skipUnless(
+    GRESOURCE_AVAILABLE,
+    "compiled cinehdr.gresource not found — build the project or set CINEHDR_GRESOURCE",
+)
 class TestHdrDiagnostics(unittest.TestCase):
     """Tests for HdrDiagnosticsDialog and get_mpv_prop helper."""
 

@@ -132,7 +132,13 @@ glFlush = get_gl_func("glFlush", None, [])
 # Sync Constants
 GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117
 GL_SYNC_FLUSH_COMMANDS_BIT = 0x00000001
-GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFF
+GL_TIMEOUT_IGNORED = 0xFFFFFFFFFFFFFFFF  # valid for glWaitSync only, NOT glClientWaitSync
+
+# glClientWaitSync return values
+GL_ALREADY_SIGNALED = 0x911A
+GL_TIMEOUT_EXPIRED = 0x911B
+GL_CONDITION_SATISFIED = 0x911C
+GL_WAIT_FAILED = 0x911D
 
 
 def check_gl_error(step=""):
