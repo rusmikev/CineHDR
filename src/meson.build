@@ -17,7 +17,7 @@ blueprints = custom_target('blueprints',
   command: [find_program('blueprint-compiler'), 'batch-compile', '@OUTPUT@', '@CURRENT_SOURCE_DIR@', '@INPUT@'],
 )
 
-gnome.compile_resources('cinehdr',
+cinehdr_resources = gnome.compile_resources('cinehdr',
   'cinehdr.gresource.xml',
   gresource_bundle: true,
   install: true,
