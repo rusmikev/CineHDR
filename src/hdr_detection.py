@@ -121,74 +121,120 @@ def is_hdr_content(params: dict) -> bool:
 
 
 
-def get_dovi_profile(params: dict = None, mpv_player: Any = None) -> Optional[str]:
+# ──────────────────────────────────────────────────────────────
+# Dolby Vision
+# ──────────────────────────────────────────────────────────────
+#
+# Profiles whose picture cannot be rendered correctly through the libmpv render
+# API, i.e. for which HDR pass-through must be refused:
+#
+#   * Profile 5 is single-layer IPT (IPTPQc2). Showing it correctly requires the
+#     RPU reshaping, which only libplacebo implements (mpv --vo=gpu-next).
+#     CineHDR renders through the libmpv render API (vo=libmpv), which uses
+#     mpv's legacy GPU renderer: that renderer explicitly reverts the Dolby
+#     Vision mapping (mp_image_params_restore_dovi_mapping(), video/out/gpu/
+#     video.c) and its YUV->RGB matrix treats DOLBYVISION as "not supported",
+#     falling back to BT.2020-NC (video/csputils.c). The resulting RGB is wrong,
+#     so tagging it Rec.2100 PQ would show broken colors *and* switch the
+#     monitor into HDR mode. mpv's SDR tone mapping is the lesser evil.
+#
+#   * Profiles 7 and 8 carry an HDR10-compatible base layer: after the same
+#     revert mpv renders correct BT.2020 + PQ and only the dynamic metadata is
+#     lost. They must keep working in HDR.
+DOVI_UNSUPPORTED_PROFILES = (5,)
+
+
+def _query_mpv_prop(mpv_player: Any, name: str) -> Any:
     """
-    Detect if the active video stream contains Dolby Vision metadata and return the profile string.
+    Read a single mpv property; return None if unset, unavailable or erroring.
 
-    Checks current track properties (`current-tracks/video/dolby-vision-profile` and
-    `dolby-vision-level`) when `mpv_player` is provided, and falls back to inspecting
-    colormatrix/primaries (`colormatrix == 'dolbyvision'`).
-
-    Note: Under vo=libmpv (render API), Dolby Vision RPU processing is not supported.
-    This function is strictly for informational display in diagnostics and does NOT
-    trigger HDR Rec.2100 PQ pass-through for Profile 5 streams.
+    Each accessor is attempted independently: python-mpv raises when a property
+    is unavailable (the normal case for `dolby-vision-profile` on non-DV files),
+    and a raising first accessor must not stop the remaining ones from running.
     """
-    profile = None
-    level = None
+    if mpv_player is None:
+        return None
 
-    if mpv_player is not None:
+    for getter in ("_get_property", "get_property"):
+        fn = getattr(mpv_player, getter, None)
+        if not callable(fn):
+            continue
         try:
-            def _query_prop(name: str):
-                if hasattr(mpv_player, "_get_property"):
-                    res = mpv_player._get_property(name)
-                    if res is not None:
-                        return res
-                if hasattr(mpv_player, "get_property"):
-                    res = mpv_player.get_property(name)
-                    if res is not None:
-                        return res
-                try:
-                    return mpv_player[name]
-                except Exception:
-                    return None
-
-            p = _query_prop("current-tracks/video/dolby-vision-profile")
-            if not p:
-                tracks = _query_prop("track-list") or []
-                if isinstance(tracks, list):
-                    for t in tracks:
-                        if isinstance(t, dict) and t.get("type") == "video" and t.get("selected"):
-                            p = t.get("dolby-vision-profile")
-                            level = t.get("dolby-vision-level")
-                            break
-            else:
-                level = _query_prop("current-tracks/video/dolby-vision-level")
-
-            if p is not None and str(p).strip() and str(p).strip() != "0":
-                profile = str(p).strip().lstrip("0") or "0"
+            res = fn(name)
         except Exception:
-            pass
+            continue
+        if res is not None:
+            return res
 
-    if not profile and params and isinstance(params, dict):
-        for key in ("dolby-vision-profile", "dovi-profile"):
-            val = params.get(key)
-            if val is not None and str(val).strip() and str(val).strip() != "0":
-                profile = str(val).strip().lstrip("0") or "0"
-                break
+    try:
+        return mpv_player[name]
+    except Exception:
+        return None
 
-    if profile:
-        if level is not None and str(level).strip() and str(level).strip() != "0":
-            return f"{profile} (Level {str(level).strip()})"
-        return profile
 
-    if params and isinstance(params, dict):
-        colormatrix = str(params.get("colormatrix", "")).lower()
-        primaries = str(params.get("primaries", "")).lower()
-        if colormatrix == "dolbyvision" or "dolbyvision" in colormatrix or primaries == "dolbyvision" or "dolbyvision" in primaries:
-            return "5 (colormatrix: dolbyvision)"
+def _coerce_profile(value: Any) -> Optional[int]:
+    """Return a positive int from an mpv property value, else None."""
+    try:
+        num = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return num if num > 0 else None
+
+
+def get_dovi_info(params: dict = None, mpv_player: Any = None) -> Optional[dict]:
+    """
+    Describe the Dolby Vision metadata of the active video track.
+
+    Returns None when the stream carries no Dolby Vision metadata, otherwise:
+
+        {"profile": int | None,    # None when the profile could not be read
+         "level": int | None,
+         "unsupported": bool}      # True only for a *confirmed* unsupported profile
+
+    The profile number is read from mpv's track properties
+    (`current-tracks/video/dolby-vision-profile`), the only reliable source:
+    `video-params` never carries it.
+
+    A colormatrix of "dolbyvision" is used only as a fallback *presence* signal.
+    libplacebo's pl_map_avdovi_metadata() sets colormatrix=dolbyvision,
+    primaries=bt.2020 and transfer=pq for every single-layer Dolby Vision frame,
+    so the fingerprint matches profile 5 and profile 8 alike and cannot tell them
+    apart. When the profile is unknown the stream is reported as detected but
+    unidentified and the pipeline is left alone: refusing HDR on a guess would
+    needlessly downgrade a perfectly playable profile 8 stream.
+    """
+    level = None
+    profile = _coerce_profile(
+        _query_mpv_prop(mpv_player, "current-tracks/video/dolby-vision-profile")
+    )
+
+    if profile is None:
+        tracks = _query_mpv_prop(mpv_player, "track-list")
+        if isinstance(tracks, (list, tuple)):
+            for track in tracks:
+                if not isinstance(track, dict):
+                    continue
+                if track.get("type") == "video" and track.get("selected"):
+                    profile = _coerce_profile(track.get("dolby-vision-profile"))
+                    level = _coerce_profile(track.get("dolby-vision-level"))
+                    break
+    else:
+        level = _coerce_profile(
+            _query_mpv_prop(mpv_player, "current-tracks/video/dolby-vision-level")
+        )
+
+    if profile is not None:
+        return {
+            "profile": profile,
+            "level": level,
+            "unsupported": profile in DOVI_UNSUPPORTED_PROFILES,
+        }
+
+    if isinstance(params, dict):
+        if "dolbyvision" in str(params.get("colormatrix", "")).lower():
+            return {"profile": None, "level": None, "unsupported": False}
 
     return None
-
 
 
 def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:

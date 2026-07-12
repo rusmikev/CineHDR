@@ -194,18 +194,23 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             self.hwdec_row.set_subtitle(_("Unknown"))
 
         try:
-            from .hdr_detection import get_dovi_profile
-            dovi_prof = get_dovi_profile(params, mpv)
-            if dovi_prof:
-                p_num = dovi_prof.split()[0]
-                if p_num == "5" or "colormatrix" in dovi_prof:
-                    desc = _("Profile 5 (Unsupported in vo=libmpv / RPU not processed)")
-                elif p_num == "7":
-                    desc = _("Profile 7 (HDR10 Base / RPU not processed)")
-                elif p_num == "8" or dovi_prof.startswith("8"):
-                    desc = _("Profile 8 (HDR10 Base / RPU not processed)")
+            from .hdr_detection import get_dovi_info
+            dovi = get_dovi_info(params, mpv)
+            if dovi:
+                profile = dovi.get("profile")
+                level = dovi.get("level")
+                if profile is None:
+                    # colormatrix=dolbyvision is set for profile 5 and 8 alike,
+                    # so it proves presence but not which profile.
+                    desc = _("Detected — profile unknown (RPU not processed)")
+                elif dovi.get("unsupported"):
+                    desc = _("Profile {p} — IPT base, not renderable here; forced to SDR").format(p=profile)
+                elif profile in (7, 8):
+                    desc = _("Profile {p} — HDR10 base layer (RPU not processed)").format(p=profile)
                 else:
-                    desc = f"Profile {dovi_prof} (RPU not processed)"
+                    desc = _("Profile {p} (RPU not processed)").format(p=profile)
+                if level:
+                    desc = f"{desc} · Level {level}"
                 self.dovi_profile_row.set_subtitle(desc)
                 self.dovi_profile_row.set_visible(True)
             elif is_content:

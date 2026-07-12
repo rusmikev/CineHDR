@@ -31,7 +31,12 @@ import logging
 from typing import Any, Optional
 from gi.repository import GObject, Gio, GLib
 from .utils import idle_add_once
-from .hdr_detection import is_hdr_content, check_hdr_support, get_hdr_unsupported_reason
+from .hdr_detection import (
+    is_hdr_content,
+    check_hdr_support,
+    get_hdr_unsupported_reason,
+    get_dovi_info,
+)
 
 # Single source of truth for the HDR mode values and the peak-brightness
 # presets. hdr_menu.py builds its dropdowns from these tuples, so the
@@ -154,6 +159,8 @@ class HdrController(GObject.Object):
         self._hdr_target_peak = config["hdr_target_peak"]
         self._is_hdr_content = False
         self._hdr_support_warned = False
+        self._dovi_info: Optional[dict] = None
+        self._dovi_warned = False
 
         self._initial_mpv_props = {}
         for prop in ("target-colorspace-hint", "target-trc", "target-prim", "target-peak"):
@@ -176,9 +183,22 @@ class HdrController(GObject.Object):
         def _on_video_params(_name, params):
             # See mpv docs: video-params property contains stream color metadata (primaries, gamma, sig-peak)
             is_hdr = is_hdr_content(params)
+            # Dolby Vision profile comes from the *track* properties; video-params
+            # only carries the already-mapped colorimetry (bt.2020/pq) that
+            # libplacebo writes for every single-layer DoVi frame.
+            dovi = get_dovi_info(params, self.mpv)
+
+            changed = False
             if self._is_hdr_content != is_hdr:
                 self._is_hdr_content = is_hdr
+                changed = True
+            if self._dovi_info != dovi:
+                self._dovi_info = dovi
+                self._dovi_warned = False
+                changed = True
+            if changed:
                 idle_add_once(self.apply_hdr_settings)
+
             if hasattr(self, "on_content_change_cb") and self.on_content_change_cb:
                 idle_add_once(self.on_content_change_cb)
         self._mpv_observers.append(("video-params", _on_video_params))
@@ -246,6 +266,7 @@ class HdrController(GObject.Object):
         # warning is actually reachable — previously it was only invoked from
         # a code path that already required HDR support to be present.
         self.check_unsupported_warning()
+        self.check_dovi_warning()
 
         if self.on_change_cb:
             self.on_change_cb()
@@ -294,15 +315,55 @@ class HdrController(GObject.Object):
             self.apply_hdr_settings()
 
     @property
+    def dovi_profile(self) -> Optional[int]:
+        """Dolby Vision profile of the active video track, if any."""
+        return (self._dovi_info or {}).get("profile")
+
+    @property
+    def dovi_level(self) -> Optional[int]:
+        return (self._dovi_info or {}).get("level")
+
+    @property
+    def dovi_detected(self) -> bool:
+        return self._dovi_info is not None
+
+    @property
+    def dovi_unsupported(self) -> bool:
+        """True when the stream's Dolby Vision profile cannot be rendered here."""
+        return bool((self._dovi_info or {}).get("unsupported"))
+
+    @property
     def is_hdr_active(self) -> bool:
         """Returns True if HDR color state should be applied to the GL texture."""
         if not check_hdr_support():
+            return False
+        # Capability gate, deliberately ahead of the user's mode: an unshapeable
+        # Dolby Vision profile (5) reaches us as IPT decoded with a BT.2020-NC
+        # matrix, so tagging it Rec.2100 PQ shows broken colors *and* flips the
+        # monitor into HDR. force-hdr cannot fix the picture, so it must not win
+        # here. Note that video-params reports gamma=pq for these streams, so
+        # is_hdr_content() alone would happily enable HDR.
+        if self.dovi_unsupported:
             return False
         if self._hdr_mode == "force-sdr":
             return False
         if self._hdr_mode == "force-hdr":
             return True
         return self._is_hdr_content
+
+    def check_dovi_warning(self):
+        """Log once when HDR is refused because of an unrenderable DoVi profile."""
+        if not self.dovi_unsupported or self._dovi_warned:
+            return
+        self._dovi_warned = True
+        logging.warning(
+            "Dolby Vision Profile %s detected. The libmpv render API uses mpv's "
+            "legacy GPU renderer, which cannot apply the Dolby Vision RPU reshaping "
+            "(implemented only by libplacebo / vo=gpu-next), so the decoded frame is "
+            "not Rec.2100 PQ. Falling back to SDR tone mapping instead of tagging "
+            "unshaped IPT data as HDR.",
+            self.dovi_profile,
+        )
 
     def check_unsupported_warning(self, gdk_display: Any = None):
         """Log a warning if HDR is requested and content is HDR, but display/GTK lacks support."""

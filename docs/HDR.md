@@ -60,7 +60,9 @@ flowchart TD
     CheckSupport -->|"Wayland + GTK >= 4.16 + ColorState + RGBA16F FBO"| SystemSupported["System Supports HDR"]
     CheckSupport -->|"X11 / GSK_RENDERER=gl / Old GTK / No Display"| SystemUnsupported["System Unsupported"]
 
-    SystemSupported --> Mode["Evaluate User HDR Mode Setting (hdr-mode)"]
+    SystemSupported --> DoViGate["Check Dolby Vision Profile (get_dovi_info)"]
+    DoViGate -->|"Profile 5 (unshapeable IPT)"| ApplySDR
+    DoViGate -->|"No DoVi / Profile 7 / 8 / unknown"| Mode["Evaluate User HDR Mode Setting (hdr-mode)"]
     
     Mode -->|"force-hdr"| ApplyHDR["Activate HDR Pipeline (Rec.2100 PQ)"]
     Mode -->|"force-sdr"| ApplySDR["Activate SDR Pipeline (Tonemapping / sRGB)"]
@@ -94,8 +96,8 @@ When HDR rendering is active (`hdr_enabled == True`), `HdrController.apply_hdr_s
 ### B. Dolby Vision Capabilities & Limitations under `vo=libmpv`
 * **Architectural Reality:** CineHDR delegates OpenGL rendering to `mpv`'s render API (`vo=libmpv` backed by `video/out/gpu/video.c`). Under this legacy OpenGL renderer, active Dolby Vision RPU metadata processing (`libplacebo/utils/dolbyvision.h`, `repr.dovi`) is not supported (`mp_image_params_restore_dovi_mapping()` restores pre-DV signaling). Full RPU processing requires the `vo=gpu-next` backend, which is not yet accessible via the standard `libmpv/render` OpenGL API (`MPV_RENDER_PARAM_BACKEND` / PR #16818).
 * **Profile 7 & 8 (`HDR10 Base Layer + RPU`):** Because the base video stream is standard 10-bit Rec.2020 PQ (`gamma="pq"`, `sig-peak > 1.0`), `is_hdr_content()` detects the base layer and activates normal Rec.2100 PQ pass-through. The RPU dynamic enhancement layer is bypassed (`RPU not processed`).
-* **Profile 5 (`IPTPQc2` Proprietary Color Space):** Because `vo=libmpv` cannot process Profile 5 RPU reshaping into Rec.2100 PQ, attaching a `Rec.2100 PQ` color state to unshaped Profile 5 IPT frames results in false colors (green/purple tint). Therefore, `is_hdr_content()` strictly checks `gamma` and `sig-peak` and excludes Profile 5 metadata from triggering HDR pass-through, allowing `mpv`'s tone mapping fallback to handle Profile 5 streams cleanly in SDR.
-* **Diagnostics Reporting:** `get_dovi_profile()` queries `current-tracks/video/dolby-vision-profile` and `dolby-vision-level` strictly for descriptive diagnostics in `HDR Status` without falsely asserting Rec.2100 PQ color conversion.
+* **Profile 5 (`IPTPQc2` Proprietary Color Space):** Attaching a `Rec.2100 PQ` color state to unshaped Profile 5 IPT frames yields false colors (green/purple tint) *and* flips the monitor into HDR mode. Note that content detection alone cannot prevent this: libplacebo's `pl_map_avdovi_metadata()` rewrites the decoder-side frame parameters to `primaries=bt.2020` / `transfer=pq` for every single-layer DoVi stream, so `video-params` reports `gamma="pq"` and `is_hdr_content()` returns `True` for Profile 5 as well. The refusal therefore lives in `HdrController.is_hdr_active`, as a **capability gate placed ahead of the user's `hdr-mode`** (`DOVI_UNSUPPORTED_PROFILES = (5,)`): Profile 5 always falls back to `mpv`'s SDR tone mapping, and even `force-hdr` cannot override it, because forcing HDR cannot repair the picture — it only adds a wrong mode switch on top of wrong colors. A one-shot warning is logged (`check_dovi_warning()`).
+* **Profile Source:** `get_dovi_info()` reads the profile from the *track* properties (`current-tracks/video/dolby-vision-profile` / `dolby-vision-level`) — the only reliable source, since `video-params` never carries it. The `colormatrix == "dolbyvision"` fingerprint is used as a **presence** signal only: libplacebo sets it identically for Profiles 5 and 8, so it cannot tell them apart. When the profile cannot be read, the stream is reported as *detected, profile unknown* and the pipeline is left untouched — refusing HDR on a guess would needlessly downgrade a perfectly playable Profile 8 stream.
 
 ### C. Peak Computation Strategy (`hdr-compute-peak = auto`)
 CineHDR leaves `hdr-compute-peak` set to `libmpv`'s default (`auto`).
@@ -106,7 +108,7 @@ CineHDR leaves `hdr-compute-peak` set to `libmpv`'s default (`auto`).
 * **Dynamic Format Allocation:** `GLFramebufferPool.ensure()` dynamically selects internal texture formats: `GL_RGBA16F` (16-bit float per channel, 64 bpp) when `hdr_enabled` is True, and `GL_RGBA8` (8-bit integer, 32 bpp) when SDR is active, cutting VRAM bandwidth by 50% during SDR playback.
 * **Slot Rotation:** `MpvVideoWidget` maintains a pool of 3 OpenGL Framebuffer Objects (`FBOs`) to allow asynchronous triple-buffering.
 * **Fallback Release Timing:** When `destroy-notify` is unavailable on `Gdk.GLTextureBuilder`, the widget safely holds the *previous* fallback slot (`self._fallback_slot`) until after the *new* texture is published (`self.current_texture`). This guarantees `libmpv` never renders into a buffer actively being scanned out by the compositor, preventing tearing.
-* **GraphicsOffload & NVIDIA Handling:** `MpvVideoWidget` wraps the render view inside `Gtk.GraphicsOffload`. If an NVIDIA proprietary GPU driver is detected (`check_nvidia()`), `GraphicsOffload` is disabled (`DISABLED`) to prevent Wayland cursor flickering and buffer sync artifacts, while remaining enabled (`ENABLED`) for direct scanout on AMD and Intel GPUs.
+* **GraphicsOffload & NVIDIA Handling:** `Window` wraps `MpvVideoWidget` inside `Gtk.GraphicsOffload`. If an NVIDIA proprietary GPU driver is detected (`get_gpu_vendor()` in `utils.py`), `GraphicsOffload` is disabled (`DISABLED`) to prevent Wayland cursor flickering and buffer sync artifacts, while remaining enabled (`ENABLED`) for direct scanout on AMD and Intel GPUs.
 
 ---
 
