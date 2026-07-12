@@ -66,12 +66,13 @@ template $Playlist: Adw.Dialog {
 						ListView playlist_list_view {
 							single-click-activate: true;
 							activate => $_on_list_item_activate();
+							css-name: "cine-list-view";
 
-							factory: SignalListItemFactory factory {};
-
-							styles [
-								"playlist-list-view",
-							]
+							factory: SignalListItemFactory factory {
+								setup => $_on_factory_setup();
+								bind => $_on_factory_bind();
+								unbind => $_on_factory_unbind();
+							};
 						}
 					}
 				};

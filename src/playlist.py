@@ -32,7 +32,7 @@ from gi.repository import Adw, Gio, Gdk, GLib, Gtk, GObject, Pango
 
 from gettext import gettext as _
 from gettext import ngettext
-from .utils import is_local_path, idle_add_once
+from .utils import is_local_path, idle_add_once, timeout_add_once
 
 
 class PlaylistItemObj(GObject.Object):
@@ -72,7 +72,7 @@ class Playlist(Adw.Dialog):
 
         n_items = win.playlist_ls.get_n_items()
         shuffle_btn = win.shuffle_toggle_btn
-        shuff_changed = win.last_shuffle != shuffle_btn.props.active
+        shuff_changed = win.prev_shuffle != shuffle_btn.props.active
 
         if n_items == 0 or n_items == 1 or shuff_changed or win.playlist_changed:
             win._splice_playlist()
@@ -150,10 +150,6 @@ class Playlist(Adw.Dialog):
         self.playlist_list_view.set_model(model)
         self.playlist_list_view.remove_css_class("view")
 
-        self.factory.connect("setup", self._on_factory_setup)
-        self.factory.connect("bind", self._on_factory_bind)
-        self.factory.connect("unbind", self._on_factory_unbind)
-
         drop_target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
         drop_target.set_gtypes([Gdk.FileList, GObject.TYPE_STRING])
         drop_target.connect("enter", self._on_drop_enter)
@@ -193,6 +189,7 @@ class Playlist(Adw.Dialog):
             btn.set_tooltip_text(_("Save Playlist"))
             btn.set_sensitive(True)
 
+    @Gtk.Template.Callback()
     def _on_factory_setup(self, _factory, list_item):
         row = Gtk.Box(height_request=46)
         list_item.icon = Gtk.Image(margin_start=14)
@@ -232,6 +229,7 @@ class Playlist(Adw.Dialog):
 
         list_item.set_child(row)
 
+    @Gtk.Template.Callback()
     def _on_factory_bind(self, _factory, list_item):
         obj = list_item.get_item()
 
@@ -297,6 +295,7 @@ class Playlist(Adw.Dialog):
 
         list_item.handler_id = obj.connect("notify::playing", set_playing_item)
 
+    @Gtk.Template.Callback()
     def _on_factory_unbind(self, _factory, list_item):
         obj = list_item.get_item()
         obj.disconnect(list_item.handler_id)
@@ -411,7 +410,7 @@ class Playlist(Adw.Dialog):
             self.mpv.command("playlist-remove", index)
 
             if index > 0:
-                GLib.timeout_add(
+                timeout_add_once(
                     100,
                     self.playlist_list_view.scroll_to,
                     index,

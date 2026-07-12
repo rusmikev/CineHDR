@@ -131,78 +131,23 @@ class Preferences(Adw.Dialog):
         self.connect("closed", self._disconnect_settings)
 
     def _bind_ui(self):
-        settings.bind(
-            "open-new-windows",
-            self.open_new_row,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "thumbnail-preview",
-            self.thumb_preview_row,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "normalize-volume",
-            self.normalize_volume_row,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "hwdec",
-            self.hwdec_row,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "save-session",
-            self.save_session_switch,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "save-video-position",
-            self.save_position_switch,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "subtitle-scale",
-            self.subtitle_scale_row,
-            "value",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "subtitle-bg",
-            self.subtitle_bg_switch,
-            "active",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "left-click",
-            self.left_click_row,
-            "selected",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "right-click",
-            self.right_click_row,
-            "selected",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "subtitle-languages",
-            self.subtitle_lang_row,
-            "text",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
-        settings.bind(
-            "audio-languages",
-            self.audio_lang_row,
-            "text",
-            Gio.SettingsBindFlags.DEFAULT,
-        )
+        bindings = [
+            ("open-new-windows", self.open_new_row, "active"),
+            ("thumbnail-preview", self.thumb_preview_row, "active"),
+            ("normalize-volume", self.normalize_volume_row, "active"),
+            ("hwdec", self.hwdec_row, "active"),
+            ("save-session", self.save_session_switch, "active"),
+            ("save-video-position", self.save_position_switch, "active"),
+            ("subtitle-scale", self.subtitle_scale_row, "value"),
+            ("subtitle-bg", self.subtitle_bg_switch, "active"),
+            ("left-click", self.left_click_row, "selected"),
+            ("right-click", self.right_click_row, "selected"),
+            ("subtitle-languages", self.subtitle_lang_row, "text"),
+            ("audio-languages", self.audio_lang_row, "text"),
+        ]
+
+        for key, widget, property in bindings:
+            settings.bind(key, widget, property, Gio.SettingsBindFlags.DEFAULT)
 
     def _setup_mpv_updates(self):
         handlers = {

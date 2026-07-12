@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-06 06:48+0500\n"
+"POT-Creation-Date: 2026-07-12 10:04+0500\n"
 "PO-Revision-Date: 2026-05-03 13:21+0000\n"
 "Last-Translator: Ahmer Jamil Khan <ahmer@khan.am>\n"
 "Language-Team: Urdu <https://hosted.weblate.org/projects/cine/app/ur/>\n"
@@ -18,9 +18,9 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
 "X-Generator: Weblate 5.17.1\n"
 
-#: data/io.github.rusmikev.CineHDR.desktop.in:2 src/main.py:237
-#: src/mpris.py:140 src/mpris.py:358 src/window.py:194 src/window.py:2019
-#: src/window.blp:6 src/window.blp:80 src/window.blp:488
+#: data/io.github.rusmikev.CineHDR.desktop.in:2 src/main.py:228
+#: src/mpris.py:140 src/mpris.py:358 src/window.py:187 src/window.py:2037
+#: src/window.blp:6 src/window.blp:81 src/window.blp:496
 #, fuzzy
 #| msgid "Cine"
 msgid "CineHDR"
@@ -36,7 +36,7 @@ msgid "Audio;Video;Movie;TV;Film;Clip;Player;Cine;mpv;"
 msgstr "آڈیو;ویڈیو;مووی;ٹی وی;فلم;کلپ;پلیئر;سنی;mpv;"
 
 #: data/io.github.rusmikev.CineHDR.desktop.in:18 src/shortcuts-dialog.blp:11
-#: src/window.blp:155
+#: src/window.blp:157
 msgid "New Window"
 msgstr "نئی ونڈو"
 
@@ -49,12 +49,14 @@ msgstr "اپنے ویڈیوز چلائیں"
 #: data/io.github.rusmikev.CineHDR.metainfo.xml.in:22
 msgid ""
 "CineHDR is an HDR-enabled fork of Cine. It combines a clean interface with a "
-"high-performance MPV engine and adds HDR passthrough support for compatible "
-"displays."
+"high-performance MPV engine and adds Wayland HDR color state signaling to "
+"pass HDR signal to compatible compositors."
 msgstr ""
 
 #: data/io.github.rusmikev.CineHDR.metainfo.xml.in:24
-msgid "HDR Support: Passthrough HDR10/HLG content to compatible monitors"
+msgid ""
+"HDR Support: Pass HDR10/HLG color state signal to compatible Wayland "
+"compositors"
 msgstr ""
 
 #: data/io.github.rusmikev.CineHDR.metainfo.xml.in:25
@@ -91,7 +93,7 @@ msgid "Video Options"
 msgstr "ویڈیو آپشنز"
 
 #: data/io.github.rusmikev.CineHDR.metainfo.xml.in:48 src/preferences.blp:5
-#: src/preferences.blp:77 src/window.blp:160
+#: src/preferences.blp:77 src/window.blp:162
 msgid "Preferences"
 msgstr "ترجیحات"
 
@@ -99,71 +101,104 @@ msgstr "ترجیحات"
 msgid "Main Window"
 msgstr "مین ونڈو"
 
+#: src/hdr_diagnostics.py:96
+msgid "Active (Tone Mapping enabled)"
+msgstr ""
+
+#: src/hdr_diagnostics.py:98
+msgid "Disabled (Force SDR mode)"
+msgstr ""
+
+#: src/hdr_diagnostics.py:100
+msgid "Disabled (SDR Content or Unsupported)"
+msgstr ""
+
+#: src/hdr_diagnostics.py:104
+msgid "Yes (Wayland + GTK 4.16+)"
+msgstr ""
+
+#: src/hdr_diagnostics.py:106
+msgid "No (Fallback to SDR / 8-bit)"
+msgstr ""
+
+#: src/hdr_diagnostics.py:127
+msgid "No video loaded"
+msgstr ""
+
+#: src/hdr_diagnostics.py:129 src/hdr_diagnostics.py:133
+#: src/hdr_diagnostics.py:136 src/hdr_diagnostics.py:146
+#: src/hdr_diagnostics.py:147 src/hdr_diagnostics.py:148
+#: src/hdr_diagnostics.py:157
+#, fuzzy
+#| msgid "Unknown title"
+msgid "Unknown"
+msgstr "نامعلوم عنوان"
+
+#: src/hdr_diagnostics.py:144
+msgid "Standard / SDR (1.00)"
+msgstr ""
+
 #: src/history.py:54 src/history.py:58
 msgid "Load All"
 msgstr "تمام لوڈ کریں"
 
-#: src/history.py:134
+#: src/history.py:136
 msgid "Remove from History"
 msgstr "ہسٹری سے ہٹائیں"
 
-#: src/history.py:204 src/playlist.py:422
+#: src/history.py:206 src/playlist.py:421
 msgid "Open Item Location"
 msgstr "آئٹم لوکیشن کھولیں"
 
-#: src/history.py:293
+#: src/history.py:295
 msgid "Clear Watch History?"
 msgstr "دیکھنے کی ہسٹری صاف کریں؟"
 
-#: src/history.py:294
+#: src/history.py:296
 msgid "Cancel"
 msgstr "منسوخ کریں"
 
-#: src/history.py:295 src/history.blp:16
+#: src/history.py:297 src/history.blp:16
 msgid "Clear All"
 msgstr "سب صاف کریں"
 
-#: src/main.py:241
+#: src/main.py:232
 msgid "Unofficial fork of Cine with HDR playback support, improved with AI."
 msgstr ""
 
 #. Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
-#: src/main.py:249
+#: src/main.py:240
 msgid "translator-credits"
 msgstr "Ahmer Jamil Khan https://ahmer.co"
-
-#: src/options.py:198 src/options.blp:79 src/options.blp:137
-msgid "Original"
-msgstr "اصل"
 
 #: src/playlist.py:118 src/playlist.blp:45
 msgid "Search"
 msgstr "تلاش"
 
-#: src/playlist.py:185 src/playlist.py:193 src/playlist.py:462
-#: src/preferences.py:386 src/playlist.blp:52
+#: src/playlist.py:181 src/playlist.py:189 src/playlist.py:461
+#: src/preferences.py:331 src/playlist.blp:52
 msgid "Save Playlist"
 msgstr "پلے لسٹ کو محفوظ کریں"
 
-#: src/playlist.py:188 src/preferences.blp:115 src/preferences.blp:150
+#: src/playlist.py:184 src/preferences.blp:115 src/preferences.blp:150
 msgid ""
 "Requires flatpak permission to read the folder where the video is stored"
 msgstr ""
 "اس فولڈر تک رسائی کے لیے فلیٹ پیک کی اجازت درکار ہے جہاں ویڈیو محفوظ ہے"
 
-#: src/playlist.py:317 src/window.py:1325 src/window.py:1825
+#: src/playlist.py:316 src/window.py:1358 src/window.py:1844
 msgid "File Error"
 msgstr "فائل میں خرابی"
 
-#: src/playlist.py:423
+#: src/playlist.py:422
 msgid "Remove from Playlist"
 msgstr "پلے لسٹ سے ہٹائیں"
 
-#: src/playlist.py:463 src/playlist.blp:16 src/window.blp:393
+#: src/playlist.py:462 src/playlist.blp:16 src/window.blp:401
 msgid "Playlist"
 msgstr "پلے لسٹ"
 
-#: src/playlist.py:483
+#: src/playlist.py:482
 #, python-brace-format
 msgid "{n} item"
 msgid_plural "{n} items"
@@ -178,33 +213,33 @@ msgstr "سب ٹائٹل کا رنگ"
 msgid "Subtitle Background"
 msgstr "سب ٹائٹل پس منظر"
 
-#: src/preferences.py:383
+#: src/preferences.py:328
 msgid "Some features require extra permission to work properly:"
 msgstr ""
 "کچھ خصوصیات کو صحیح طریقے سے کام کرنے کے لیے اضافی اجازت کی ضرورت ہوتی ہے:"
 
-#: src/preferences.py:384
+#: src/preferences.py:329
 msgid "Auto load subtitle file"
 msgstr "ذیلی عنوان (سب ٹائٹل) فائل خودکار لوڈ کریں"
 
-#: src/preferences.py:385
+#: src/preferences.py:330
 msgid "Auto add files from the same folder to playlist"
 msgstr "اسی فولڈر سے فائلوں کو پلے لسٹ میں خودکار شامل کریں"
 
-#: src/preferences.py:387 src/preferences.blp:98
+#: src/preferences.py:332 src/preferences.blp:98
 msgid "Restore Saved Session"
 msgstr "محفوظ شدہ سیشن بحال کریں"
 
-#: src/preferences.py:388 src/preferences.blp:133
+#: src/preferences.py:333 src/preferences.blp:133
 msgid "Save Video Position on Close"
 msgstr "بند کرتے وقت ویڈیو کی پوزیشن محفوظ کریں"
 
-#: src/preferences.py:389 src/history.blp:5 src/shortcuts-dialog.blp:61
-#: src/window.blp:138 src/window.blp:520
+#: src/preferences.py:334 src/history.blp:5 src/shortcuts-dialog.blp:61
+#: src/window.blp:140 src/window.blp:528
 msgid "Watch History"
 msgstr "دیکھنے کی ہسٹری"
 
-#: src/preferences.py:393
+#: src/preferences.py:338
 msgid ""
 "If you wish to use those features, install Flatseal for granular folder "
 "control, or run this command to grant access to all folders in the system:"
@@ -213,20 +248,24 @@ msgstr ""
 "لیے Flatseal انسٹال کریں، یا سسٹم کے تمام فولڈرز تک رسائی دینے کے لیے یہ "
 "کمانڈ چلائیں:"
 
-#: src/preferences.py:399
+#: src/preferences.py:344
 msgid "Extra permission enabled."
 msgstr "اضافی اجازت فعال کر دی گئی۔"
 
-#: src/preferences.py:415
+#: src/preferences.py:361
 msgid "Copied"
 msgstr "کاپی ہو گیا"
 
-#: src/preferences.py:421 src/preferences.blp:58
+#: src/preferences.py:367 src/preferences.blp:58
 msgid "Copy"
 msgstr "کاپی کریں"
 
+#: src/save_session.py:66
+msgid "Restoring Session…"
+msgstr "نشست بحال کی جا رہی ہے…"
+
 #: src/shortcuts.py:31 src/shortcuts.py:32 src/shortcuts.py:33
-#: src/shortcuts.py:34 src/window.py:1949 src/window.blp:252
+#: src/shortcuts.py:34 src/window.py:1969 src/window.blp:257
 msgid "Volume"
 msgstr "آواز"
 
@@ -239,7 +278,7 @@ msgid "Volume Decrease"
 msgstr "آواز میں کمی"
 
 #: src/shortcuts.py:35 src/shortcuts.py:36 src/shortcuts.py:37
-#: src/preferences.blp:273 src/preferences.blp:285 src/window.blp:233
+#: src/preferences.blp:273 src/preferences.blp:285 src/window.blp:236
 msgid "Play/Pause"
 msgstr "چلائیں/روکیں"
 
@@ -248,7 +287,7 @@ msgid "Show/Hide Subtitles"
 msgstr "سب ٹائٹلز دکھائیں/چھپائیں"
 
 #: src/shortcuts.py:39 src/shortcuts.py:40 src/shortcuts.py:169
-#: src/shortcuts.py:233 src/window.blp:295
+#: src/shortcuts.py:233 src/window.blp:300
 msgid "Subtitles"
 msgstr "سب ٹائٹلز"
 
@@ -272,7 +311,7 @@ msgstr "اگلا ثانوی سب ٹائٹل ٹریک"
 msgid "Previous Secondary Subtitle Track"
 msgstr "پچھلا ثانوی سب ٹائٹل ٹریک"
 
-#: src/shortcuts.py:43 src/shortcuts.py:44 src/window.py:765 src/window.blp:310
+#: src/shortcuts.py:43 src/shortcuts.py:44 src/window.py:775 src/window.blp:315
 msgid "Audio"
 msgstr "آڈیو"
 
@@ -300,17 +339,17 @@ msgstr "5 سیکنڈ پیچھے جائیں"
 msgid "Seek 5s Forward"
 msgstr "5 سیکنڈ آگے بڑھیں"
 
-#: src/shortcuts.py:49 src/shortcuts.py:50 src/window.py:1894
-#: src/window.blp:409
+#: src/shortcuts.py:49 src/shortcuts.py:50 src/window.py:1913
+#: src/window.blp:417
 msgid "Fullscreen"
 msgstr "پوری اسکرین"
 
-#: src/shortcuts.py:51 src/window.py:1894
+#: src/shortcuts.py:51 src/window.py:1913
 msgid "Exit Fullscreen"
 msgstr "فل سکرین سے باہر نکلیں"
 
 #: src/shortcuts.py:61 src/shortcuts.py:62 src/shortcuts.py:63
-#: src/options.blp:285 src/options.blp:309
+#: src/options.blp:285 src/options.blp:311
 msgid "Zoom"
 msgstr "زوم"
 
@@ -322,8 +361,8 @@ msgstr "زوم ان"
 msgid "Zoom Out"
 msgstr "زوم آؤٹ"
 
-#: src/shortcuts.py:66 src/shortcuts.py:67 src/options.blp:611
-#: src/options.blp:635
+#: src/shortcuts.py:66 src/shortcuts.py:67 src/options.blp:623
+#: src/options.blp:649
 msgid "Subtitle Delay"
 msgstr "سب ٹائٹل میں تاخیر"
 
@@ -359,12 +398,12 @@ msgstr "سب ٹائٹل اسکیل میں اضافہ کریں"
 msgid "Decrease Subtitle Scale"
 msgstr "سب ٹائٹل اسکیل میں کمی کریں"
 
-#: src/shortcuts.py:72 src/window.blp:263
+#: src/shortcuts.py:72 src/window.blp:268
 msgid "Mute/Unmute"
 msgstr "خاموش/آواز"
 
 #: src/shortcuts.py:73 src/shortcuts.py:74 src/shortcuts.py:75
-#: src/options.blp:666 src/options.blp:690
+#: src/options.blp:680 src/options.blp:706
 msgid "Audio Delay"
 msgstr "آڈیو تاخیر"
 
@@ -416,12 +455,12 @@ msgstr "A-B لوپ پوائنٹس سیٹ/کلیئر کریں"
 msgid "Loop"
 msgstr "لوپ"
 
-#: src/shortcuts.py:85 src/window.blp:382
+#: src/shortcuts.py:85 src/window.blp:389
 msgid "Loop File"
 msgstr "فائل کو دہرائیں"
 
-#: src/shortcuts.py:86 src/shortcuts.py:87 src/options.blp:340
-#: src/options.blp:363
+#: src/shortcuts.py:86 src/shortcuts.py:87 src/options.blp:342
+#: src/options.blp:367
 msgid "Contrast"
 msgstr "کنٹراسٹ"
 
@@ -433,8 +472,8 @@ msgstr "کنٹراسٹ کو کم کریں"
 msgid "Increase Contrast"
 msgstr "کنٹراسٹ میں اضافہ کریں"
 
-#: src/shortcuts.py:88 src/shortcuts.py:89 src/options.blp:394
-#: src/options.blp:417
+#: src/shortcuts.py:88 src/shortcuts.py:89 src/options.blp:398
+#: src/options.blp:423
 msgid "Brightness"
 msgstr "روشنی"
 
@@ -446,8 +485,8 @@ msgstr "روشنی کو کم کریں"
 msgid "Increase Brightness"
 msgstr "روشنی میں اضافہ کریں"
 
-#: src/shortcuts.py:90 src/shortcuts.py:91 src/options.blp:448
-#: src/options.blp:471
+#: src/shortcuts.py:90 src/shortcuts.py:91 src/options.blp:454
+#: src/options.blp:479
 msgid "Gamma"
 msgstr "گاما"
 
@@ -459,8 +498,8 @@ msgstr "گاما کو کم کریں"
 msgid "Increase Gamma"
 msgstr "گاما میں اضافہ کریں"
 
-#: src/shortcuts.py:92 src/shortcuts.py:93 src/options.blp:502
-#: src/options.blp:525
+#: src/shortcuts.py:92 src/shortcuts.py:93 src/options.blp:510
+#: src/options.blp:535
 msgid "Saturation"
 msgstr "سیرابی"
 
@@ -484,7 +523,7 @@ msgstr "پلے بیک کی رفتار کو کم کریں"
 msgid "Increase Playback Speed"
 msgstr "پلے بیک کی رفتار میں اضافہ کریں"
 
-#: src/shortcuts.py:96 src/options.blp:711
+#: src/shortcuts.py:96 src/options.blp:727
 msgid "Reset Playback Speed"
 msgstr "پلے بیک رفتار بحال کریں"
 
@@ -509,91 +548,151 @@ msgstr "پلے بیک"
 msgid "Miscellaneous"
 msgstr "متفرق"
 
-#: src/window.py:616 src/window.py:1317 src/window.blp:127
+#: src/window.py:626 src/window.py:1350 src/window.blp:129
 msgid "Add Subtitle Track"
 msgstr "سب ٹائٹل ٹریک شامل کریں"
 
-#: src/window.py:618 src/window.py:627
+#: src/window.py:628 src/window.py:637
 msgid "None"
 msgstr "کچھ نہیں"
 
-#: src/window.py:625 src/window.blp:132
+#: src/window.py:635 src/window.blp:134
 msgid "Add Audio Track"
 msgstr "آڈیو ٹریک شامل کریں"
 
-#: src/window.py:664
+#: src/window.py:674
 msgid "Track"
 msgstr "ٹریک"
 
-#: src/window.py:707 src/playlist.blp:31 src/window.blp:117
+#: src/window.py:717 src/playlist.blp:31 src/window.blp:119
 msgid "Add Folder"
 msgstr "فولڈر شامل کریں"
 
-#: src/window.py:707 src/shortcuts-dialog.blp:21 src/window.blp:102
-#: src/window.blp:533
+#: src/window.py:717 src/shortcuts-dialog.blp:21 src/window.blp:104
+#: src/window.blp:541
 msgid "Open Folder"
 msgstr "فولڈر کھولیں"
 
-#: src/window.py:734 src/shortcuts-dialog.blp:16 src/window.blp:97
+#: src/window.py:744 src/shortcuts-dialog.blp:16 src/window.blp:99
 msgid "Open Files"
 msgstr "فائلیں کھولیں"
 
-#: src/window.py:737 src/playlist.blp:26 src/window.blp:112
+#: src/window.py:747 src/playlist.blp:26 src/window.blp:114
 msgid "Add Files"
 msgstr "فائلیں شامل کریں"
 
-#: src/window.py:741
+#: src/window.py:751
 msgid "Add Subtitle"
 msgstr "سب ٹائٹل شامل کریں"
 
-#: src/window.py:744
+#: src/window.py:754
 msgid "Add Audio"
 msgstr "آڈیو شامل کریں"
 
-#: src/window.py:760
+#: src/window.py:770
 msgid "Subtitle"
 msgstr "سب ٹائٹل"
 
-#: src/window.py:769
+#: src/window.py:779
 msgid "Media"
 msgstr "میڈیا"
 
-#: src/window.py:828
+#: src/window.py:838
 msgid "Session Saved"
 msgstr "سیشن محفوظ ہو گیا"
 
-#: src/window.py:834 src/playlist.blp:36 src/window.blp:122
+#: src/window.py:844 src/playlist.blp:36 src/window.blp:124
 msgid "Add URL"
 msgstr "یو آر ایل شامل کریں"
 
-#: src/window.py:834 src/shortcuts-dialog.blp:26 src/window.blp:107
-#: src/window.blp:542
+#: src/window.py:844 src/shortcuts-dialog.blp:26 src/window.blp:109
+#: src/window.blp:550
 msgid "Open URL"
 msgstr "یو آر ایل کھولیں"
 
-#: src/window.py:847
+#: src/window.py:857
 msgid "URL"
 msgstr "یو آر ایل"
 
-#: src/window.py:855 src/playlist.blp:22
+#: src/window.py:865 src/playlist.blp:22
 msgid "Add"
 msgstr "شامل کریں"
 
-#: src/window.py:855 src/window.blp:91
+#: src/window.py:865 src/window.blp:93
 msgid "Open"
 msgstr "کھولیں"
 
-#: src/window.py:1042 src/window.py:1156
+#: src/window.py:1059 src/window.py:1183
 msgid "Chapter"
 msgstr "باب"
 
-#: src/window.py:1212 src/window.py:1321
+#: src/window.py:1238 src/window.py:1354
 msgid "Play"
 msgstr "چلائیں"
 
-#: src/window.py:1212
+#: src/window.py:1238
 msgid "Pause"
 msgstr "روکیں"
+
+#: src/hdr_diagnostics.blp:5
+msgid "HDR Diagnostics"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:16
+msgid "Refresh"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:26
+msgid "Output &amp; Color State"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:27
+msgid "Current GTK and OpenGL rendering surface status."
+msgstr ""
+
+#: src/hdr_diagnostics.blp:30
+msgid "HDR Status"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:35
+msgid "Display HDR Supported"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:40
+msgid "Gdk.ColorState"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:45
+msgid "Surface Format"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:51
+msgid "Video Signal (libmpv)"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:52
+msgid "Parameters detected from the playing video stream."
+msgstr ""
+
+#: src/hdr_diagnostics.blp:55
+msgid "Video Codec / Format"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:60
+msgid "Color Primaries"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:65
+msgid "Transfer Characteristics (Gamma)"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:70
+msgid "Peak Luminance"
+msgstr ""
+
+#: src/hdr_diagnostics.blp:75
+msgid "Target Tone Mapping"
+msgstr ""
 
 #: src/hdr_menu.blp:14
 msgid "HDR Settings"
@@ -606,92 +705,106 @@ msgid "Reset HDR"
 msgstr "رنگت بحال کریں"
 
 #: src/hdr_menu.blp:44
-#, fuzzy
-#| msgid "Playback"
-msgid "HDR Playback"
-msgstr "پلے بیک"
+msgid "HDR Mode"
+msgstr ""
 
-#: src/hdr_menu.blp:73
+#: src/hdr_menu.blp:67 src/hdr_menu.blp:159
+msgid "Auto"
+msgstr ""
+
+#: src/hdr_menu.blp:68
+msgid "Force HDR"
+msgstr ""
+
+#: src/hdr_menu.blp:69
+msgid "Force SDR"
+msgstr ""
+
+#: src/hdr_menu.blp:82
 msgid "Reset HDR Gamut Mapping"
 msgstr ""
 
-#: src/hdr_menu.blp:81
+#: src/hdr_menu.blp:90
 msgid "HDR Gamut Mapping"
 msgstr ""
 
-#: src/hdr_menu.blp:104
+#: src/hdr_menu.blp:113
 msgid "Auto (Recommended)"
 msgstr ""
 
-#: src/hdr_menu.blp:105
+#: src/hdr_menu.blp:114
 msgid "DCI-P3"
 msgstr ""
 
-#: src/hdr_menu.blp:106
+#: src/hdr_menu.blp:115
 msgid "sRGB (Standard)"
 msgstr ""
 
-#: src/hdr_menu.blp:119
+#: src/hdr_menu.blp:128
 #, fuzzy
 #| msgid "Reset Brightness"
 msgid "Reset HDR Peak Brightness"
 msgstr "روشنی بحال کریں"
 
-#: src/hdr_menu.blp:127
+#: src/hdr_menu.blp:136
 #, fuzzy
 #| msgid "Reset Brightness"
 msgid "HDR Peak Brightness"
 msgstr "روشنی بحال کریں"
 
-#: src/hdr_menu.blp:150
-msgid "Auto"
+#: src/hdr_menu.blp:177
+msgid "HDR Diagnostics…"
 msgstr ""
 
 #: src/options.blp:14
 msgid "Options"
 msgstr "اختیارات"
 
-#: src/options.blp:32
+#: src/options.blp:28
 msgid "Reset All"
 msgstr "سب کچھ بحال کریں"
 
-#: src/options.blp:44
+#: src/options.blp:40
 msgid "Reset Aspect Ratio"
 msgstr "پہلو کا تناسب بحال کریں"
 
-#: src/options.blp:54
+#: src/options.blp:50
 msgid "Aspect Ratio"
 msgstr "پہلو کا تناسب"
 
-#: src/options.blp:102
+#: src/options.blp:76 src/options.blp:135
+msgid "Original"
+msgstr "اصل"
+
+#: src/options.blp:99
 msgid "Reset Crop"
 msgstr "کراپ بحال کریں"
 
-#: src/options.blp:112
+#: src/options.blp:109
 msgid "Crop"
 msgstr "کراپ"
 
-#: src/options.blp:161
+#: src/options.blp:159
 msgid "Reset Rotation"
 msgstr "گھماؤ بحال کریں"
 
-#: src/options.blp:171
+#: src/options.blp:169
 msgid "Rotate"
 msgstr "گھماؤ"
 
-#: src/options.blp:197
+#: src/options.blp:196
 msgid "Rotate Left"
 msgstr "بائیں گھمائیں"
 
-#: src/options.blp:205
+#: src/options.blp:204
 msgid "Rotate Right"
 msgstr "دائیں گھمائیں"
 
-#: src/options.blp:218
+#: src/options.blp:217
 msgid "Reset Flip"
 msgstr "پلٹاؤ بحال کریں"
 
-#: src/options.blp:228
+#: src/options.blp:227
 msgid "Flip"
 msgstr "پلٹاؤ"
 
@@ -707,48 +820,48 @@ msgstr "عمودی طور پر پلٹائیں"
 msgid "Reset Zoom"
 msgstr "زوم بحال کریں"
 
-#: src/options.blp:330
+#: src/options.blp:332
 msgid "Reset Contrast"
 msgstr "کنٹراسٹ بحال کریں"
 
-#: src/options.blp:384
+#: src/options.blp:388
 msgid "Reset Brightness"
 msgstr "روشنی بحال کریں"
 
-#: src/options.blp:438
+#: src/options.blp:444
 msgid "Reset Gamma"
 msgstr "گاما بحال کریں"
 
-#: src/options.blp:492
+#: src/options.blp:500
 msgid "Reset Saturation"
 msgstr "سیرابی بحال کریں"
 
-#: src/options.blp:546
+#: src/options.blp:556
 msgid "Reset Hue"
 msgstr "رنگت بحال کریں"
 
 #. TRANSLATORS: Do not use "Color" or "Temperature", those are different things
-#: src/options.blp:557 src/options.blp:580
+#: src/options.blp:567 src/options.blp:592
 msgid "Hue"
 msgstr "رنگت"
 
-#: src/options.blp:601
+#: src/options.blp:613
 msgid "Reset Subtitle Delay"
 msgstr "سب ٹائٹل تاخیر بحال کریں"
 
-#: src/options.blp:656
+#: src/options.blp:670
 msgid "Reset Audio Delay"
 msgstr "آڈیو تاخیر بحال کریں"
 
-#: src/options.blp:721 src/options.blp:745
+#: src/options.blp:737 src/options.blp:763
 msgid "Playback Speed"
 msgstr "پلے بیک رفتار"
 
-#: src/playlist.blp:93
+#: src/playlist.blp:94
 msgid "No Results Found"
 msgstr "کوئی نتیجہ نہیں ملا"
 
-#: src/playlist.blp:127
+#: src/playlist.blp:128
 msgid "Add to Playlist"
 msgstr "پلے لسٹ میں شامل کریں"
 
@@ -868,11 +981,11 @@ msgstr "شارٹ کٹس دکھائیں"
 msgid "Close Window"
 msgstr "ونڈو بند کریں"
 
-#: src/shortcuts-dialog.blp:76 src/window.blp:177
+#: src/shortcuts-dialog.blp:76 src/window.blp:179
 msgid "Save Session"
 msgstr "سیشن محفوظ کریں"
 
-#: src/shortcuts-dialog.blp:81 src/window.blp:182
+#: src/shortcuts-dialog.blp:81 src/window.blp:184
 msgid "Save Session and Close"
 msgstr "سیشن محفوظ کریں اور بند کریں"
 
@@ -880,53 +993,53 @@ msgstr "سیشن محفوظ کریں اور بند کریں"
 msgid "Quit"
 msgstr "بند کریں"
 
-#: src/window.blp:150
+#: src/window.blp:152
 msgid "Main Menu"
 msgstr "مین مینو"
 
-#: src/window.blp:165
+#: src/window.blp:167
 msgid "Keyboard Shortcuts"
 msgstr "کی بورڈ شارٹ کٹس"
 
-#: src/window.blp:170
+#: src/window.blp:172
 msgid "About Cine"
 msgstr "سنی کے بارے میں"
 
-#: src/window.blp:223
+#: src/window.blp:225
 msgid "Previous"
 msgstr "پچھلا"
 
-#: src/window.blp:244
+#: src/window.blp:248
 msgid "Next"
 msgstr "اگلا"
 
-#: src/window.blp:326
+#: src/window.blp:331
 msgid "Video"
 msgstr "ویڈیو"
 
-#: src/window.blp:341
+#: src/window.blp:346
 msgid "Chapters"
 msgstr "ابواب"
 
-#: src/window.blp:358
+#: src/window.blp:363
 msgid "Shuffle Playlist"
 msgstr "پلے لسٹ کو بے ترتیب کریں"
 
-#: src/window.blp:370
+#: src/window.blp:376
 msgid "Loop Playlist"
 msgstr "پلے لسٹ کو دہرائیں"
 
-#: src/window.blp:442
+#: src/window.blp:450
 msgid "Toggle Elapsed/Remaining"
 msgstr "گزرا ہوا/باقی وقت تبدیل کریں"
 
-#: src/window.blp:489
+#: src/window.blp:497
 #, fuzzy
 #| msgid "Drag and drop files here"
 msgid "Drag and drop video files here"
 msgstr "فائلیں یہاں گھسیٹ کر چھوڑیں"
 
-#: src/window.blp:509
+#: src/window.blp:517
 msgid "Open…"
 msgstr "کھولیں…"
 
@@ -936,9 +1049,6 @@ msgstr "کھولیں…"
 #~ msgstr ""
 #~ "سنی بغیر کسی رکاوٹ کے دیکھنے کا تجربہ فراہم کرنے کے لیے ایک صاف انٹرفیس "
 #~ "کو اعلی کارکردگی والے انجن کے ساتھ جوڑتا ہے۔"
-
-#~ msgid "Unknown title"
-#~ msgstr "نامعلوم عنوان"
 
 #~ msgid "Shortcuts"
 #~ msgstr "شارٹ کٹس"

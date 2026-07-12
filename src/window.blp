@@ -19,7 +19,7 @@ template $CineWindow: Adw.ApplicationWindow {
   }
 
   content: Adw.ToastOverlay toast_overlay {
-    WindowHandle {
+    WindowHandle window_handle {
       Overlay video_overlay {
         styles [
           "video-overlay",
@@ -41,6 +41,7 @@ template $CineWindow: Adw.ApplicationWindow {
           Image icon_indicator {
             halign: center;
             valign: center;
+            pixel-size: 64;
 
             styles [
               "icon-indicator",
@@ -78,6 +79,7 @@ template $CineWindow: Adw.ApplicationWindow {
 
               title-widget: Adw.WindowTitle title_widget {
                 title: _("CineHDR");
+                visible: false;
               };
 
               styles [
@@ -221,6 +223,7 @@ template $CineWindow: Adw.ApplicationWindow {
 
                   icon-name: "cine-skip-backward-symbolic";
                   tooltip-text: _("Previous");
+                  clicked => $_on_previous_clicked();
                 }
 
                 Button play_pause_btn {
@@ -232,6 +235,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   icon-name: "cine-playback-start-symbolic";
                   tooltip-text: _("Play/Pause");
                   halign: center;
+                  clicked => $_on_play_pause_clicked();
                 }
 
                 Button next_btn {
@@ -243,6 +247,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   icon-name: "cine-skip-forward-symbolic";
                   tooltip-text: _("Next");
                   halign: center;
+                  clicked => $_on_next_clicked();
                 }
 
                 MenuButton volume_menu_btn {
@@ -358,9 +363,10 @@ template $CineWindow: Adw.ApplicationWindow {
                   tooltip-text: _("Shuffle Playlist");
                   valign: end;
                   halign: center;
+                  toggled => $_on_shuffle_toggled();
                 }
 
-                ToggleButton loop_toggle_btn {
+                ToggleButton loop_playlist_btn {
                   styles [
                     "circular",
                     "flat",
@@ -370,9 +376,10 @@ template $CineWindow: Adw.ApplicationWindow {
                   tooltip-text: _("Loop Playlist");
                   valign: end;
                   halign: center;
+                  toggled => $_on_loop_playlist_toggled();
                 }
 
-                ToggleButton loop_file_toggle_btn {
+                ToggleButton loop_file_btn {
                   styles [
                     "circular",
                     "flat",
@@ -382,6 +389,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   tooltip-text: _("Loop File");
                   valign: end;
                   halign: center;
+                  toggled => $_on_loop_file_toggled();
                 }
 
                 Button {
