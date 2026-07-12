@@ -46,6 +46,7 @@ from .gl_bindings import (
     glFlush,
     glClientWaitSync,
     glBindFramebuffer,
+    get_proc_address,
 )
 
 from .gl_renderer import GLFramebufferPool, FramebufferSlot
