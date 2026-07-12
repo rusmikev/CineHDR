@@ -25,8 +25,12 @@ Play your videos with HDR support
 **Changes in this fork / Изменения в этом форке:**
 * Replaced standard `GtkGLArea` with a custom high-precision float rendering pipeline (`GL_RGBA16F`).
 * Integrated Wayland HDR color state signaling (`rec2100-pq` / `srgb` textures) via GTK4 ColorState APIs to pass HDR signal to compatible compositors.
-* Added a dedicated **HDR Settings** control icon on the playback panel (visible when playing HDR content) for real-time SDR/HDR switching and peak/gamut adjustment.
+* Added a dedicated **HDR Settings** control icon on the playback panel (visible when playing HDR content) for real-time SDR/HDR switching and peak brightness adjustment.
 * Provided system integration launcher (**CineHDR**).
+
+**Known limitations / Известные ограничения:**
+* CineHDR requires GTK's modern renderer (`ngl`/`vulkan`). Upstream Cine pins `GSK_RENDERER=gl` to work around frame drops on the Niri DE and video blackouts on some NVIDIA setups; that workaround is incompatible with HDR. If you hit those issues, launching with `GSK_RENDERER=gl` still works — CineHDR detects it and falls back to SDR rendering.
+* "HDR supported" means GTK accepts the Rec.2100 color state, not that your monitor is in HDR mode. On an SDR output the PQ signal is converted by GTK/the compositor, which is simpler than mpv's tone mapping — if HDR content looks washed out or clipped there, select **Force SDR** in the HDR menu to get mpv's tone mapping back. Check **HDR Diagnostics** in the same menu for the live pipeline state.
 
 ---
 
@@ -65,7 +69,8 @@ If you want to support the original creator of Cine (Diego Povliuk), you can use
 
 ### Translations (Upstream Project)
 
-You can help translate upstream Cine using [Weblate](https://hosted.weblate.org/projects/cine/app/)
+You can help translate upstream Cine using [Weblate](https://hosted.weblate.org/projects/cine/app/).
+Strings specific to this fork (the HDR menu and diagnostics) are not on Weblate — translation contributions for them are welcome as pull requests against `po/`.
 
 [![Translation status](https://hosted.weblate.org/widget/cine/app/multi-auto.svg)](https://hosted.weblate.org/engage/cine/)
 
@@ -82,10 +87,10 @@ For general users, the easiest way to install **CineHDR** is using Flatpak:
 1. Go to the [Actions](https://github.com/rusmikev/CineHDR/actions) tab of this repository.
 2. Click on the latest workflow run (e.g. "Implement HDR playback support...").
 3. Scroll down to the **Artifacts** section at the bottom and download `CineHDR-Flatpak-x86_64` (for standard PCs) or `CineHDR-Flatpak-aarch64` (for ARM devices).
-4. Unzip the downloaded file to obtain `Cine.flatpak`.
+4. Unzip the downloaded file to obtain `CineHDR.flatpak`.
 5. Install it by running the following command in your terminal:
    ```bash
-   flatpak install --user Cine.flatpak
+   flatpak install --user CineHDR.flatpak
    ```
 
 #### Option B: Build Flatpak from source / Сборка Flatpak из исходников
