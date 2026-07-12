@@ -16,3 +16,6 @@ io.github.rusmikev.CineHDR.flatpak
 PROJECT_RULES.md
 AUDIT_TASKS.md
 ANTIGRAVITY_HANDOVER.md
+GEMINI.md
+*.patch
+*.html
