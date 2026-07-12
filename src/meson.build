@@ -44,6 +44,7 @@ configure_file(
 
 cine_sources = [
   '__init__.py',
+  'gl_bindings.py',
   'gl_renderer.py',
   'hdr_controller.py',
   'hdr_detection.py',
