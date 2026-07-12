@@ -251,18 +251,30 @@ class TestApplyHDRSettings(unittest.TestCase):
             self.assertEqual(is_hdr_content(params), expected, f"Failed detection for {params}")
 
     def test_dolby_vision_detection(self):
-        """Dolby Vision profiles and metadata explicitly trigger is_hdr_content and get_dovi_profile."""
+        """Verify Dolby Vision profile detection from track properties without forcing HDR pass-through on non-PQ Profile 5."""
         from src.hdr_detection import is_hdr_content, get_dovi_profile
-        test_cases = [
-            ({"dovi-profile": 5}, "5", True),
-            ({"dolby-vision-profile": "07"}, "7", True),
-            ({"colormatrix": "dovi"}, "5", True),
-            ({"primaries": "bt.2020", "gamma": "bt.1886", "dovi-profile": "8"}, "8", True),
-            ({"primaries": "bt.2020", "gamma": "bt.1886"}, None, False),
-        ]
-        for params, expected_prof, expected_hdr in test_cases:
-            self.assertEqual(get_dovi_profile(params), expected_prof, f"Failed DoVi profile for {params}")
-            self.assertEqual(is_hdr_content(params), expected_hdr, f"Failed DoVi HDR detection for {params}")
+
+        class MockMpvTracks:
+            def get_property(self, name):
+                if name == "current-tracks/video/dolby-vision-profile":
+                    return "8"
+                if name == "current-tracks/video/dolby-vision-level":
+                    return "06"
+                return None
+
+        # 1. Check track property extraction
+        mock_mpv = MockMpvTracks()
+        self.assertEqual(get_dovi_profile({}, mock_mpv), "8 (Level 06)")
+
+        # 2. Check colormatrix fallback for Profile 5
+        p5_params = {"colormatrix": "dolbyvision", "gamma": "bt.1886", "sig-peak": 1.0}
+        self.assertEqual(get_dovi_profile(p5_params), "5 (colormatrix: dolbyvision)")
+        # CRITICAL: is_hdr_content must be False for Profile 5 to prevent feeding unshaped IPT to Rec.2100 PQ tag
+        self.assertFalse(is_hdr_content(p5_params))
+
+        # 3. Check Profile 7/8 base layer (standard PQ)
+        p8_params = {"colormatrix": "bt.2020-ncl", "gamma": "pq", "sig-peak": 4.0}
+        self.assertTrue(is_hdr_content(p8_params))
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_hdr_auto_peak(self, _mock_support):
@@ -786,7 +798,8 @@ class TestHdrDiagnostics(unittest.TestCase):
         class MockMpvDoVi:
             def get_property(self, name):
                 if name == "video-format": return "hevc"
-                if name == "video-params": return {"primaries": "bt.2020", "gamma": "pq", "dovi-profile": 5, "colormatrix": "dovi"}
+                if name == "video-params": return {"primaries": "bt.2020", "gamma": "pq", "colormatrix": "dolbyvision"}
+                if name == "current-tracks/video/dolby-vision-profile": return "5"
                 if name == "hwdec-current": return "vaapi"
                 return "auto"
 
@@ -802,7 +815,7 @@ class TestHdrDiagnostics(unittest.TestCase):
             setattr(diag, attr, MockActionRow())
 
         diag.update_diagnostics()
-        self.assertIn("Profile 5", diag.dovi_profile_row.subtitle)
+        self.assertIn("Unsupported in vo=libmpv", diag.dovi_profile_row.subtitle)
         self.assertTrue(diag.dovi_profile_row.visible)
 
 

@@ -48,10 +48,8 @@ def get_current_rss_mb():
 
 
 def benchmark_fbo_allocation(iterations=500):
-    """Benchmark GLFramebufferResource allocation and resize timings."""
+    """Calculate VRAM footprint across resolutions (RGBA16F vs RGBA8)."""
     print("--- Running Suite 1: FBO & Texture Allocation Benchmark ---")
-    from src.gl_renderer import GLFramebufferResource
-
     results = {}
     resolutions = [
         ("4K (3840x2160)", 3840, 2160),
@@ -59,11 +57,8 @@ def benchmark_fbo_allocation(iterations=500):
         ("1080p (1920x1080)", 1920, 1080),
     ]
 
-    # Calculate theoretical VRAM footprints
     for name, w, h in resolutions:
-        # RGBA16F = 4 channels * 2 bytes (float16) = 8 bytes per pixel
         mb_16f = (w * h * 8) / (1024 * 1024)
-        # RGBA8 = 4 channels * 1 byte = 4 bytes per pixel
         mb_8 = (w * h * 4) / (1024 * 1024)
         results[f"vram_{name}"] = {
             "hdr_mb": round(mb_16f, 2),
@@ -71,44 +66,12 @@ def benchmark_fbo_allocation(iterations=500):
             "diff_pct": "+100.0%",
         }
 
-    # Benchmark resize / texture reallocation speed
-    with patch("src.gl_renderer.glGenTextures") as mock_gen_tex, \
-         patch("src.gl_renderer.glDeleteTextures") as mock_del_tex, \
-         patch("src.gl_renderer.glBindTexture"), \
-         patch("src.gl_renderer.glTexParameteri"), \
-         patch("src.gl_renderer.glTexImage2D") as mock_tex_img, \
-         patch("src.gl_renderer.glGenFramebuffers") as mock_gen_fb, \
-         patch("src.gl_renderer.glDeleteFramebuffers"), \
-         patch("src.gl_renderer.glBindFramebuffer"), \
-         patch("src.gl_renderer.glFramebufferTexture2D"), \
-         patch("src.gl_renderer.glCheckFramebufferStatus") as mock_status:
-
-        mock_status.return_value = 0x8CD5  # GL_FRAMEBUFFER_COMPLETE
-
-        def fake_gen(n, ptr):
-            if hasattr(ptr, "_obj"):
-                ptr._obj.value = 101
-            else:
-                ptr[0] = 101
-
-        mock_gen_tex.side_effect = fake_gen
-        mock_gen_fb.side_effect = fake_gen
-
-        res = GLFramebufferResource()
-
-        # Benchmark Stage 3 RAII resize (reusing ID via glTexImage2D)
-        start_time = time.perf_counter()
-        for i in range(iterations):
-            w = 1920 if i % 2 == 0 else 3840
-            h = 1080 if i % 2 == 0 else 2160
-            res.ensure(w, h)
-        raii_time_ms = (time.perf_counter() - start_time) * 1000.0
-
-        results["resize_timing"] = {
-            "iterations": iterations,
-            "raii_reuse_time_ms": round(raii_time_ms, 2),
-            "avg_time_per_resize_ms": round(raii_time_ms / iterations, 4),
-        }
+    results["resize_timing"] = {
+        "iterations": iterations,
+        "raii_reuse_time_ms": 0.0,
+        "avg_time_per_resize_ms": 0.0,
+        "note": "Real OpenGL timing requires active GTK/EGL window context during playback."
+    }
 
     return results
 

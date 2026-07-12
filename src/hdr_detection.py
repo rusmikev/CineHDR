@@ -115,36 +115,77 @@ def is_hdr_content(params: dict) -> bool:
         sig_peak = 1.0
 
     hdr_gammas = ("pq", "hlg", "st2084", "slog", "slog2", "slog3")
-    if gamma in hdr_gammas or sig_peak > 1.0 or get_dovi_profile(params) is not None:
+    if gamma in hdr_gammas or sig_peak > 1.0:
         return True
     return False
 
 
 
-def get_dovi_profile(params: dict) -> Optional[str]:
+def get_dovi_profile(params: dict = None, mpv_player: Any = None) -> Optional[str]:
     """
-    Check if video stream parameters indicate Dolby Vision and return descriptive profile string.
+    Detect if the active video stream contains Dolby Vision metadata and return the profile string.
 
-    Args:
-        params (dict): Dictionary of video parameters from mpv property observer.
+    Checks current track properties (`current-tracks/video/dolby-vision-profile` and
+    `dolby-vision-level`) when `mpv_player` is provided, and falls back to inspecting
+    colormatrix/primaries (`colormatrix == 'dolbyvision'`).
 
-    Returns:
-        Optional[str]: Profile identifier string (e.g. '5', '7', '8') or None if not Dolby Vision.
+    Note: Under vo=libmpv (render API), Dolby Vision RPU processing is not supported.
+    This function is strictly for informational display in diagnostics and does NOT
+    trigger HDR Rec.2100 PQ pass-through for Profile 5 streams.
     """
-    if not params or not isinstance(params, dict):
-        return None
+    profile = None
+    level = None
 
-    for key in ("dovi-profile", "dolby-vision-profile"):
-        val = params.get(key)
-        if val is not None and str(val).strip() and str(val).strip() != "0":
-            prof = str(val).strip().lstrip("0") or "0"
-            return prof
+    if mpv_player is not None:
+        try:
+            def _query_prop(name: str):
+                if hasattr(mpv_player, "_get_property"):
+                    res = mpv_player._get_property(name)
+                    if res is not None:
+                        return res
+                if hasattr(mpv_player, "get_property"):
+                    res = mpv_player.get_property(name)
+                    if res is not None:
+                        return res
+                try:
+                    return mpv_player[name]
+                except Exception:
+                    return None
 
-    colormatrix = str(params.get("colormatrix", "")).lower()
-    primaries = str(params.get("primaries", "")).lower()
-    format_str = str(params.get("format", "")).lower()
-    if "dovi" in colormatrix or "dolby" in colormatrix or "dovi" in primaries or "dolby" in primaries or "dovi" in format_str:
-        return "5"
+            p = _query_prop("current-tracks/video/dolby-vision-profile")
+            if not p:
+                tracks = _query_prop("track-list") or []
+                if isinstance(tracks, list):
+                    for t in tracks:
+                        if isinstance(t, dict) and t.get("type") == "video" and t.get("selected"):
+                            p = t.get("dolby-vision-profile")
+                            level = t.get("dolby-vision-level")
+                            break
+            else:
+                level = _query_prop("current-tracks/video/dolby-vision-level")
+
+            if p is not None and str(p).strip() and str(p).strip() != "0":
+                profile = str(p).strip().lstrip("0") or "0"
+        except Exception:
+            pass
+
+    if not profile and params and isinstance(params, dict):
+        for key in ("dolby-vision-profile", "dovi-profile"):
+            val = params.get(key)
+            if val is not None and str(val).strip() and str(val).strip() != "0":
+                profile = str(val).strip().lstrip("0") or "0"
+                break
+
+    if profile:
+        if level is not None and str(level).strip() and str(level).strip() != "0":
+            return f"{profile} (Level {str(level).strip()})"
+        return profile
+
+    if params and isinstance(params, dict):
+        colormatrix = str(params.get("colormatrix", "")).lower()
+        primaries = str(params.get("primaries", "")).lower()
+        if colormatrix == "dolbyvision" or "dolbyvision" in colormatrix or primaries == "dolbyvision" or "dolbyvision" in primaries:
+            return "5 (colormatrix: dolbyvision)"
 
     return None
 

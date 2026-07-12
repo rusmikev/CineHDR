@@ -100,8 +100,12 @@ class MpvVideoWidget(Gtk.Widget):
     def _update_cached_hdr_support(self, *args):
         from .hdr_detection import invalidate_hdr_support_cache
         invalidate_hdr_support_cache()
+        old_support = getattr(self, "_cached_hdr_support", None)
         self._cached_hdr_support = check_hdr_support()
         self._cached_hdr_support_valid = True
+        if old_support is not None and old_support != self._cached_hdr_support and hasattr(self, "hdr_controller"):
+            self.hdr_controller.apply_hdr_settings()
+            self.queue_draw()
 
     @property
     def is_hdr_supported(self) -> bool:
@@ -158,6 +162,17 @@ class MpvVideoWidget(Gtk.Widget):
                     self._connected_monitors = monitors
                 except Exception:
                     pass
+
+        try:
+            native = self.get_native()
+            if native and hasattr(native, "get_surface"):
+                surface = native.get_surface()
+                if surface:
+                    if hasattr(surface, "connect"):
+                        surface.connect("enter-monitor", self._update_cached_hdr_support)
+                        surface.connect("leave-monitor", self._update_cached_hdr_support)
+        except Exception:
+            pass
 
         proc_address_fn = mpv.MpvGlGetProcAddressFn(
             lambda _inst, name: get_proc_address(name)

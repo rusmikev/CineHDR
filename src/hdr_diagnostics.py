@@ -195,20 +195,17 @@ class HdrDiagnosticsDialog(Adw.Dialog):
 
         try:
             from .hdr_detection import get_dovi_profile
-            dovi_prof = get_dovi_profile(params)
-            if not dovi_prof and mpv:
-                dp = get_mpv_prop(mpv, "dovi-profile") or get_mpv_prop(mpv, "dolby-vision-profile")
-                if dp and str(dp).strip() and str(dp).strip() != "0":
-                    dovi_prof = str(dp).strip().lstrip("0") or "0"
+            dovi_prof = get_dovi_profile(params, mpv)
             if dovi_prof:
-                if dovi_prof == "5" or "IPTPQc2" in dovi_prof:
-                    desc = _("Profile 5 (IPTPQc2 -> Rec.2100 PQ)")
-                elif dovi_prof == "7":
-                    desc = _("Profile 7 (Dual-Layer Base + RPU)")
-                elif dovi_prof == "8" or dovi_prof.startswith("8"):
-                    desc = _("Profile 8 (HDR10 Base + RPU)")
+                p_num = dovi_prof.split()[0]
+                if p_num == "5" or "colormatrix" in dovi_prof:
+                    desc = _("Profile 5 (Unsupported in vo=libmpv / RPU not processed)")
+                elif p_num == "7":
+                    desc = _("Profile 7 (HDR10 Base / RPU not processed)")
+                elif p_num == "8" or dovi_prof.startswith("8"):
+                    desc = _("Profile 8 (HDR10 Base / RPU not processed)")
                 else:
-                    desc = f"Profile {dovi_prof}"
+                    desc = f"Profile {dovi_prof} (RPU not processed)"
                 self.dovi_profile_row.set_subtitle(desc)
                 self.dovi_profile_row.set_visible(True)
             elif is_content:
