@@ -137,6 +137,7 @@ class HdrController(GObject.Object):
         super().__init__()
         self.mpv = mpv_player
         self.on_change_cb = on_change_cb
+        self._disconnected = False
 
         config = load_hdr_config()
         self._hdr_mode = config["hdr_mode"]
@@ -189,6 +190,8 @@ class HdrController(GObject.Object):
 
     def apply_hdr_settings(self):
         """Apply tone mapping parameters and target primaries for HDR playback."""
+        if getattr(self, "_disconnected", False) or not self.mpv:
+            return
         if self.is_hdr_active:
             target_peak = self._hdr_target_peak
             if target_peak not in ("auto", "200", "400", "600", "1000", "1600"):
@@ -306,6 +309,7 @@ class HdrController(GObject.Object):
 
     def disconnect(self):
         """Disconnect GSettings and libmpv property observers."""
+        self._disconnected = True
         if getattr(self, "_gsettings", None):
             try:
                 self._gsettings.disconnect_by_func(self._on_gsettings_changed)
