@@ -63,6 +63,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
     codec_row: Adw.ActionRow = Gtk.Template.Child()
     resolution_row: Adw.ActionRow = Gtk.Template.Child()
     hwdec_row: Adw.ActionRow = Gtk.Template.Child()
+    dovi_profile_row: Adw.ActionRow = Gtk.Template.Child()
     primaries_row: Adw.ActionRow = Gtk.Template.Child()
     trc_row: Adw.ActionRow = Gtk.Template.Child()
     peak_luma_row: Adw.ActionRow = Gtk.Template.Child()
@@ -191,6 +192,32 @@ class HdrDiagnosticsDialog(Adw.Dialog):
                 self.hwdec_row.set_subtitle(_("Software / CPU Decoding"))
         except Exception:
             self.hwdec_row.set_subtitle(_("Unknown"))
+
+        try:
+            from .hdr_detection import get_dovi_profile
+            dovi_prof = get_dovi_profile(params)
+            if not dovi_prof and mpv:
+                dp = get_mpv_prop(mpv, "dovi-profile") or get_mpv_prop(mpv, "dolby-vision-profile")
+                if dp and str(dp).strip() and str(dp).strip() != "0":
+                    dovi_prof = str(dp).strip().lstrip("0") or "0"
+            if dovi_prof:
+                if dovi_prof == "5" or "IPTPQc2" in dovi_prof:
+                    desc = _("Profile 5 (IPTPQc2 -> Rec.2100 PQ)")
+                elif dovi_prof == "7":
+                    desc = _("Profile 7 (Dual-Layer Base + RPU)")
+                elif dovi_prof == "8" or dovi_prof.startswith("8"):
+                    desc = _("Profile 8 (HDR10 Base + RPU)")
+                else:
+                    desc = f"Profile {dovi_prof}"
+                self.dovi_profile_row.set_subtitle(desc)
+                self.dovi_profile_row.set_visible(True)
+            elif is_content:
+                self.dovi_profile_row.set_subtitle(_("No (Standard HDR10 / HLG)"))
+                self.dovi_profile_row.set_visible(True)
+            else:
+                self.dovi_profile_row.set_visible(False)
+        except Exception:
+            self.dovi_profile_row.set_visible(False)
 
         try:
             prim = params.get("primaries") or get_mpv_prop(mpv, "video-params/primaries") or _("Unknown")

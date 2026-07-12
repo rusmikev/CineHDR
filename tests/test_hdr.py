@@ -250,6 +250,20 @@ class TestApplyHDRSettings(unittest.TestCase):
         for params, expected in test_cases:
             self.assertEqual(is_hdr_content(params), expected, f"Failed detection for {params}")
 
+    def test_dolby_vision_detection(self):
+        """Dolby Vision profiles and metadata explicitly trigger is_hdr_content and get_dovi_profile."""
+        from src.hdr_detection import is_hdr_content, get_dovi_profile
+        test_cases = [
+            ({"dovi-profile": 5}, "5", True),
+            ({"dolby-vision-profile": "07"}, "7", True),
+            ({"colormatrix": "dovi"}, "5", True),
+            ({"primaries": "bt.2020", "gamma": "bt.1886", "dovi-profile": "8"}, "8", True),
+            ({"primaries": "bt.2020", "gamma": "bt.1886"}, None, False),
+        ]
+        for params, expected_prof, expected_hdr in test_cases:
+            self.assertEqual(get_dovi_profile(params), expected_prof, f"Failed DoVi profile for {params}")
+            self.assertEqual(is_hdr_content(params), expected_hdr, f"Failed DoVi HDR detection for {params}")
+
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_hdr_auto_peak(self, _mock_support):
         """Peak preset "auto" is passed to mpv as the string "auto"."""
@@ -728,6 +742,7 @@ class TestHdrDiagnostics(unittest.TestCase):
         diag.codec_row = MockActionRow()
         diag.resolution_row = MockActionRow()
         diag.hwdec_row = MockActionRow()
+        diag.dovi_profile_row = MockActionRow()
         diag.primaries_row = MockActionRow()
         diag.trc_row = MockActionRow()
         diag.peak_luma_row = MockActionRow()
@@ -743,6 +758,52 @@ class TestHdrDiagnostics(unittest.TestCase):
         self.assertEqual(diag.trc_row.subtitle, "pq")
         self.assertIn("nits", diag.peak_luma_row.subtitle)
         self.assertIn("TRC: pq | Prim: dci-p3 | Peak: 1000 | Hint: yes", diag.target_row.subtitle)
+        self.assertEqual(diag.dovi_profile_row.subtitle, "No (Standard HDR10 / HLG)")
+        self.assertTrue(diag.dovi_profile_row.visible)
+
+    @unittest.mock.patch("src.hdr_diagnostics.check_hdr_support", return_value=True)
+    def test_update_diagnostics_dolby_vision(self, mock_check):
+        from src.hdr_diagnostics import HdrDiagnosticsDialog
+
+        class MockActionRow:
+            def __init__(self):
+                self.subtitle = ""
+                self.visible = True
+            def set_subtitle(self, text):
+                self.subtitle = text
+            def set_visible(self, val):
+                self.visible = val
+
+        class MockController:
+            is_hdr_active = True
+            is_hdr_content = True
+            hdr_mode = "auto"
+
+        class MockGLArea:
+            hdr_controller = MockController()
+            _color_state = None
+
+        class MockMpvDoVi:
+            def get_property(self, name):
+                if name == "video-format": return "hevc"
+                if name == "video-params": return {"primaries": "bt.2020", "gamma": "pq", "dovi-profile": 5, "colormatrix": "dovi"}
+                if name == "hwdec-current": return "vaapi"
+                return "auto"
+
+        class MockWin:
+            gl_area = MockGLArea()
+            mpv = MockMpvDoVi()
+
+        diag = HdrDiagnosticsDialog.__new__(HdrDiagnosticsDialog)
+        diag._win = MockWin()
+        for attr in ("status_row", "display_hdr_row", "unsupported_reason_row", "color_state_row",
+                     "texture_format_row", "codec_row", "resolution_row", "hwdec_row",
+                     "dovi_profile_row", "primaries_row", "trc_row", "peak_luma_row", "target_row"):
+            setattr(diag, attr, MockActionRow())
+
+        diag.update_diagnostics()
+        self.assertIn("Profile 5", diag.dovi_profile_row.subtitle)
+        self.assertTrue(diag.dovi_profile_row.visible)
 
 
 class TestAuditFixes(unittest.TestCase):

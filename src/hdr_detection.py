@@ -29,6 +29,7 @@ This module isolates the logic required to determine whether:
 import gi
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk
+from typing import Optional, Any
 
 
 _cached_support = None
@@ -114,9 +115,38 @@ def is_hdr_content(params: dict) -> bool:
         sig_peak = 1.0
 
     hdr_gammas = ("pq", "hlg", "st2084", "slog", "slog2", "slog3")
-    if gamma in hdr_gammas or sig_peak > 1.0:
+    if gamma in hdr_gammas or sig_peak > 1.0 or get_dovi_profile(params) is not None:
         return True
     return False
+
+
+
+def get_dovi_profile(params: dict) -> Optional[str]:
+    """
+    Check if video stream parameters indicate Dolby Vision and return descriptive profile string.
+
+    Args:
+        params (dict): Dictionary of video parameters from mpv property observer.
+
+    Returns:
+        Optional[str]: Profile identifier string (e.g. '5', '7', '8') or None if not Dolby Vision.
+    """
+    if not params or not isinstance(params, dict):
+        return None
+
+    for key in ("dovi-profile", "dolby-vision-profile"):
+        val = params.get(key)
+        if val is not None and str(val).strip() and str(val).strip() != "0":
+            prof = str(val).strip().lstrip("0") or "0"
+            return prof
+
+    colormatrix = str(params.get("colormatrix", "")).lower()
+    primaries = str(params.get("primaries", "")).lower()
+    format_str = str(params.get("format", "")).lower()
+    if "dovi" in colormatrix or "dolby" in colormatrix or "dovi" in primaries or "dolby" in primaries or "dovi" in format_str:
+        return "5"
+
+    return None
 
 
 
