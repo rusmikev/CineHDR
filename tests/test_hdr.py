@@ -190,50 +190,48 @@ class TestApplyHDRSettings(unittest.TestCase):
         mock._props = props
         return mock, props
 
-    def test_hdr_enabled_and_hdr_content_sets_targets(self):
-        """When HDR is enabled AND content is HDR, target params should be applied."""
-        mock_mpv, props = self._make_mock_mpv()
-        hdr_enabled = True
-        is_hdr_content = True
-        target_prim = "dci-p3"
-        target_peak = "400"
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_hdr_enabled_and_hdr_content_sets_targets(self, _mock_support):
+        """apply_hdr_settings() puts mpv into BT.2020 + PQ output for HDR content.
 
-        if hdr_enabled and is_hdr_content:
-            mock_mpv["target-colorspace-hint"] = "yes"
-            mock_mpv["target-trc"] = "pq"
-            mock_mpv["target-prim"] = target_prim
-            mock_mpv["target-peak"] = int(float(target_peak)) if target_peak != "auto" else "auto"
-        else:
-            mock_mpv["target-colorspace-hint"] = "no"
-            mock_mpv["target-prim"] = "auto"
-            mock_mpv["target-peak"] = "auto"
-            mock_mpv["target-trc"] = "auto"
+        This drives the real controller (not a re-implementation of its
+        logic): the earlier version of this test asserted target-prim ==
+        "dci-p3", something the shipped code never does.
+        """
+        from src.hdr_controller import HdrController
+
+        mock_mpv, props = self._make_mock_mpv()
+        controller = HdrController(mock_mpv)
+        controller._hdr_mode = "auto"
+        controller._is_hdr_content = True
+        controller._hdr_target_peak = "400"
+
+        controller.apply_hdr_settings()
 
         self.assertEqual(props["target-colorspace-hint"], "yes")
-        self.assertEqual(props["target-prim"], "dci-p3")
-        self.assertEqual(props["target-peak"], 400)
         self.assertEqual(props["target-trc"], "pq")
+        self.assertEqual(props["target-prim"], "bt.2020")
+        self.assertEqual(props["target-peak"], 400)
+        # hdr-compute-peak must be left to mpv's own default ("auto")
+        self.assertNotIn("hdr-compute-peak", props)
 
-    def test_sdr_protection_when_hdr_enabled(self):
-        """When HDR is enabled in UI BUT content is SDR, targets must reset to auto/no (Risk P-1)."""
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_sdr_protection_when_hdr_enabled(self, _mock_support):
+        """SDR content with HDR mode "auto" must reset targets to auto/no (Risk P-1)."""
+        from src.hdr_controller import HdrController
+
         mock_mpv, props = self._make_mock_mpv()
-        hdr_enabled = True
-        is_hdr_content = False  # Playing SDR video!
+        controller = HdrController(mock_mpv)
+        controller._hdr_mode = "auto"
+        controller._is_hdr_content = False  # Playing SDR video!
 
-        if hdr_enabled and is_hdr_content:
-            mock_mpv["target-colorspace-hint"] = "yes"
-            mock_mpv["target-trc"] = "pq"
-            mock_mpv["target-prim"] = "dci-p3"
-        else:
-            mock_mpv["target-colorspace-hint"] = "no"
-            mock_mpv["target-prim"] = "auto"
-            mock_mpv["target-peak"] = "auto"
-            mock_mpv["target-trc"] = "auto"
+        controller.apply_hdr_settings()
 
         self.assertEqual(props["target-colorspace-hint"], "no")
         self.assertEqual(props["target-prim"], "auto")
         self.assertEqual(props["target-peak"], "auto")
         self.assertEqual(props["target-trc"], "auto")
+        self.assertNotIn("hdr-compute-peak", props)
 
     def test_hlg_and_pq_detection_logic(self):
         """Gamma pq/hlg/st2084 or sig-peak > 1.0 correctly identify HDR content (excluding bt.2020 solo trigger)."""
@@ -252,33 +250,76 @@ class TestApplyHDRSettings(unittest.TestCase):
         for params, expected in test_cases:
             self.assertEqual(is_hdr_content(params), expected, f"Failed detection for {params}")
 
-    def test_hdr_auto_peak(self):
-        """When peak is 'auto', target-peak should be set to string 'auto'."""
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_hdr_auto_peak(self, _mock_support):
+        """Peak preset "auto" is passed to mpv as the string "auto"."""
+        from src.hdr_controller import HdrController
+
         mock_mpv, props = self._make_mock_mpv()
-        target_peak = "auto"
-        if target_peak == "auto":
-            mock_mpv["target-peak"] = "auto"
-        else:
-            mock_mpv["target-peak"] = int(float(target_peak))
+        controller = HdrController(mock_mpv)
+        controller._hdr_mode = "auto"
+        controller._is_hdr_content = True
+        controller._hdr_target_peak = "auto"
+
+        controller.apply_hdr_settings()
         self.assertEqual(props["target-peak"], "auto")
 
-    def test_hdr_numeric_peak(self):
-        """When peak is numeric, target-peak should be an int."""
-        mock_mpv, props = self._make_mock_mpv()
-        for peak_str, expected in [("200", 200), ("400", 400), ("600", 600), ("1000", 1000), ("1600", 1600)]:
-            if peak_str == "auto":
-                mock_mpv["target-peak"] = "auto"
-            else:
-                mock_mpv["target-peak"] = int(float(peak_str))
-            self.assertEqual(props["target-peak"], expected, f"Failed for peak={peak_str}")
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_hdr_numeric_peak(self, _mock_support):
+        """Every numeric preset reaches mpv as an int; junk falls back to auto."""
+        from src.hdr_controller import HdrController, HDR_PEAK_PRESETS
 
-    def test_all_gamut_options(self):
-        """All gamut mapping values map to valid mpv target-prim values."""
-        valid_prims = {"auto", "dci-p3", "bt.709"}
-        for prim in valid_prims:
+        for peak_str in HDR_PEAK_PRESETS[1:]:
             mock_mpv, props = self._make_mock_mpv()
-            mock_mpv["target-prim"] = prim
-            self.assertEqual(props["target-prim"], prim)
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            controller._hdr_target_peak = peak_str
+
+            controller.apply_hdr_settings()
+            self.assertEqual(
+                props["target-peak"], int(float(peak_str)),
+                f"Failed for peak={peak_str}",
+            )
+
+        # A value outside the presets must not leak into mpv
+        mock_mpv, props = self._make_mock_mpv()
+        controller = HdrController(mock_mpv)
+        controller._hdr_mode = "auto"
+        controller._is_hdr_content = True
+        controller._hdr_target_peak = "999"
+        controller.apply_hdr_settings()
+        self.assertEqual(props["target-peak"], "auto")
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_target_prim_locked_to_bt2020(self, _mock_support):
+        """The legacy hdr-target-prim setting must never leak into mpv.
+
+        The published texture's Gdk.ColorState is Rec.2100 PQ, so the
+        encoding primaries are BT.2020 by contract; any other target-prim
+        would shift colors (F7). This is the regression the removed gamut
+        dropdown used to trigger.
+        """
+        from gi.repository import Gio
+        from src.hdr_controller import HdrController
+
+        settings = Gio.Settings.new("io.github.rusmikev.CineHDR")
+        orig_prim = settings.get_string("hdr-target-prim")
+        try:
+            for legacy_prim in ("auto", "dci-p3", "bt.709"):
+                settings.set_string("hdr-target-prim", legacy_prim)
+                mock_mpv, props = self._make_mock_mpv()
+                controller = HdrController(mock_mpv)
+                controller._hdr_mode = "auto"
+                controller._is_hdr_content = True
+
+                controller.apply_hdr_settings()
+                self.assertEqual(
+                    props["target-prim"], "bt.2020",
+                    f"legacy hdr-target-prim={legacy_prim!r} leaked into mpv",
+                )
+        finally:
+            settings.set_string("hdr-target-prim", orig_prim)
 
     @patch("src.hdr_detection.Gdk.Display")
     @patch("src.hdr_detection.Gdk.ColorState", create=True)
@@ -343,14 +384,12 @@ class TestApplyHDRSettings(unittest.TestCase):
         controller._hdr_mode = "auto"
         controller._hdr_enabled = True
         controller._hdr_target_peak = "1000"
-        controller._hdr_target_prim = "dci-p3"
         controller._is_hdr_content = True
 
         # Case A: check_hdr_support is False (e.g. X11) -> should fall back to SDR
         mock_support.return_value = False
         controller.apply_hdr_settings()
         self.assertEqual(props.get("target-colorspace-hint"), "no")
-        self.assertEqual(props.get("hdr-compute-peak"), "auto")
 
         # Case B: check_hdr_support is True (Wayland + GTK >= 4.16) -> should apply PQ
         mock_support.return_value = True
@@ -358,8 +397,9 @@ class TestApplyHDRSettings(unittest.TestCase):
         self.assertEqual(props.get("target-colorspace-hint"), "yes")
         self.assertEqual(props.get("target-trc"), "pq")
         self.assertEqual(props.get("target-prim"), "bt.2020")
-        self.assertEqual(props.get("hdr-compute-peak"), "yes")
         self.assertEqual(props.get("target-peak"), 1000)
+        # hdr-compute-peak is owned by mpv ("auto" default) in both branches
+        self.assertNotIn("hdr-compute-peak", props)
 
     @patch("src.hdr_controller.check_hdr_support")
     def test_force_hdr_mode_on_sdr_content(self, mock_support):
@@ -393,106 +433,71 @@ class TestApplyHDRSettings(unittest.TestCase):
 # ──────────────────────────────────────────────────────────────
 
 class TestHDRUIHandlerLogic(unittest.TestCase):
-    """Tests for the mapping logic in options.py HDR handlers (without GTK)."""
+    """Tests for the dropdown <-> value tables shared with hdr_menu.py.
 
-    def test_mode_dropdown_index_mapping(self):
-        """Mode dropdown indices correctly map to hdr-mode values and back."""
-        mode_map = {0: "auto", 1: "force-hdr", 2: "force-sdr"}
-        for idx, expected in mode_map.items():
-            if idx == 0:
-                result = "auto"
-            elif idx == 1:
-                result = "force-hdr"
-            else:
-                result = "force-sdr"
-            self.assertEqual(result, expected)
+    hdr_menu.py builds its dropdown handlers directly from
+    src.hdr_controller.HDR_MODES / HDR_PEAK_PRESETS, so asserting on those
+    tuples (and on the real controller setters) exercises the same objects
+    the UI uses. The previous version of this class re-declared the tables
+    inside each test and compared them to themselves.
+    """
 
-    def test_gamut_dropdown_index_to_prim(self):
-        """Gamut dropdown indices correctly map to target-prim values."""
-        gamut_map = {0: "auto", 1: "dci-p3", 2: "bt.709"}
-        for idx, expected in gamut_map.items():
-            if idx == 0:
-                result = "auto"
-            elif idx == 1:
-                result = "dci-p3"
-            else:
-                result = "bt.709"
-            self.assertEqual(result, expected, f"Index {idx} should map to '{expected}'")
+    def test_mode_table_matches_dropdown_order(self):
+        """HDR_MODES order must match the hdr_menu.blp StringList (Auto, Force HDR, Force SDR)."""
+        from src.hdr_controller import HDR_MODES
+        self.assertEqual(HDR_MODES, ("auto", "force-hdr", "force-sdr"))
+        for idx, mode in enumerate(HDR_MODES):
+            self.assertEqual(HDR_MODES.index(mode), idx)
 
-    def test_peak_dropdown_index_to_value(self):
-        """Peak dropdown indices correctly map to peak values."""
-        peaks = ["auto", "200", "400", "600", "1000", "1600"]
-        expected = {0: "auto", 1: "200", 2: "400", 3: "600", 4: "1000", 5: "1600"}
-        for idx, exp_val in expected.items():
-            self.assertEqual(peaks[idx], exp_val, f"Index {idx} should map to '{exp_val}'")
+    def test_peak_table_matches_dropdown_order(self):
+        """HDR_PEAK_PRESETS order must match the peak dropdown StringList."""
+        from src.hdr_controller import HDR_PEAK_PRESETS
+        self.assertEqual(
+            HDR_PEAK_PRESETS, ("auto", "200", "400", "600", "1000", "1600")
+        )
+        for idx, peak in enumerate(HDR_PEAK_PRESETS):
+            self.assertEqual(HDR_PEAK_PRESETS.index(peak), idx)
 
-    def test_prim_to_gamut_dropdown_index(self):
-        """target-prim values correctly map back to gamut dropdown indices."""
-        test_cases = [
-            ("auto", 0),
-            ("dci-p3", 1),
-            ("bt.709", 2),
-        ]
-        for prim, expected_idx in test_cases:
-            if prim == "auto":
-                idx = 0
-            elif prim == "dci-p3":
-                idx = 1
-            else:
-                idx = 2
-            self.assertEqual(idx, expected_idx, f"prim '{prim}' should map to index {expected_idx}")
+    @unittest.skipUnless(
+        GRESOURCE_AVAILABLE,
+        "compiled cinehdr.gresource not found — build the project or set CINEHDR_GRESOURCE",
+    )
+    def test_menu_module_uses_shared_tables(self):
+        """hdr_menu must reference the controller tables, not private copies."""
+        import src.hdr_controller as hdr_controller
+        import src.hdr_menu as hdr_menu
+        self.assertIs(hdr_menu.HDR_MODES, hdr_controller.HDR_MODES)
+        self.assertIs(hdr_menu.HDR_PEAK_PRESETS, hdr_controller.HDR_PEAK_PRESETS)
 
-    def test_peak_to_dropdown_index(self):
-        """target-peak values correctly map back to peak dropdown indices."""
-        test_cases = [
-            ("auto", 0),
-            ("200", 1),
-            ("400", 2),
-            ("600", 3),
-            ("1000", 4),
-            ("1600", 5),
-        ]
-        peaks_list = ["auto", "200", "400", "600", "1000", "1600"]
-        for peak, expected_idx in test_cases:
-            if peak == "auto":
-                idx = 0
-            else:
-                try:
-                    p_val = int(float(peak))
-                    idx = {200: 1, 400: 2, 600: 3, 1000: 4, 1600: 5}.get(p_val, 0)
-                except Exception:
-                    idx = 0
-            self.assertEqual(idx, expected_idx, f"peak '{peak}' should map to index {expected_idx}")
+    def test_mode_setter_rejects_unknown_values(self):
+        """Real controller setter: unknown mode strings collapse to 'auto'."""
+        from src.hdr_controller import HdrController
+        mock = MagicMock()
+        props = {}
+        mock.__setitem__ = lambda self, k, v: props.__setitem__(k, v)
+        mock.__getitem__ = lambda self, k: props.get(k)
 
-    def test_syncing_flag_prevents_handler_calls(self):
-        """When _syncing_ui is True, handlers should be no-ops."""
-        # This tests the guard logic pattern
-        syncing = True
-        handler_called = False
+        ctrl = HdrController(mock)
+        ctrl.hdr_mode = "force-hdr"
+        self.assertEqual(ctrl.hdr_mode, "force-hdr")
+        ctrl.hdr_mode = "definitely-not-a-mode"
+        self.assertEqual(ctrl.hdr_mode, "auto")
 
-        def mock_handler():
-            nonlocal handler_called
-            if syncing:
-                return
-            handler_called = True
+    def test_hdr_enabled_bool_maps_to_modes(self):
+        """Real controller: hdr_enabled toggles between 'auto' and 'force-sdr'."""
+        from src.hdr_controller import HdrController
+        mock = MagicMock()
+        props = {}
+        mock.__setitem__ = lambda self, k, v: props.__setitem__(k, v)
+        mock.__getitem__ = lambda self, k: props.get(k)
 
-        mock_handler()
-        self.assertFalse(handler_called, "Handler should not execute while syncing")
-
-        syncing = False
-        mock_handler()
-        self.assertTrue(handler_called, "Handler should execute when not syncing")
-
-    def test_hdr_reset_defaults(self):
-        """HDR reset should set enabled=True, gamut=Auto (idx 0), peak=Auto (idx 0)."""
-        # Test the expected default values after reset
-        default_enabled = True
-        default_gamut_idx = 0  # Auto (Recommended)
-        default_peak_idx = 0   # Auto
-
-        self.assertTrue(default_enabled)
-        self.assertEqual(default_gamut_idx, 0)
-        self.assertEqual(default_peak_idx, 0)
+        ctrl = HdrController(mock)
+        ctrl.hdr_enabled = False
+        self.assertEqual(ctrl.hdr_mode, "force-sdr")
+        self.assertFalse(ctrl.hdr_enabled)
+        ctrl.hdr_enabled = True
+        self.assertEqual(ctrl.hdr_mode, "auto")
+        self.assertTrue(ctrl.hdr_enabled)
 
 
 # ──────────────────────────────────────────────────────────────
