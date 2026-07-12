@@ -227,9 +227,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.gl_area = MpvVideoWidget(self.mpv)
         def update_hdr_btn():
-            from .hdr_detection import check_hdr_support
-            is_vis = self.gl_area.hdr_controller.is_hdr_content and check_hdr_support()
-            self.hdr_menu_btn.set_visible(is_vis)
+            is_vis = getattr(self.gl_area.hdr_controller, "is_hdr_content", False)
+            self.hdr_menu_btn.set_visible(bool(is_vis))
         self.gl_area.hdr_controller.on_content_change_cb = lambda: idle_add_once(update_hdr_btn)
         self.offload = Gtk.GraphicsOffload(child=self.gl_area)
         self.offload.set_black_background(True)

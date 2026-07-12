@@ -36,6 +36,11 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
           subtitle: "Checking...";
         }
 
+        Adw.ActionRow unsupported_reason_row {
+          title: _("System HDR Limitation");
+          subtitle: "Checking...";
+        }
+
         Adw.ActionRow color_state_row {
           title: _("Gdk.ColorState");
           subtitle: "Checking...";
@@ -53,6 +58,16 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
 
         Adw.ActionRow codec_row {
           title: _("Video Codec / Format");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow resolution_row {
+          title: _("Resolution &amp; Pixel Format");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow hwdec_row {
+          title: _("Hardware Acceleration");
           subtitle: "Checking...";
         }
 

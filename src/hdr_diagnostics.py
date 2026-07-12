@@ -13,18 +13,41 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, GLib, Gtk
 
-from .hdr_detection import check_hdr_support
+from .hdr_detection import check_hdr_support, get_hdr_unsupported_reason
 
 
 def get_mpv_prop(mpv, name, default=None):
+    if mpv is None:
+        return default
+    try:
+        if hasattr(mpv, "_get_property"):
+            res = mpv._get_property(name)
+            if res is not None:
+                return res
+    except Exception:
+        pass
+    try:
+        attr_name = name.replace("-", "_")
+        if hasattr(mpv, attr_name):
+            res = getattr(mpv, attr_name)
+            if res is not None:
+                return res
+    except Exception:
+        pass
     try:
         if hasattr(mpv, "get_property"):
             res = mpv.get_property(name)
-        else:
-            res = mpv[name]
-        return res if res is not None else default
+            if res is not None:
+                return res
     except Exception:
-        return default
+        pass
+    try:
+        res = mpv[name]
+        if res is not None:
+            return res
+    except Exception:
+        pass
+    return default
 
 
 @Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/hdr_diagnostics.ui")
@@ -33,10 +56,13 @@ class HdrDiagnosticsDialog(Adw.Dialog):
 
     status_row: Adw.ActionRow = Gtk.Template.Child()
     display_hdr_row: Adw.ActionRow = Gtk.Template.Child()
+    unsupported_reason_row: Adw.ActionRow = Gtk.Template.Child()
     color_state_row: Adw.ActionRow = Gtk.Template.Child()
     texture_format_row: Adw.ActionRow = Gtk.Template.Child()
 
     codec_row: Adw.ActionRow = Gtk.Template.Child()
+    resolution_row: Adw.ActionRow = Gtk.Template.Child()
+    hwdec_row: Adw.ActionRow = Gtk.Template.Child()
     primaries_row: Adw.ActionRow = Gtk.Template.Child()
     trc_row: Adw.ActionRow = Gtk.Template.Child()
     peak_luma_row: Adw.ActionRow = Gtk.Template.Child()
@@ -90,20 +116,26 @@ class HdrDiagnosticsDialog(Adw.Dialog):
 
         # 1. Output & Color State
         is_active = getattr(controller, "is_hdr_active", False) if controller else False
+        is_content = getattr(controller, "is_hdr_content", False) if controller else False
         mode = getattr(controller, "hdr_mode", "auto") if controller else "auto"
+        supported = check_hdr_support()
 
-        if is_active:
-            self.status_row.set_subtitle(_("Active (Tone Mapping enabled)"))
+        if is_active and supported:
+            self.status_row.set_subtitle(_("Active (Direct 16-bit HDR Pass-through)"))
+        elif is_content and not supported and mode != "force-sdr":
+            self.status_row.set_subtitle(_("Active (SDR Tone Mapping enabled)"))
         elif mode == "force-sdr":
             self.status_row.set_subtitle(_("Disabled (Force SDR mode)"))
         else:
-            self.status_row.set_subtitle(_("Disabled (SDR Content or Unsupported)"))
+            self.status_row.set_subtitle(_("Disabled (SDR Content)"))
 
-        supported = check_hdr_support()
         if supported:
             self.display_hdr_row.set_subtitle(_("Yes (Wayland + GTK 4.16+)"))
+            self.unsupported_reason_row.set_visible(False)
         else:
             self.display_hdr_row.set_subtitle(_("No (Fallback to SDR / 8-bit)"))
+            self.unsupported_reason_row.set_visible(True)
+            self.unsupported_reason_row.set_subtitle(get_hdr_unsupported_reason())
 
         if hasattr(Gdk, "ColorState") and hasattr(Gdk.ColorState, "get_rec2100_pq"):
             if is_active and supported:
@@ -122,6 +154,10 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         if not mpv:
             return
 
+        params = get_mpv_prop(mpv, "video-params") or get_mpv_prop(mpv, "video-out-params") or {}
+        if not isinstance(params, dict):
+            params = {}
+
         try:
             codec = get_mpv_prop(mpv, "video-format") or get_mpv_prop(mpv, "video-codec")
             self.codec_row.set_subtitle(str(codec) if codec else _("No video loaded"))
@@ -129,15 +165,37 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             self.codec_row.set_subtitle(_("Unknown"))
 
         try:
-            params = get_mpv_prop(mpv, "video-params") or {}
-            prim = params.get("primaries", _("Unknown"))
+            w = params.get("w") or get_mpv_prop(mpv, "video-params/w") or get_mpv_prop(mpv, "width")
+            h = params.get("h") or get_mpv_prop(mpv, "video-params/h") or get_mpv_prop(mpv, "height")
+            pix = params.get("pixelformat") or get_mpv_prop(mpv, "video-params/pixelformat")
+            if w and h:
+                res_str = f"{w}x{h}"
+                if pix:
+                    res_str += f" ({pix})"
+                self.resolution_row.set_subtitle(res_str)
+            else:
+                self.resolution_row.set_subtitle(_("Unknown"))
+        except Exception:
+            self.resolution_row.set_subtitle(_("Unknown"))
+
+        try:
+            hw = get_mpv_prop(mpv, "hwdec-current") or get_mpv_prop(mpv, "hwdec")
+            if hw and str(hw).lower() not in ("no", "none", ""):
+                self.hwdec_row.set_subtitle(f"{hw} ({_('GPU Acceleration active')})")
+            else:
+                self.hwdec_row.set_subtitle(_("Software / CPU Decoding"))
+        except Exception:
+            self.hwdec_row.set_subtitle(_("Unknown"))
+
+        try:
+            prim = params.get("primaries") or get_mpv_prop(mpv, "video-params/primaries") or _("Unknown")
             self.primaries_row.set_subtitle(str(prim))
 
-            gamma = params.get("gamma", _("Unknown"))
+            gamma = params.get("gamma") or get_mpv_prop(mpv, "video-params/gamma") or _("Unknown")
             self.trc_row.set_subtitle(str(gamma))
 
-            sig_peak = params.get("sig-peak", 0.0)
-            if sig_peak and float(sig_peak) > 0:
+            sig_peak = params.get("sig-peak") or get_mpv_prop(mpv, "video-params/sig-peak") or 0.0
+            if sig_peak and float(sig_peak) > 0 and float(sig_peak) != 1.0:
                 nits = int(float(sig_peak) * 203)
                 self.peak_luma_row.set_subtitle(f"{float(sig_peak):.2f} (~{nits} nits)")
             else:

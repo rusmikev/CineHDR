@@ -683,11 +683,15 @@ class TestHdrDiagnostics(unittest.TestCase):
         class MockActionRow:
             def __init__(self):
                 self.subtitle = ""
+                self.visible = True
             def set_subtitle(self, text):
                 self.subtitle = text
+            def set_visible(self, val):
+                self.visible = val
 
         class MockController:
             is_hdr_active = True
+            is_hdr_content = True
             hdr_mode = "auto"
 
         class MockGLArea:
@@ -697,7 +701,8 @@ class TestHdrDiagnostics(unittest.TestCase):
         class MockMpv:
             def get_property(self, name):
                 if name == "video-format": return "hevc"
-                if name == "video-params": return {"primaries": "bt.2020", "gamma": "pq", "sig-peak": 4.93}
+                if name == "video-params": return {"primaries": "bt.2020", "gamma": "pq", "sig-peak": 4.93, "w": 3840, "h": 2160, "pixelformat": "yuv420p10le"}
+                if name == "hwdec-current": return "vaapi"
                 if name == "target-trc": return "pq"
                 if name == "target-prim": return "dci-p3"
                 if name == "target-peak": return "1000"
@@ -712,9 +717,12 @@ class TestHdrDiagnostics(unittest.TestCase):
         diag._win = MockWin()
         diag.status_row = MockActionRow()
         diag.display_hdr_row = MockActionRow()
+        diag.unsupported_reason_row = MockActionRow()
         diag.color_state_row = MockActionRow()
         diag.texture_format_row = MockActionRow()
         diag.codec_row = MockActionRow()
+        diag.resolution_row = MockActionRow()
+        diag.hwdec_row = MockActionRow()
         diag.primaries_row = MockActionRow()
         diag.trc_row = MockActionRow()
         diag.peak_luma_row = MockActionRow()
