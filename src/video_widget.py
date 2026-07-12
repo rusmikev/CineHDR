@@ -1,6 +1,6 @@
 # video_widget.py
 #
-# Copyright 2026 Diego Povliuk
+# Copyright 2026 rusmikev / Diego Povliuk
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -134,14 +134,6 @@ class MpvVideoWidget(Gtk.Widget):
     def hdr_target_peak(self, value: Any):
         self.hdr_controller.hdr_target_peak = value
 
-    @property
-    def hdr_target_prim(self) -> str:
-        return self.hdr_controller.hdr_target_prim
-
-    @hdr_target_prim.setter
-    def hdr_target_prim(self, value: str):
-        self.hdr_controller.hdr_target_prim = value
-
     def apply_hdr_settings(self):
         self.hdr_controller.apply_hdr_settings()
 
@@ -193,10 +185,6 @@ class MpvVideoWidget(Gtk.Widget):
         if self._shutting_down or not self.mpv_ctx:
             return GLib.SOURCE_REMOVE
 
-        if getattr(self, "_fallback_slot", None):
-            self.fbo_pool.release_buffer(self._fallback_slot)
-            self._fallback_slot = None
-
         try:
             if not self.mpv_ctx.update():
                 return GLib.SOURCE_REMOVE
@@ -212,9 +200,10 @@ class MpvVideoWidget(Gtk.Widget):
         scaled_w = int(w * scale)
         scaled_h = int(h * scale)
 
+        # NOTE: the "HDR requested but unsupported" warning is emitted by
+        # HdrController.apply_hdr_settings(); calling it here behind
+        # `if is_hdr:` made it unreachable (support was already proven true).
         is_hdr = self.is_hdr_supported and self.hdr_controller.is_hdr_active
-        if is_hdr:
-            self.hdr_controller.check_unsupported_warning(self.get_display())
         has_float = hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT")
         use_float = is_hdr and has_float
 
@@ -305,14 +294,24 @@ class MpvVideoWidget(Gtk.Widget):
         def on_texture_release(user_data):
             self.fbo_pool.release_buffer(slot)
 
+        published_fallback: Optional[Any] = None
         try:
             texture = builder.build(destroy=on_texture_release, data=id(slot))
         except (TypeError, ValueError):
             logging.warning("Gdk.GLTextureBuilder.build with destroy-notify not supported. Using fallback release mechanism.")
             texture = builder.build()
-            self._fallback_slot = slot
+            published_fallback = slot
 
+        # Fallback path (no destroy-notify): release the *previous* fallback
+        # slot only after the new texture has been published. Releasing it at
+        # the start of the frame allowed the pool to hand the still-displayed
+        # texture back to mpv, which then rendered into it mid-composite.
+        prev_fallback = self._fallback_slot
+        self._fallback_slot = published_fallback
         self.current_texture = texture
+        if prev_fallback is not None and prev_fallback is not published_fallback:
+            self.fbo_pool.release_buffer(prev_fallback)
+
         self.queue_draw()
         return GLib.SOURCE_REMOVE
 
@@ -369,8 +368,19 @@ class MpvVideoWidget(Gtk.Widget):
         self.queue_draw()
 
     def clear_frame(self):
-        """Clear current texture and queue redraw to release VRAM on video stop/idle (P1-4)."""
+        """Drop the published texture on video stop/idle (P1-4).
+
+        This releases the GTK-side texture wrapper (and, via its
+        destroy-notify, returns the slot to the pool). The pool itself keeps
+        its GL buffers allocated for reuse until the widget is unrealized —
+        it does NOT free the FBO VRAM immediately.
+        """
         self.current_texture = None
+        if self._fallback_slot is not None:
+            # No destroy-notify on this texture; nothing renders after a
+            # stop, so returning the slot to the pool here is safe.
+            self.fbo_pool.release_buffer(self._fallback_slot)
+            self._fallback_slot = None
         self.queue_draw()
 
 

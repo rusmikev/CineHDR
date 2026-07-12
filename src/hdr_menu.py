@@ -14,7 +14,13 @@ logger = logging.getLogger(__name__)
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
 
-from .hdr_controller import load_hdr_config, save_hdr_config, _get_hdr_settings
+from .hdr_controller import (
+    HDR_MODES,
+    HDR_PEAK_PRESETS,
+    load_hdr_config,
+    save_hdr_config,
+    _get_hdr_settings,
+)
 
 
 @Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/hdr_menu.ui")
@@ -22,8 +28,6 @@ class HdrMenuButton(Gtk.MenuButton):
     __gtype_name__ = "HdrMenuButton"
 
     hdr_mode_dropdown: Gtk.DropDown = Gtk.Template.Child()
-    hdr_gamut_row: Gtk.Box = Gtk.Template.Child()
-    hdr_gamut_dropdown: Gtk.DropDown = Gtk.Template.Child()
     hdr_peak_row: Gtk.Box = Gtk.Template.Child()
     hdr_peak_dropdown: Gtk.DropDown = Gtk.Template.Child()
 
@@ -40,7 +44,7 @@ class HdrMenuButton(Gtk.MenuButton):
         except Exception:
             self._gsettings = None
 
-        for dropdown in [self.hdr_mode_dropdown, self.hdr_gamut_dropdown, self.hdr_peak_dropdown]:
+        for dropdown in [self.hdr_mode_dropdown, self.hdr_peak_dropdown]:
             self._disable_dropdown_autohide(dropdown)
 
     def _disable_dropdown_autohide(self, dropdown: Gtk.DropDown):
@@ -82,29 +86,20 @@ class HdrMenuButton(Gtk.MenuButton):
         try:
             config = load_hdr_config()
             mode = config.get("hdr_mode", "auto")
-            prim = config.get("hdr_target_prim", "auto")
             peak = config.get("hdr_target_peak", "auto")
 
-            if mode == "auto":
-                self.hdr_mode_dropdown.set_selected(0)
-            elif mode == "force-hdr":
-                self.hdr_mode_dropdown.set_selected(1)
-            else:
-                self.hdr_mode_dropdown.set_selected(2)
+            mode_idx = HDR_MODES.index(mode) if mode in HDR_MODES else 0
+            self.hdr_mode_dropdown.set_selected(mode_idx)
 
             is_sdr_forced = (mode == "force-sdr")
-            self.hdr_gamut_row.set_sensitive(not is_sdr_forced)
             self.hdr_peak_row.set_sensitive(not is_sdr_forced)
 
-            if prim == "auto":
-                self.hdr_gamut_dropdown.set_selected(0)
-            elif prim == "dci-p3":
-                self.hdr_gamut_dropdown.set_selected(1)
-            else:
-                self.hdr_gamut_dropdown.set_selected(2)
-
-            peak_map = {"auto": 0, "200": 1, "400": 2, "600": 3, "1000": 4, "1600": 5}
-            self.hdr_peak_dropdown.set_selected(peak_map.get(str(peak), 0))
+            peak_idx = (
+                HDR_PEAK_PRESETS.index(str(peak))
+                if str(peak) in HDR_PEAK_PRESETS
+                else 0
+            )
+            self.hdr_peak_dropdown.set_selected(peak_idx)
         except Exception as e:
             logger.error(f"Error syncing HDR UI: {e}")
         finally:
@@ -117,19 +112,10 @@ class HdrMenuButton(Gtk.MenuButton):
     @Gtk.Template.Callback()
     def _on_hdr_reset(self, *args):
         self.hdr_mode_dropdown.set_selected(0)   # Default Auto
-        self.hdr_gamut_dropdown.set_selected(0)  # Default Auto (Recommended)
         self.hdr_peak_dropdown.set_selected(0)   # Default Auto
         ctrl = self._controller
         ctrl.hdr_mode = "auto"
-        ctrl.hdr_target_prim = "auto"
         ctrl.hdr_target_peak = "auto"
-        self.win.gl_area.queue_draw()
-        self._save_hdr_full_config()
-
-    @Gtk.Template.Callback()
-    def _on_hdr_gamut_reset(self, *args):
-        self.hdr_gamut_dropdown.set_selected(0)
-        self._controller.hdr_target_prim = "auto"
         self.win.gl_area.queue_draw()
         self._save_hdr_full_config()
 
@@ -145,31 +131,10 @@ class HdrMenuButton(Gtk.MenuButton):
         if self._syncing_ui:
             return
         idx = dropdown.get_selected()
-        if idx == 0:
-            mode = "auto"
-        elif idx == 1:
-            mode = "force-hdr"
-        else:
-            mode = "force-sdr"
+        mode = HDR_MODES[idx] if 0 <= idx < len(HDR_MODES) else "auto"
         self._controller.hdr_mode = mode
         is_sdr_forced = (mode == "force-sdr")
-        self.hdr_gamut_row.set_sensitive(not is_sdr_forced)
         self.hdr_peak_row.set_sensitive(not is_sdr_forced)
-        self.win.gl_area.queue_draw()
-        self._save_hdr_full_config()
-
-    @Gtk.Template.Callback()
-    def _on_hdr_gamut_changed(self, dropdown, gparam):
-        if self._syncing_ui:
-            return
-        idx = dropdown.get_selected()
-        ctrl = self._controller
-        if idx == 0:
-            ctrl.hdr_target_prim = "auto"
-        elif idx == 1:
-            ctrl.hdr_target_prim = "dci-p3"
-        else:
-            ctrl.hdr_target_prim = "bt.709"
         self.win.gl_area.queue_draw()
         self._save_hdr_full_config()
 
@@ -179,8 +144,8 @@ class HdrMenuButton(Gtk.MenuButton):
             return
         idx = dropdown.get_selected()
         ctrl = self._controller
-        peaks = ["auto", "200", "400", "600", "1000", "1600"]
-        ctrl.hdr_target_peak = peaks[idx]
+        peak = HDR_PEAK_PRESETS[idx] if 0 <= idx < len(HDR_PEAK_PRESETS) else "auto"
+        ctrl.hdr_target_peak = peak
         self.win.gl_area.queue_draw()
         self._save_hdr_full_config()
 
@@ -199,7 +164,6 @@ class HdrMenuButton(Gtk.MenuButton):
         config = {
             "hdr_mode": ctrl.hdr_mode,
             "hdr_enabled": (ctrl.hdr_mode != "force-sdr"),
-            "hdr_target_prim": ctrl.hdr_target_prim,
             "hdr_target_peak": ctrl.hdr_target_peak
         }
         self._syncing_ui = True

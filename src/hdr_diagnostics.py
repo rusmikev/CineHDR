@@ -130,7 +130,12 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             self.status_row.set_subtitle(_("Disabled (SDR Content)"))
 
         if supported:
-            self.display_hdr_row.set_subtitle(_("Yes (Wayland + GTK 4.16+)"))
+            # GTK accepting the Rec.2100 color state does not guarantee the
+            # monitor is actually in HDR mode — GTK/the compositor convert to
+            # SDR otherwise, which is simpler than mpv tone mapping.
+            self.display_hdr_row.set_subtitle(
+                _("Yes (Wayland + GTK 4.16+) — final output depends on the compositor/monitor HDR mode")
+            )
             self.unsupported_reason_row.set_visible(False)
         else:
             self.display_hdr_row.set_subtitle(_("No (Fallback to SDR / 8-bit)"))

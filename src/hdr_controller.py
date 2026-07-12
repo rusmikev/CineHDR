@@ -1,6 +1,6 @@
 # hdr_controller.py
 #
-# Copyright 2026 Diego Povliuk
+# Copyright 2026 rusmikev / Diego Povliuk
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -33,6 +33,13 @@ from gi.repository import GObject, Gio, GLib
 from .utils import idle_add_once
 from .hdr_detection import is_hdr_content, check_hdr_support, get_hdr_unsupported_reason
 
+# Single source of truth for the HDR mode values and the peak-brightness
+# presets. hdr_menu.py builds its dropdowns from these tuples, so the
+# index <-> value mapping used by the UI is the same object tested in
+# tests/test_hdr.py (no duplicated tables).
+HDR_MODES = ("auto", "force-hdr", "force-sdr")
+HDR_PEAK_PRESETS = ("auto", "200", "400", "600", "1000", "1600")
+
 
 def _get_hdr_settings() -> Optional[Gio.Settings]:
     """Get GSettings instance if schema is installed, else None."""
@@ -52,12 +59,15 @@ def load_hdr_config() -> dict:
         if not settings:
             raise RuntimeError("GSettings schema not available")
         mode = settings.get_string("hdr-mode")
-        if not mode or mode not in ("auto", "force-hdr", "force-sdr"):
+        if not mode or mode not in HDR_MODES:
             mode = "auto"
         return {
             "hdr_mode": mode,
             "hdr_enabled": (mode != "force-sdr"),
             "hdr_target_peak": settings.get_string("hdr-target-peak"),
+            # Legacy key: the gamut control was removed because the GL texture
+            # color state (Rec.2100) fixes the primaries to BT.2020. The key is
+            # still read/written so existing user settings round-trip cleanly.
             "hdr_target_prim": settings.get_string("hdr-target-prim")
         }
     except (RuntimeError, GLib.Error, AttributeError) as e:
@@ -105,7 +115,7 @@ def load_hdr_mode() -> str:
         if not settings:
             return "auto"
         mode = settings.get_string("hdr-mode")
-        if mode in ("auto", "force-hdr", "force-sdr"):
+        if mode in HDR_MODES:
             return mode
     except Exception:
         pass
@@ -115,7 +125,7 @@ def load_hdr_mode() -> str:
 def save_hdr_mode(mode: str):
     """Save string HDR mode to GSettings."""
     try:
-        if mode not in ("auto", "force-hdr", "force-sdr"):
+        if mode not in HDR_MODES:
             mode = "auto"
         settings = _get_hdr_settings()
         if not settings:
@@ -142,12 +152,11 @@ class HdrController(GObject.Object):
         config = load_hdr_config()
         self._hdr_mode = config["hdr_mode"]
         self._hdr_target_peak = config["hdr_target_peak"]
-        self._hdr_target_prim = config["hdr_target_prim"]
         self._is_hdr_content = False
         self._hdr_support_warned = False
 
         self._initial_mpv_props = {}
-        for prop in ("target-colorspace-hint", "target-trc", "target-prim", "hdr-compute-peak", "target-peak"):
+        for prop in ("target-colorspace-hint", "target-trc", "target-prim", "target-peak"):
             try:
                 self._initial_mpv_props[prop] = self.mpv[prop]
             except Exception:
@@ -157,7 +166,6 @@ class HdrController(GObject.Object):
             self._gsettings = _get_hdr_settings()
             if self._gsettings:
                 self._gsettings.connect("changed::hdr-mode", self._on_gsettings_changed)
-                self._gsettings.connect("changed::hdr-target-prim", self._on_gsettings_changed)
                 self._gsettings.connect("changed::hdr-target-peak", self._on_gsettings_changed)
         except Exception:
             self._gsettings = None
@@ -180,8 +188,6 @@ class HdrController(GObject.Object):
     def _on_gsettings_changed(self, settings: Gio.Settings, key: str):
         if key == "hdr-mode":
             self._hdr_mode = settings.get_string("hdr-mode")
-        elif key == "hdr-target-prim":
-            self._hdr_target_prim = settings.get_string("hdr-target-prim")
         elif key == "hdr-target-peak":
             self._hdr_target_peak = settings.get_string("hdr-target-peak")
         self.apply_hdr_settings()
@@ -194,19 +200,25 @@ class HdrController(GObject.Object):
             return
         if self.is_hdr_active:
             target_peak = self._hdr_target_peak
-            if target_peak not in ("auto", "200", "400", "600", "1000", "1600"):
+            if target_peak not in HDR_PEAK_PRESETS:
                 target_peak = "auto"
             peak_val = "auto" if target_peak == "auto" else int(float(target_peak))
 
-            # When HDR is active, Gdk.ColorState is Rec.2100 PQ (BT.2020 + PQ).
-            # Force mpv to render in bt.2020 primaries to prevent color shift (F7).
+            # The published GL texture carries Gdk.ColorState Rec.2100 PQ, i.e.
+            # GTK/the compositor decode it as BT.2020 + PQ by contract. The
+            # encoding primaries therefore MUST be bt.2020 — anything else
+            # (dci-p3, bt.709) would be reinterpreted as BT.2020 and shift all
+            # colors (F7). This is why there is no user-facing gamut option.
             target_prim = "bt.2020"
 
+            # hdr-compute-peak is intentionally left untouched: mpv's default
+            # ("auto") already enables per-frame peak detection when tone
+            # mapping is active (numeric target-peak) and skips the extra GPU
+            # pass in true pass-through (target-peak=auto).
             props = [
                 ("target-colorspace-hint", "yes"),
                 ("target-trc", "pq"),
                 ("target-prim", target_prim),
-                ("hdr-compute-peak", "yes"),
                 ("target-peak", peak_val),
             ]
         else:
@@ -216,7 +228,6 @@ class HdrController(GObject.Object):
                 "target-prim": "auto",
                 "target-peak": "auto",
                 "target-trc": "auto",
-                "hdr-compute-peak": "auto",
             }
             props = []
             for prop, default_val in defaults.items():
@@ -231,6 +242,11 @@ class HdrController(GObject.Object):
             except Exception as e:
                 logging.warning(f"Failed to set mpv property '{prop}' to '{val}': {e}")
 
+        # Runs on every (re)apply so the "HDR requested but unavailable"
+        # warning is actually reachable — previously it was only invoked from
+        # a code path that already required HDR support to be present.
+        self.check_unsupported_warning()
+
         if self.on_change_cb:
             self.on_change_cb()
 
@@ -240,7 +256,7 @@ class HdrController(GObject.Object):
 
     @hdr_mode.setter
     def hdr_mode(self, value: str):
-        if value not in ("auto", "force-hdr", "force-sdr"):
+        if value not in HDR_MODES:
             value = "auto"
         if self._hdr_mode != value:
             self._hdr_mode = value
@@ -268,16 +284,6 @@ class HdrController(GObject.Object):
             self.apply_hdr_settings()
 
     @property
-    def hdr_target_prim(self) -> str:
-        return self._hdr_target_prim
-
-    @hdr_target_prim.setter
-    def hdr_target_prim(self, value: str):
-        if self._hdr_target_prim != str(value):
-            self._hdr_target_prim = str(value)
-            self.apply_hdr_settings()
-
-    @property
     def is_hdr_content(self) -> bool:
         return self._is_hdr_content
 
@@ -298,7 +304,7 @@ class HdrController(GObject.Object):
             return True
         return self._is_hdr_content
 
-    def check_unsupported_warning(self, gdk_display: Any):
+    def check_unsupported_warning(self, gdk_display: Any = None):
         """Log a warning if HDR is requested and content is HDR, but display/GTK lacks support."""
         requested = (self._hdr_mode == "force-hdr") or (self._hdr_mode == "auto" and self._is_hdr_content)
         if requested and not check_hdr_support():

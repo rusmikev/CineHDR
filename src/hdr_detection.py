@@ -1,6 +1,6 @@
 # hdr_detection.py
 #
-# Copyright 2026 Diego Povliuk
+# Copyright 2026 rusmikev / Diego Povliuk
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by

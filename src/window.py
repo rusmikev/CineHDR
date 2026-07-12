@@ -2129,7 +2129,8 @@ class CineWindow(Adw.ApplicationWindow):
         def on_vid_change(_name, value):
             idle_add_once(self.audio_only_icon.set_visible, not bool(value))
             if not value:
-                # clear the last frame and free VRAM (~63 MB in 4K)
+                # Drop the published frame texture. The FBO pool keeps its
+                # buffers for reuse; VRAM is only freed on unrealize.
                 if hasattr(self.gl_area, "clear_frame"):
                     idle_add_once(self.gl_area.clear_frame)
                 else:
