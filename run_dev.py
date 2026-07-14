@@ -29,6 +29,7 @@ locale_dir = os.path.join(build_dir, "po")
 try:
     import locale
     import gettext
+    locale.setlocale(locale.LC_ALL, '')
     locale.bindtextdomain('cine', locale_dir)
     locale.textdomain('cine')
     gettext.bindtextdomain('cine', locale_dir)
