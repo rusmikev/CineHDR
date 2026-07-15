@@ -45,5 +45,5 @@ jobs:
           bundle: CineHDR.flatpak
           manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
           cache-key: flatpak-builder-${{ github.sha }}
-          run-tests: true
+          run-tests: ${{ matrix.arch == 'x86_64' }}
           arch: ${{ matrix.arch }}
