@@ -61,6 +61,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
     status_row: Adw.ActionRow = Gtk.Template.Child()
     display_hdr_row: Adw.ActionRow = Gtk.Template.Child()
     compositor_cm_row: Adw.ActionRow = Gtk.Template.Child()
+    monitor_hdr_row: Adw.ActionRow = Gtk.Template.Child()
     offload_row: Adw.ActionRow = Gtk.Template.Child()
     unsupported_reason_row: Adw.ActionRow = Gtk.Template.Child()
     color_state_row: Adw.ActionRow = Gtk.Template.Child()
@@ -129,10 +130,12 @@ class HdrDiagnosticsDialog(Adw.Dialog):
 
         if is_active and supported:
             self.status_row.set_subtitle(_("Active (Direct 16-bit HDR Pass-through)"))
-        elif is_content and not supported and mode != "force-sdr":
-            self.status_row.set_subtitle(_("Active (SDR Tone Mapping enabled)"))
         elif mode == "force-sdr":
             self.status_row.set_subtitle(_("Disabled (Force SDR mode)"))
+        elif is_content:
+            # Covers both "system unsupported" and "monitor HDR is off":
+            # in either case the content is HDR and mpv tone-maps it to SDR.
+            self.status_row.set_subtitle(_("Active (SDR Tone Mapping enabled)"))
         else:
             self.status_row.set_subtitle(_("Disabled (SDR Content)"))
 
@@ -163,6 +166,40 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             )
         else:
             self.compositor_cm_row.set_subtitle(_("Unknown (probe unavailable)"))
+
+        # Actual monitor state read from the output's image description —
+        # this is what finally decides pass-through vs mpv tone mapping in
+        # auto mode.
+        states = None
+        try:
+            from . import wayland_output_hdr
+            states = wayland_output_hdr.get_output_hdr_states()
+        except Exception:
+            states = None
+        hint = getattr(controller, "output_hint", None) if controller else None
+        if states is None:
+            self.monitor_hdr_row.set_subtitle(_("Unknown (probe unavailable)"))
+        elif hint and hint in states:
+            info = states[hint]
+            if info.hdr:
+                peak = f", peak ~{int(info.max_lum)} nits" if info.max_lum else ""
+                self.monitor_hdr_row.set_subtitle(
+                    _("HDR active on {c} ({tf}{peak})").format(c=hint, tf=info.tf_name, peak=peak)
+                )
+            else:
+                self.monitor_hdr_row.set_subtitle(
+                    _("SDR on {c} — enable HDR in display settings for pass-through").format(c=hint)
+                )
+        else:
+            hdr_outputs = [c for c, i in states.items() if i.hdr]
+            if hdr_outputs:
+                self.monitor_hdr_row.set_subtitle(
+                    _("HDR active on: {list}").format(list=", ".join(sorted(hdr_outputs)))
+                )
+            else:
+                self.monitor_hdr_row.set_subtitle(
+                    _("SDR on all outputs — enable HDR in display settings for pass-through")
+                )
 
         offload = getattr(self._win, "offload", None)
         try:

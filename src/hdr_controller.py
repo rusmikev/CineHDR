@@ -36,6 +36,7 @@ from .hdr_detection import (
     check_hdr_support,
     get_hdr_unsupported_reason,
     get_dovi_info,
+    get_monitor_hdr_state,
 )
 
 # Single source of truth for the HDR mode values and the peak-brightness
@@ -158,6 +159,7 @@ class HdrController(GObject.Object):
         self._hdr_mode = config["hdr_mode"]
         self._hdr_target_peak = config["hdr_target_peak"]
         self._is_hdr_content = False
+        self._output_hint = None
         self._hdr_support_warned = False
         self._dovi_info: Optional[dict] = None
         self._dovi_warned = False
@@ -333,6 +335,20 @@ class HdrController(GObject.Object):
         return bool((self._dovi_info or {}).get("unsupported"))
 
     @property
+    def output_hint(self):
+        """Connector name of the monitor the video widget currently sits on."""
+        return self._output_hint
+
+    def set_output_hint(self, connector):
+        """Called by MpvVideoWidget on realize / enter-monitor. A change can
+        flip the auto-mode decision (SDR screen <-> HDR screen), so settings
+        are re-applied."""
+        connector = str(connector) if connector else None
+        if self._output_hint != connector:
+            self._output_hint = connector
+            self.apply_hdr_settings()
+
+    @property
     def is_hdr_active(self) -> bool:
         """Returns True if HDR color state should be applied to the GL texture."""
         if not check_hdr_support():
@@ -348,7 +364,17 @@ class HdrController(GObject.Object):
         if self._hdr_mode == "force-sdr":
             return False
         if self._hdr_mode == "force-hdr":
+            # Explicit user override: unlike the DoVi gate above, the picture
+            # here is *valid* — passing PQ to an SDR output merely trades
+            # mpv's tone mapping for the compositor's simpler conversion, so
+            # the user's choice is respected.
             return True
+        # Quality gate for auto mode only: a capable compositor with monitor
+        # HDR switched *off* converts PQ -> SDR itself, which looks worse
+        # than mpv's tone mapping. Only a definitive "monitor is SDR" blocks
+        # HDR; an unknown state (None) preserves previous behaviour.
+        if get_monitor_hdr_state(self._output_hint) is False:
+            return False
         return self._is_hdr_content
 
     def check_dovi_warning(self):

@@ -68,7 +68,7 @@ is dropped together with the hdr_detection cache via :func:`invalidate`.
 import ctypes
 import ctypes.util
 import logging
-from typing import Optional, Set
+from typing import Optional
 
 # Wayland core: wl_display request opcodes (see wayland.xml).
 _WL_DISPLAY_GET_REGISTRY = 1
@@ -145,11 +145,13 @@ def _get_wl_display_ptr() -> Optional[int]:
     return int(ptr) if ptr else None
 
 
-def _enumerate_globals(lib: ctypes.CDLL, display_ptr: int) -> Optional[Set[str]]:
-    """List registry global interface names using a private event queue.
+def _configure_symbols(lib: ctypes.CDLL) -> Optional[int]:
+    """Set ctypes prototypes for every libwayland entry point the probes use.
 
-    Returns None when any libwayland entry point is missing or errors, so the
-    caller reports "unknown" instead of a false negative.
+    Returns the address of the ``wl_registry_interface`` data symbol on
+    success, or None when any symbol is missing (the caller must then report
+    "unknown"). Shared with wayland_output_hdr, which additionally marshals
+    registry binds and protocol requests on custom interfaces.
     """
     try:
         lib.wl_display_create_queue.restype = ctypes.c_void_p
@@ -174,24 +176,37 @@ def _enumerate_globals(lib: ctypes.CDLL, display_ptr: int) -> Optional[Set[str]]
         lib.wl_display_roundtrip_queue.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         # Variadic — leave argtypes unset and pass explicit ctypes instances.
         lib.wl_proxy_marshal_constructor.restype = ctypes.c_void_p
+        lib.wl_proxy_marshal_constructor_versioned.restype = ctypes.c_void_p
+        lib.wl_proxy_marshal.restype = None
         # Address of the wl_registry_interface data symbol inside the library.
-        registry_iface_addr = ctypes.addressof(
-            ctypes.c_char.in_dll(lib, "wl_registry_interface")
-        )
+        return ctypes.addressof(ctypes.c_char.in_dll(lib, "wl_registry_interface"))
     except (AttributeError, ValueError) as e:
         logging.debug(f"wayland_cm_probe: libwayland symbols unavailable: {e}")
+        return None
+
+
+def _enumerate_globals(lib: ctypes.CDLL, display_ptr: int):
+    """List registry globals using a private event queue.
+
+    Returns a dict mapping interface name -> (numeric registry name, version)
+    so callers can later bind a global, or None when any libwayland entry
+    point is missing or errors (the caller then reports "unknown" instead of
+    a false negative).
+    """
+    registry_iface_addr = _configure_symbols(lib)
+    if registry_iface_addr is None:
         return None
 
     display = ctypes.c_void_p(display_ptr)
     queue = None
     wrapper = None
     registry = None
-    names: Set[str] = set()
+    names = {}
 
-    def _on_global(_data, _registry, _name, interface, _version):
+    def _on_global(_data, _registry, name, interface, version):
         if interface:
             try:
-                names.add(interface.decode("utf-8", "replace"))
+                names[interface.decode("utf-8", "replace")] = (int(name), int(version))
             except Exception:
                 pass
 
@@ -272,7 +287,7 @@ def probe_color_management() -> Optional[bool]:
                     if result:
                         logging.debug(
                             "wayland_cm_probe: compositor advertises %s",
-                            sorted(set(CM_GLOBALS) & names),
+                            sorted(set(CM_GLOBALS) & set(names)),
                         )
                     else:
                         logging.info(

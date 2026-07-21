@@ -61,6 +61,7 @@ cine_sources = [
   'utils.py',
   'video_widget.py',
   'wayland_cm_probe.py',
+  'wayland_output_hdr.py',
   'window.py',
 ]
 

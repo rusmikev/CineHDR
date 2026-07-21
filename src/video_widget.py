@@ -103,9 +103,32 @@ class MpvVideoWidget(Gtk.Widget):
         old_support = getattr(self, "_cached_hdr_support", None)
         self._cached_hdr_support = check_hdr_support()
         self._cached_hdr_support_valid = True
+        self._push_output_hint()
         if old_support is not None and old_support != self._cached_hdr_support and hasattr(self, "hdr_controller"):
             self.hdr_controller.apply_hdr_settings()
             self.queue_draw()
+
+    def _push_output_hint(self):
+        """Tell HdrController which monitor the widget currently sits on, so
+        the auto-mode monitor gate reads the right output's image description
+        on multi-monitor setups (SDR laptop panel + HDR TV)."""
+        if not hasattr(self, "hdr_controller"):
+            return
+        connector = None
+        try:
+            native = self.get_native()
+            surface = native.get_surface() if native and hasattr(native, "get_surface") else None
+            display = self.get_display()
+            if surface and display and hasattr(display, "get_monitor_at_surface"):
+                monitor = display.get_monitor_at_surface(surface)
+                if monitor and hasattr(monitor, "get_connector"):
+                    connector = monitor.get_connector()
+        except Exception:
+            connector = None
+        try:
+            self.hdr_controller.set_output_hint(connector)
+        except Exception:
+            pass
 
     @property
     def is_hdr_supported(self) -> bool:

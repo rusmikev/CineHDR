@@ -32,6 +32,7 @@ from gi.repository import Gdk
 from typing import Optional, Any
 
 from . import wayland_cm_probe
+from . import wayland_output_hdr
 
 
 _cached_support = None
@@ -40,9 +41,27 @@ _cached_support = None
 def invalidate_hdr_support_cache():
     global _cached_support
     _cached_support = None
-    # The compositor capability probe caches independently; keep the two in
-    # lockstep so a monitor hot-plug / re-realize re-evaluates everything.
+    # The compositor capability probe and the per-output HDR state cache
+    # each cache independently; keep all three in lockstep so a monitor
+    # hot-plug / re-realize re-evaluates everything.
     wayland_cm_probe.invalidate()
+    wayland_output_hdr.invalidate()
+
+
+def get_monitor_hdr_state(connector: Optional[str] = None) -> Optional[bool]:
+    """Tri-state: is the monitor (or any monitor) actually in HDR mode?
+
+    True/False come from reading the output's image description through
+    wp_color_manager_v1 (PQ/HLG transfer function, or peak > reference
+    luminance); None means the state could not be determined and callers
+    must not change their behaviour. Consulted by HdrController to keep
+    auto mode on mpv tone mapping while monitor HDR is switched off, and by
+    the diagnostics dialog.
+    """
+    try:
+        return wayland_output_hdr.get_monitor_hdr_state(connector)
+    except Exception:
+        return None
 
 
 def get_compositor_cm_support() -> Optional[bool]:

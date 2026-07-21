@@ -860,6 +860,9 @@ class TestHdrDiagnostics(unittest.TestCase):
         diag.trc_row = MockActionRow()
         diag.peak_luma_row = MockActionRow()
         diag.target_row = MockActionRow()
+        diag.compositor_cm_row = MockActionRow()
+        diag.offload_row = MockActionRow()
+        diag.monitor_hdr_row = MockActionRow()
 
         diag.update_diagnostics()
 
@@ -912,7 +915,8 @@ class TestHdrDiagnostics(unittest.TestCase):
         diag._win = MockWin()
         for attr in ("status_row", "display_hdr_row", "unsupported_reason_row", "color_state_row",
                      "texture_format_row", "codec_row", "resolution_row", "hwdec_row",
-                     "dovi_profile_row", "primaries_row", "trc_row", "peak_luma_row", "target_row"):
+                     "dovi_profile_row", "primaries_row", "trc_row", "peak_luma_row", "target_row",
+                     "compositor_cm_row", "offload_row", "monitor_hdr_row"):
             setattr(diag, attr, MockActionRow())
 
         diag.update_diagnostics()
@@ -965,7 +969,8 @@ class TestHdrDiagnostics(unittest.TestCase):
         diag._win = MockWin()
         for attr in ("status_row", "display_hdr_row", "unsupported_reason_row", "color_state_row",
                      "texture_format_row", "codec_row", "resolution_row", "hwdec_row",
-                     "dovi_profile_row", "primaries_row", "trc_row", "peak_luma_row", "target_row"):
+                     "dovi_profile_row", "primaries_row", "trc_row", "peak_luma_row", "target_row",
+                     "compositor_cm_row", "offload_row", "monitor_hdr_row"):
             setattr(diag, attr, MockActionRow())
 
         diag.update_diagnostics()
@@ -1205,3 +1210,161 @@ class Gdk_holder:
     import gi as _gi
     _gi.require_version("Gdk", "4.0")
     from gi.repository import Gdk
+
+
+# ──────────────────────────────────────────────────────────────
+# 10. Monitor HDR state gate (wayland_output_hdr)
+# ──────────────────────────────────────────────────────────────
+
+class TestMonitorHdrGate(unittest.TestCase):
+    """Auto mode must fall back to mpv tone mapping when the monitor is
+    definitively SDR; force-hdr and unknown state must be unaffected."""
+
+    def _make_mock_mpv(self):
+        props = {}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda _self, k, v: props.__setitem__(k, v)
+        mock_mpv.__getitem__ = MagicMock(side_effect=KeyError)
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+        return mock_mpv, props
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_monitor_sdr_blocks_auto(self, _sup):
+        from src.hdr_controller import HdrController
+        mock_mpv, props = self._make_mock_mpv()
+        with patch("src.hdr_controller.get_monitor_hdr_state", return_value=False):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            self.assertFalse(controller.is_hdr_active)
+            controller.apply_hdr_settings()
+            self.assertEqual(props.get("target-trc"), "auto")
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_monitor_sdr_does_not_block_force_hdr(self, _sup):
+        """Unlike the DoVi P5 gate, the picture here is valid — the explicit
+        user override must win over the quality preference."""
+        from src.hdr_controller import HdrController
+        mock_mpv, props = self._make_mock_mpv()
+        with patch("src.hdr_controller.get_monitor_hdr_state", return_value=False):
+            controller = HdrController(mock_mpv)
+            controller._is_hdr_content = True
+            controller.hdr_mode = "force-hdr"
+            self.assertTrue(controller.is_hdr_active)
+            self.assertEqual(props.get("target-trc"), "pq")
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_monitor_unknown_keeps_previous_behavior(self, _sup):
+        from src.hdr_controller import HdrController
+        mock_mpv, props = self._make_mock_mpv()
+        with patch("src.hdr_controller.get_monitor_hdr_state", return_value=None):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            self.assertTrue(controller.is_hdr_active)
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_monitor_hdr_allows_auto(self, _sup):
+        from src.hdr_controller import HdrController
+        mock_mpv, props = self._make_mock_mpv()
+        with patch("src.hdr_controller.get_monitor_hdr_state", return_value=True):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            self.assertTrue(controller.is_hdr_active)
+            controller.apply_hdr_settings()
+            self.assertEqual(props.get("target-trc"), "pq")
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_output_hint_is_forwarded_and_triggers_reapply(self, _sup):
+        from src.hdr_controller import HdrController
+        mock_mpv, props = self._make_mock_mpv()
+        seen = []
+
+        def fake_state(connector=None):
+            seen.append(connector)
+            return None
+
+        with patch("src.hdr_controller.get_monitor_hdr_state", side_effect=fake_state):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            _ = controller.is_hdr_active
+            controller.set_output_hint("DP-3")
+            _ = controller.is_hdr_active
+        self.assertIn("DP-3", seen)
+        # setting the same hint again must not re-apply
+        with patch.object(controller, "apply_hdr_settings") as mock_apply:
+            controller.set_output_hint("DP-3")
+            mock_apply.assert_not_called()
+            controller.set_output_hint("HDMI-1")
+            mock_apply.assert_called_once()
+
+
+class TestWaylandOutputHdrModule(unittest.TestCase):
+    """Pure logic of wayland_output_hdr: classification, cache, aggregation,
+    and the hand-built wl_interface tables."""
+
+    def test_classify_hdr_matrix(self):
+        from src.wayland_output_hdr import classify_hdr, TF_ST2084_PQ, TF_HLG, TF_SRGB, TF_GAMMA22
+        self.assertTrue(classify_hdr(TF_ST2084_PQ, None, None, None))
+        self.assertTrue(classify_hdr(TF_HLG, None, None, None))
+        self.assertTrue(classify_hdr(TF_GAMMA22, 0.02, 1000.0, 203.0))
+        self.assertFalse(classify_hdr(TF_SRGB, 0.2, 200.0, 200.0))
+        self.assertFalse(classify_hdr(None, None, None, None))
+        self.assertFalse(classify_hdr(TF_SRGB, None, 400.0, 0.0))
+
+    def test_ttl_cache_and_invalidate(self):
+        from src import wayland_output_hdr as w
+        with patch.object(w, "probe_outputs", return_value=None) as mock_probe:
+            w.invalidate()
+            w.get_output_hdr_states()
+            w.get_output_hdr_states()
+            self.assertEqual(mock_probe.call_count, 1)
+            w.invalidate()
+            w.get_output_hdr_states()
+            self.assertEqual(mock_probe.call_count, 2)
+        w.invalidate()
+
+    def test_get_monitor_hdr_state_aggregation(self):
+        from src import wayland_output_hdr as w
+        states = {
+            "eDP-1": w.OutputHdrInfo(connector="eDP-1", hdr=False),
+            "HDMI-1": w.OutputHdrInfo(connector="HDMI-1", hdr=True),
+        }
+        with patch.object(w, "get_output_hdr_states", return_value=states):
+            self.assertFalse(w.get_monitor_hdr_state("eDP-1"))
+            self.assertTrue(w.get_monitor_hdr_state("HDMI-1"))
+            self.assertTrue(w.get_monitor_hdr_state(None))          # any()
+            self.assertTrue(w.get_monitor_hdr_state("DP-404"))      # unknown hint -> any()
+        with patch.object(w, "get_output_hdr_states", return_value={"eDP-1": states["eDP-1"]}):
+            self.assertFalse(w.get_monitor_hdr_state(None))
+        with patch.object(w, "get_output_hdr_states", return_value=None):
+            self.assertIsNone(w.get_monitor_hdr_state("eDP-1"))
+
+    def test_interface_tables_match_protocol(self):
+        """Event tables must mirror color-management-v1.xml exactly — a wrong
+        signature corrupts libffi dispatch. Lock the critical rows."""
+        from src.wayland_output_hdr import _InterfaceTable
+        t = _InterfaceTable(0xDEAD)
+        self.assertEqual(t.mgr.event_count, 5)
+        self.assertEqual(t.mgr.events[4].name, b"done")
+        self.assertEqual(t.img.event_count, 2)
+        self.assertEqual(t.img.events[0].signature, b"us")   # failed
+        self.assertEqual(t.img.events[1].signature, b"u")    # ready
+        self.assertEqual(t.info.event_count, 11)
+        self.assertEqual(t.info.events[1].name, b"icc_file")
+        self.assertEqual(t.info.events[1].signature, b"hu")
+        self.assertEqual(t.info.events[5].name, b"tf_named")
+        self.assertEqual(t.info.events[6].name, b"luminances")
+        self.assertEqual(t.info.events[6].signature, b"uuu")
+        # request opcodes we marshal
+        self.assertEqual(t.mgr.methods[1].name, b"get_output")
+        self.assertEqual(t.mgr.methods[1].signature, b"no")
+        self.assertEqual(t.cm_output.methods[1].name, b"get_image_description")
+        self.assertEqual(t.img.methods[1].name, b"get_information")
+
+    def test_probe_returns_none_headless(self):
+        from src import wayland_output_hdr as w
+        with patch.object(w, "_get_wl_display_ptr", return_value=None):
+            self.assertIsNone(w.probe_outputs())
