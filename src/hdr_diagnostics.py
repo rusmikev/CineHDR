@@ -315,7 +315,6 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             t_trc = get_mpv_prop(mpv, "target-trc", "auto")
             t_prim = get_mpv_prop(mpv, "target-prim", "auto")
             t_peak = get_mpv_prop(mpv, "target-peak", "auto")
-            t_hint = get_mpv_prop(mpv, "target-colorspace-hint", "no")
-            self.target_row.set_subtitle(f"TRC: {t_trc} | Prim: {t_prim} | Peak: {t_peak} | Hint: {t_hint}")
+            self.target_row.set_subtitle(f"TRC: {t_trc} | Prim: {t_prim} | Peak: {t_peak}")
         except Exception:
             self.target_row.set_subtitle(_("Unknown"))

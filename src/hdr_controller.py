@@ -165,7 +165,10 @@ class HdrController(GObject.Object):
         self._dovi_warned = False
 
         self._initial_mpv_props = {}
-        for prop in ("target-colorspace-hint", "target-trc", "target-prim", "target-peak"):
+        # target-colorspace-hint is deliberately absent: it is a no-op under
+        # the libmpv render API (mpv does not own the swapchain), so CineHDR
+        # neither sets nor restores it.
+        for prop in ("target-trc", "target-prim", "target-peak"):
             try:
                 self._initial_mpv_props[prop] = self.mpv[prop]
             except Exception:
@@ -238,7 +241,6 @@ class HdrController(GObject.Object):
             # mapping is active (numeric target-peak) and skips the extra GPU
             # pass in true pass-through (target-peak=auto).
             props = [
-                ("target-colorspace-hint", "yes"),
                 ("target-trc", "pq"),
                 ("target-prim", target_prim),
                 ("target-peak", peak_val),
@@ -246,7 +248,6 @@ class HdrController(GObject.Object):
         else:
             # Safe SDR fallback: restore initial mpv profile or defaults (P2-13)
             defaults = {
-                "target-colorspace-hint": "no",
                 "target-prim": "auto",
                 "target-peak": "auto",
                 "target-trc": "auto",

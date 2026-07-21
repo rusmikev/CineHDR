@@ -208,7 +208,6 @@ class TestApplyHDRSettings(unittest.TestCase):
 
         controller.apply_hdr_settings()
 
-        self.assertEqual(props["target-colorspace-hint"], "yes")
         self.assertEqual(props["target-trc"], "pq")
         self.assertEqual(props["target-prim"], "bt.2020")
         self.assertEqual(props["target-peak"], 400)
@@ -227,7 +226,6 @@ class TestApplyHDRSettings(unittest.TestCase):
 
         controller.apply_hdr_settings()
 
-        self.assertEqual(props["target-colorspace-hint"], "no")
         self.assertEqual(props["target-prim"], "auto")
         self.assertEqual(props["target-peak"], "auto")
         self.assertEqual(props["target-trc"], "auto")
@@ -355,7 +353,6 @@ class TestApplyHDRSettings(unittest.TestCase):
                 controller.apply_hdr_settings()
 
                 self.assertFalse(controller.is_hdr_active, f"HDR must stay off in mode={mode}")
-                self.assertEqual(props["target-colorspace-hint"], "no")
                 self.assertEqual(props["target-trc"], "auto")
                 self.assertEqual(props["target-prim"], "auto")
 
@@ -373,7 +370,6 @@ class TestApplyHDRSettings(unittest.TestCase):
             controller.apply_hdr_settings()
 
             self.assertTrue(controller.is_hdr_active)
-            self.assertEqual(props["target-colorspace-hint"], "yes")
             self.assertEqual(props["target-trc"], "pq")
             self.assertEqual(props["target-prim"], "bt.2020")
 
@@ -516,12 +512,10 @@ class TestApplyHDRSettings(unittest.TestCase):
         # Case A: check_hdr_support is False (e.g. X11) -> should fall back to SDR
         mock_support.return_value = False
         controller.apply_hdr_settings()
-        self.assertEqual(props.get("target-colorspace-hint"), "no")
 
         # Case B: check_hdr_support is True (Wayland + GTK >= 4.16) -> should apply PQ
         mock_support.return_value = True
         controller.apply_hdr_settings()
-        self.assertEqual(props.get("target-colorspace-hint"), "yes")
         self.assertEqual(props.get("target-trc"), "pq")
         self.assertEqual(props.get("target-prim"), "bt.2020")
         self.assertEqual(props.get("target-peak"), 1000)
@@ -538,7 +532,6 @@ class TestApplyHDRSettings(unittest.TestCase):
         controller._is_hdr_content = False  # SDR content!
         controller.hdr_mode = "force-hdr"
         self.assertTrue(controller.is_hdr_active)
-        self.assertEqual(props.get("target-colorspace-hint"), "yes")
         self.assertEqual(props.get("target-trc"), "pq")
 
     @patch("src.hdr_controller.check_hdr_support")
@@ -551,7 +544,6 @@ class TestApplyHDRSettings(unittest.TestCase):
         controller._is_hdr_content = True  # HDR content!
         controller.hdr_mode = "force-sdr"
         self.assertFalse(controller.is_hdr_active)
-        self.assertEqual(props.get("target-colorspace-hint"), "no")
         self.assertEqual(props.get("target-trc"), "auto")
 
 
@@ -838,7 +830,6 @@ class TestHdrDiagnostics(unittest.TestCase):
                 if name == "target-trc": return "pq"
                 if name == "target-prim": return "dci-p3"
                 if name == "target-peak": return "1000"
-                if name == "target-colorspace-hint": return "yes"
                 return None
 
         class MockWin:
@@ -1368,3 +1359,41 @@ class TestWaylandOutputHdrModule(unittest.TestCase):
         from src import wayland_output_hdr as w
         with patch.object(w, "_get_wl_display_ptr", return_value=None):
             self.assertIsNone(w.probe_outputs())
+
+
+# ──────────────────────────────────────────────────────────────
+# 11. target-colorspace-hint stays removed
+# ──────────────────────────────────────────────────────────────
+
+class TestColorspaceHintRemoved(unittest.TestCase):
+    """target-colorspace-hint is a no-op under the libmpv render API; the
+    controller must never write it in either branch."""
+
+    def _make_mock_mpv(self):
+        props = {}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda _self, k, v: props.__setitem__(k, v)
+        mock_mpv.__getitem__ = MagicMock(side_effect=KeyError)
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+        return mock_mpv, props
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_never_written_in_either_branch(self, _sup):
+        from src.hdr_controller import HdrController
+        with patch("src.hdr_controller.get_monitor_hdr_state", return_value=True):
+            mock_mpv, props = self._make_mock_mpv()
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            controller.apply_hdr_settings()          # HDR branch
+            self.assertNotIn("target-colorspace-hint", props)
+            controller.hdr_mode = "force-sdr"        # SDR branch
+            self.assertNotIn("target-colorspace-hint", props)
+
+    def test_not_in_initial_snapshot(self):
+        from src.hdr_controller import HdrController
+        mock_mpv, _props = self._make_mock_mpv()
+        mock_mpv.__getitem__ = MagicMock(return_value="x")  # snapshot succeeds
+        with patch("src.hdr_controller.check_hdr_support", return_value=False):
+            controller = HdrController(mock_mpv)
+        self.assertNotIn("target-colorspace-hint", controller._initial_mpv_props)

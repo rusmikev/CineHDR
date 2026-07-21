@@ -74,12 +74,12 @@ flowchart TD
     SystemUnsupported --> ApplySDR
 
     subgraph HDR_Active ["Active HDR State (Rec.2100 PQ / GL_RGBA16F)"]
-        ApplyHDR --> MPVProps["Set libmpv Properties:\n- target-colorspace-hint = yes\n- target-trc = pq\n- target-prim = bt.2020\n- target-peak = [preset / auto]"]
+        ApplyHDR --> MPVProps["Set libmpv Properties:\n- target-trc = pq\n- target-prim = bt.2020\n- target-peak = [preset / auto]"]
         MPVProps --> TextureState["Ensure GL_RGBA16F FBO Pool & Attach\nGdk.ColorState.get_rec2100_pq() to Gdk.GLTexture"]
     end
 
     subgraph SDR_Active ["Active SDR State (SDR Fallback / GL_RGBA8)"]
-        ApplySDR --> MPVPropsSDR["Set libmpv Properties:\n- target-colorspace-hint = no\n- target-trc = auto\n- target-prim = auto\n- target-peak = auto"]
+        ApplySDR --> MPVPropsSDR["Set libmpv Properties:\n- target-trc = auto\n- target-prim = auto\n- target-peak = auto"]
         MPVPropsSDR --> TextureStateSDR["Ensure GL_RGBA8 FBO Pool & Attach\nDefault GTK Color State (sRGB / BT.709)"]
     end
 ```

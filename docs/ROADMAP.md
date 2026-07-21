@@ -15,10 +15,10 @@ comes next.
    `sig-peak`, feed `target-peak = max_lum` to mpv so it tone-maps *inside*
    PQ to the monitor's real capability instead of relying on the compositor
    clip. Needs A/B validation on a mid-range (≈400–600 nit) HDR display.
-3. **`target-colorspace-hint` cleanup.** The property is a no-op under the
-   libmpv render API (mpv does not own the swapchain). Remove it from
-   `HdrController`, the restore snapshot, the diagnostics line and the nine
-   test assertions in one dedicated commit.
+3. **`target-colorspace-hint` cleanup.** *Done.* The property is a no-op
+   under the libmpv render API (mpv does not own the swapchain); it is no
+   longer set, restored, displayed or asserted anywhere, and a regression
+   test locks it out of the mpv property writes.
 4. **xx_color_manager_v4 output query.** The monitor-state probe currently
    binds only the ratified `wp_color_manager_v1`. GTK 4.16/4.17 systems
    (Plasma 6.2 era) negotiate `xx_color_manager_v4`, whose event tables
