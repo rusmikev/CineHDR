@@ -29,8 +29,8 @@ Play your videos with HDR support
 * Provided system integration launcher (**CineHDR**).
 
 **Known limitations / Известные ограничения:**
-* CineHDR requires GTK's modern renderer (`ngl`/`vulkan`). Upstream Cine pins `GSK_RENDERER=gl` to work around frame drops on the Niri DE and video blackouts on some NVIDIA setups; that workaround is incompatible with HDR. If you hit those issues, launching with `GSK_RENDERER=gl` still works — CineHDR detects it and falls back to SDR rendering.
-* "HDR supported" means GTK accepts the Rec.2100 color state, not that your monitor is in HDR mode. On an SDR output the PQ signal is converted by GTK/the compositor, which is simpler than mpv's tone mapping — if HDR content looks washed out or clipped there, select **Force SDR** in the HDR menu to get mpv's tone mapping back. Check **HDR Diagnostics** in the same menu for the live pipeline state.
+* CineHDR requires GTK's modern renderer (`ngl`/`vulkan`). Upstream Cine pins `GSK_RENDERER=gl` to work around frame drops on the Niri DE and video blackouts on some NVIDIA setups; that workaround is incompatible with HDR. On Niri the pin is now applied automatically (`NIRI_SOCKET` detected, nothing lost — Niri has no color management anyway). Elsewhere, launching with `GSK_RENDERER=gl` still works — CineHDR detects it and falls back to SDR rendering.
+* CineHDR now asks the compositor directly whether it speaks a color-management protocol (`wp_color_manager_v1`) and refuses HDR pass-through when it does not — on such systems (older wlroots, Weston, Niri) you automatically get mpv's proper tone mapping instead of a washed-out picture. One gap remains: a capable compositor with monitor HDR switched *off* still converts PQ to SDR itself, which is simpler than mpv's tone mapping — if HDR content looks washed out or clipped there, select **Force SDR** in the HDR menu. Check **HDR Diagnostics** in the same menu for the live pipeline state, including the new "Compositor Color Management" row.
 
 ---
 

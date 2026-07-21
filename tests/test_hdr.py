@@ -1089,3 +1089,119 @@ class TestAuditFixes(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+# ──────────────────────────────────────────────────────────────
+# 9. Compositor color-management probe integration (wayland_cm_probe)
+# ──────────────────────────────────────────────────────────────
+
+class TestCompositorCmProbeIntegration(unittest.TestCase):
+    """check_hdr_support() must honor the compositor registry probe:
+    a definitive False blocks HDR, an inconclusive None keeps legacy behavior."""
+
+    def _wayland_ready_display(self):
+        mock_display = MagicMock()
+        mock_display.__class__.__name__ = "GdkWaylandDisplay"
+        mock_display.is_composited.return_value = True
+        mock_display.is_rgba.return_value = True
+        dmabuf = MagicMock()
+        dmabuf.get_n_formats.return_value = 10
+        mock_display.get_dmabuf_formats.return_value = dmabuf
+        return mock_display
+
+    @patch("src.hdr_detection.Gdk.ColorState", create=True)
+    def test_probe_false_blocks_hdr_support(self, mock_colorstate):
+        from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
+        mock_colorstate.get_rec2100_pq = MagicMock()
+        display = self._wayland_ready_display()
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=False):
+            invalidate_hdr_support_cache()
+            self.assertFalse(check_hdr_support())
+
+    @patch("src.hdr_detection.Gdk.ColorState", create=True)
+    def test_probe_true_allows_hdr_support(self, mock_colorstate):
+        from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
+        mock_colorstate.get_rec2100_pq = MagicMock()
+        display = self._wayland_ready_display()
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=True):
+            invalidate_hdr_support_cache()
+            self.assertTrue(check_hdr_support())
+
+    @patch("src.hdr_detection.Gdk.ColorState", create=True)
+    def test_probe_none_keeps_previous_behavior(self, mock_colorstate):
+        """Unknown probe result must not regress systems where the probe
+        cannot run (backward compatibility contract)."""
+        from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
+        mock_colorstate.get_rec2100_pq = MagicMock()
+        display = self._wayland_ready_display()
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=None):
+            invalidate_hdr_support_cache()
+            self.assertTrue(check_hdr_support())
+
+    @patch("src.hdr_detection.Gdk.ColorState", create=True)
+    def test_unsupported_reason_mentions_color_management(self, mock_colorstate):
+        from src.hdr_detection import (
+            check_hdr_support,
+            get_hdr_unsupported_reason,
+            invalidate_hdr_support_cache,
+        )
+        mock_colorstate.get_rec2100_pq = MagicMock()
+        if not hasattr(Gdk_holder.Gdk, "MemoryFormat"):
+            self.skipTest("Gdk.MemoryFormat missing on this GTK")
+        display = self._wayland_ready_display()
+        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=False):
+            invalidate_hdr_support_cache()
+            self.assertFalse(check_hdr_support())
+            reason = get_hdr_unsupported_reason(display)
+            self.assertIn("color management", reason)
+            self.assertIn("wp_color_manager_v1", reason)
+
+    def test_invalidate_clears_probe_cache(self):
+        """invalidate_hdr_support_cache() must also drop the probe cache."""
+        from src import wayland_cm_probe
+        from src.hdr_detection import invalidate_hdr_support_cache
+        wayland_cm_probe._cached_result = True
+        wayland_cm_probe._cache_valid = True
+        invalidate_hdr_support_cache()
+        self.assertFalse(wayland_cm_probe._cache_valid)
+        self.assertIsNone(wayland_cm_probe._cached_result)
+
+    def test_probe_returns_none_without_wayland_display(self):
+        """On a system without a Wayland display the probe must answer
+        'unknown', never a false negative."""
+        from src import wayland_cm_probe
+        with patch.object(wayland_cm_probe, "_get_wl_display_ptr", return_value=None):
+            wayland_cm_probe.invalidate()
+            self.assertIsNone(wayland_cm_probe.probe_color_management())
+        wayland_cm_probe.invalidate()
+
+    def test_probe_result_is_cached(self):
+        from src import wayland_cm_probe
+        with patch.object(wayland_cm_probe, "_get_wl_display_ptr", return_value=None) as mock_ptr:
+            wayland_cm_probe.invalidate()
+            wayland_cm_probe.probe_color_management()
+            wayland_cm_probe.probe_color_management()
+            self.assertEqual(mock_ptr.call_count, 1)
+        wayland_cm_probe.invalidate()
+
+    def test_enumerate_globals_missing_symbols_returns_none(self):
+        """A libwayland without the expected entry points must yield
+        'unknown' (None), not crash and not report False."""
+        from src import wayland_cm_probe
+
+        class _EmptyLib:
+            def __getattr__(self, name):
+                raise AttributeError(name)
+
+        self.assertIsNone(wayland_cm_probe._enumerate_globals(_EmptyLib(), 0xdead))
+
+
+class Gdk_holder:
+    """Late import holder so the reason-string test can inspect real Gdk."""
+    import gi as _gi
+    _gi.require_version("Gdk", "4.0")
+    from gi.repository import Gdk

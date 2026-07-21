@@ -31,6 +31,8 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk
 from typing import Optional, Any
 
+from . import wayland_cm_probe
+
 
 _cached_support = None
 
@@ -38,6 +40,20 @@ _cached_support = None
 def invalidate_hdr_support_cache():
     global _cached_support
     _cached_support = None
+    # The compositor capability probe caches independently; keep the two in
+    # lockstep so a monitor hot-plug / re-realize re-evaluates everything.
+    wayland_cm_probe.invalidate()
+
+
+def get_compositor_cm_support() -> Optional[bool]:
+    """Tri-state: does the Wayland compositor advertise color management?
+
+    True/False come from enumerating the compositor's registry globals
+    (wp_color_manager_v1 / xx_color_manager_v4); None means the probe could
+    not run (e.g. not Wayland, or libwayland-client unavailable) and the
+    answer is unknown. Exposed for the diagnostics dialog.
+    """
+    return wayland_cm_probe.probe_color_management()
 
 
 def check_hdr_support() -> bool:
@@ -81,6 +97,16 @@ def _check_hdr_support_uncached() -> bool:
             dmabuf = display.get_dmabuf_formats()
             if dmabuf is not None and hasattr(dmabuf, "get_n_formats") and dmabuf.get_n_formats() == 0:
                 return False
+
+        # Ask the compositor itself: without a color-management global
+        # (wp_color_manager_v1 / xx_color_manager_v4) GTK cannot hand a
+        # Rec.2100 PQ surface to the compositor and will silently convert
+        # PQ -> sRGB with a plain colorimetric transform, which looks worse
+        # than mpv's tone mapping. Only a definitive "no" from the registry
+        # blocks HDR; an inconclusive probe (None) preserves the previous
+        # heuristic behaviour.
+        if wayland_cm_probe.probe_color_management() is False:
+            return False
 
         return True
     except Exception:
@@ -260,5 +286,10 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
     is_wayland = ("wayland" in str(display_name).lower() or "wayland" in display.__class__.__name__.lower())
     if not is_wayland:
         return f"HDR signaling is not supported under {display.__class__.__name__} (requires Wayland)"
+    if wayland_cm_probe.probe_color_management() is False:
+        return (
+            "Wayland compositor does not advertise a color management protocol "
+            "(wp_color_manager_v1) — HDR pass-through is impossible, using mpv tone mapping"
+        )
     return "Wayland compositor does not support HDR/color management"
 

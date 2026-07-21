@@ -60,6 +60,7 @@ cine_sources = [
   'shortcuts.py',
   'utils.py',
   'video_widget.py',
+  'wayland_cm_probe.py',
   'window.py',
 ]
 

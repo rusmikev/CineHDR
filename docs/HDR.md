@@ -57,8 +57,8 @@ How **CineHDR** dynamically evaluates system capabilities (`check_hdr_support`),
 flowchart TD
     Start["Video Playback / Property Change"] --> CheckSupport["Check System Capabilities (check_hdr_support)"]
     
-    CheckSupport -->|"Wayland + GTK >= 4.16 + ColorState + RGBA16F FBO"| SystemSupported["System Supports HDR"]
-    CheckSupport -->|"X11 / GSK_RENDERER=gl / Old GTK / No Display"| SystemUnsupported["System Unsupported"]
+    CheckSupport -->|"Wayland + GTK >= 4.16 + ColorState + RGBA16F FBO + compositor color mgmt"| SystemSupported["System Supports HDR"]
+    CheckSupport -->|"X11 / GSK_RENDERER=gl / Old GTK / No Display / no wp_color_manager_v1"| SystemUnsupported["System Unsupported"]
 
     SystemSupported --> DoViGate["Check Dolby Vision Profile (get_dovi_info)"]
     DoViGate -->|"Profile 5 (unshapeable IPT)"| ApplySDR
@@ -110,6 +110,17 @@ CineHDR leaves `hdr-compute-peak` set to `libmpv`'s default (`auto`).
 * **Fallback Release Timing:** When `destroy-notify` is unavailable on `Gdk.GLTextureBuilder`, the widget safely holds the *previous* fallback slot (`self._fallback_slot`) until after the *new* texture is published (`self.current_texture`). This guarantees `libmpv` never renders into a buffer actively being scanned out by the compositor, preventing tearing.
 * **GraphicsOffload & NVIDIA Handling:** `Window` wraps `MpvVideoWidget` inside `Gtk.GraphicsOffload`. If an NVIDIA proprietary GPU driver is detected (`get_gpu_vendor()` in `utils.py`), `GraphicsOffload` is disabled (`DISABLED`) to prevent Wayland cursor flickering and buffer sync artifacts, while remaining enabled (`ENABLED`) for direct scanout on AMD and Intel GPUs.
 
+### E. Compositor Capability Probe (`wayland_cm_probe.py`)
+`check_hdr_support()` used to trust proxy signals only (Wayland session, GTK API presence, dmabuf formats). None of those prove the *compositor* can accept a Rec.2100 PQ surface: on a Wayland compositor without color management GTK silently converts PQ -> sRGB with a plain colorimetric transform, which looks *worse* than mpv's tone mapping — the exact "washed out unless you pick Force SDR" failure mode described in the README.
+* **Mechanism:** a private `wl_event_queue` + proxy wrapper is attached to GTK's own `wl_display` (the documented libwayland pattern for sharing a connection with a toolkit), the registry globals are enumerated in one round-trip, and the result is reduced to a tri-state:
+  * `True` — `wp_color_manager_v1` (ratified protocol; KWin / Plasma 6.3+, Mutter / GNOME 48+) or `xx_color_manager_v4` (experimental predecessor spoken by GTK 4.16/4.17) is advertised.
+  * `False` — registry enumerated, no color-management global: HDR pass-through is refused and mpv tone mapping is used, regardless of `hdr-mode`.
+  * `None` — the probe could not run (no Wayland display, libwayland unavailable): **behaviour is unchanged** relative to previous releases; only a definitive "no" blocks HDR.
+* **Caching:** the result is cached per process and dropped together with the `check_hdr_support()` cache (`invalidate_hdr_support_cache()`), i.e. on widget realize and monitor hot-plug.
+
+### F. Niri Renderer Pin (`main.py`)
+Upstream Cine pins `GSK_RENDERER=gl` globally to work around frame drops on the Niri compositor; CineHDR removed the global pin because the legacy GL renderer has no color-state support. The workaround is now applied *surgically*: when `NIRI_SOCKET` is present in the environment and the user has not set `GSK_RENDERER` themselves, the pin is restored. Niri offers no color management, so no HDR capability is lost — CineHDR detects the legacy renderer and falls back to SDR tone mapping as before.
+
 ---
 
 ## 4. Troubleshooting & Diagnostics Mapping
@@ -120,5 +131,7 @@ The table below maps UI rows in the `HDR Diagnostics` dialog (`src/hdr_diagnosti
 | :--- | :--- | :--- |
 | **HDR Status** | Shows active mode and whether video content has HDR metadata (`is_hdr_content` -> `sig-peak > 1.0` or `gamma in (pq, hlg, st2084)`). | Reports `HDR Active (Rec.2100 PQ)` during HDR pass-through, or `SDR Tonemapping` during SDR playback. |
 | **Display HDR Supported** | Whether GTK accepts high-precision Rec.2100 PQ color state on the active display (`check_hdr_support()`). | Reports `No` if running under X11, `GSK_RENDERER=gl`, or GTK version older than `4.16`. |
+| **Compositor Color Management** | Direct answer from the Wayland registry (`wayland_cm_probe.probe_color_management()`): is `wp_color_manager_v1` / `xx_color_manager_v4` advertised? | `No` means HDR pass-through is physically impossible on this compositor (older wlroots, Weston without CM, Niri); `Unknown` means the probe could not run and legacy behaviour applies. |
+| **Graphics Offload (Direct Scanout)** | State of the `Gtk.GraphicsOffload` wrapper around the video widget. | `Disabled (NVIDIA workaround)` on proprietary NVIDIA drivers — HDR still works through GTK compositing, but without direct scanout. |
 | **Dolby Vision Profile** | Reports detected Dolby Vision metadata (`current-tracks/video/dolby-vision-profile` or colormatrix). | Reports `Profile 5 (Unsupported in vo=libmpv / RPU not processed)` or `Profile 7/8 (HDR10 Base / RPU not processed)` to transparently reflect `libmpv/render` API capabilities. |
 | **System HDR Limitation** | Specific explanation when `Display HDR Supported` returns `No` (`get_hdr_unsupported_reason()`). | Indicates when X11 windowing system is in use or when the Wayland display/compositor lacks HDR capability. |

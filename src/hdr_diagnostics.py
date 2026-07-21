@@ -13,7 +13,11 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, GLib, Gtk
 
-from .hdr_detection import check_hdr_support, get_hdr_unsupported_reason
+from .hdr_detection import (
+    check_hdr_support,
+    get_compositor_cm_support,
+    get_hdr_unsupported_reason,
+)
 
 
 def get_mpv_prop(mpv, name, default=None):
@@ -56,6 +60,8 @@ class HdrDiagnosticsDialog(Adw.Dialog):
 
     status_row: Adw.ActionRow = Gtk.Template.Child()
     display_hdr_row: Adw.ActionRow = Gtk.Template.Child()
+    compositor_cm_row: Adw.ActionRow = Gtk.Template.Child()
+    offload_row: Adw.ActionRow = Gtk.Template.Child()
     unsupported_reason_row: Adw.ActionRow = Gtk.Template.Child()
     color_state_row: Adw.ActionRow = Gtk.Template.Child()
     texture_format_row: Adw.ActionRow = Gtk.Template.Child()
@@ -142,6 +148,35 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             self.display_hdr_row.set_subtitle(_("No (Fallback to SDR / 8-bit)"))
             self.unsupported_reason_row.set_visible(True)
             self.unsupported_reason_row.set_subtitle(get_hdr_unsupported_reason())
+
+        # Direct answer from the compositor registry: without a color
+        # management global GTK cannot pass Rec.2100 PQ through, no matter
+        # what the rows above say.
+        cm = get_compositor_cm_support()
+        if cm is True:
+            self.compositor_cm_row.set_subtitle(
+                _("Yes (wp_color_manager_v1 advertised)")
+            )
+        elif cm is False:
+            self.compositor_cm_row.set_subtitle(
+                _("No — compositor lacks wp_color_manager_v1, HDR pass-through impossible")
+            )
+        else:
+            self.compositor_cm_row.set_subtitle(_("Unknown (probe unavailable)"))
+
+        offload = getattr(self._win, "offload", None)
+        try:
+            enabled = offload.get_enabled() if offload else None
+        except Exception:
+            enabled = None
+        if enabled is None:
+            self.offload_row.set_subtitle(_("Unknown"))
+        elif enabled == Gtk.GraphicsOffloadEnabled.DISABLED:
+            self.offload_row.set_subtitle(
+                _("Disabled (NVIDIA workaround) — HDR goes through GTK compositing")
+            )
+        else:
+            self.offload_row.set_subtitle(_("Enabled (subsurface / direct scanout possible)"))
 
         if hasattr(Gdk, "ColorState") and hasattr(Gdk.ColorState, "get_rec2100_pq"):
             if is_active and supported:
