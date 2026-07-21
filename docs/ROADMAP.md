@@ -10,11 +10,13 @@ comes next.
    using `wl_display_prepare_read_queue()` / `wl_display_read_events()` /
    `wl_display_dispatch_queue_pending()` on the display fd. Invalidate caches
    and re-apply HDR settings from the event instead of polling.
-2. **Auto `target-peak` from the output.** When pass-through is active and the
-   output's image description reports `max_lum` well below the stream's
-   `sig-peak`, feed `target-peak = max_lum` to mpv so it tone-maps *inside*
-   PQ to the monitor's real capability instead of relying on the compositor
-   clip. Needs A/B validation on a mid-range (≈400–600 nit) HDR display.
+2. **Auto `target-peak` from the output.** *Implemented; A/B validation
+   still open.* With the peak preset on `auto` and the output's
+   `max_lum` below `sig-peak × 203 × 0.9`, mpv now receives the monitor
+   value and tone-maps inside PQ (docs/HDR.md, invariant C). Remaining
+   release gate: A/B against `peak=auto` on a mid-range (≈400–600 nit)
+   HDR display — gradients 100→4000 nits plus real scenes — and a
+   decision on trusting the compositor's own tone mapping on KWin ≥ 6.3.
 3. **`target-colorspace-hint` cleanup.** *Done.* The property is a no-op
    under the libmpv render API (mpv does not own the swapchain); it is no
    longer set, restored, displayed or asserted anywhere, and a regression

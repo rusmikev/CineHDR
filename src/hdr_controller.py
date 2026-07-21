@@ -31,6 +31,7 @@ import logging
 from typing import Any, Optional
 from gi.repository import GObject, Gio, GLib
 from .utils import idle_add_once
+from . import wayland_output_hdr
 from .hdr_detection import (
     is_hdr_content,
     check_hdr_support,
@@ -160,6 +161,8 @@ class HdrController(GObject.Object):
         self._hdr_target_peak = config["hdr_target_peak"]
         self._is_hdr_content = False
         self._output_hint = None
+        self._last_video_params = None
+        self._effective_peak_source = "auto"
         self._hdr_support_warned = False
         self._dovi_info: Optional[dict] = None
         self._dovi_warned = False
@@ -187,6 +190,10 @@ class HdrController(GObject.Object):
         @self.mpv.property_observer("video-params")
         def _on_video_params(_name, params):
             # See mpv docs: video-params property contains stream color metadata (primaries, gamma, sig-peak)
+            # Cache the raw dict: apply_hdr_settings() reads sig-peak from it
+            # for the automatic target-peak substitution. python-mpv has no
+            # reliable synchronous getter to use from there instead.
+            self._last_video_params = params if isinstance(params, dict) else None
             is_hdr = is_hdr_content(params)
             # Dolby Vision profile comes from the *track* properties; video-params
             # only carries the already-mapped colorimetry (bt.2020/pq) that
@@ -227,7 +234,27 @@ class HdrController(GObject.Object):
             target_peak = self._hdr_target_peak
             if target_peak not in HDR_PEAK_PRESETS:
                 target_peak = "auto"
-            peak_val = "auto" if target_peak == "auto" else int(float(target_peak))
+            if target_peak == "auto":
+                # Automatic target-peak: when the monitor's own peak (from its
+                # image description) is meaningfully below the stream's peak,
+                # hand mpv the monitor value so it tone-maps *inside* PQ to the
+                # panel's real capability instead of leaving the excess to the
+                # compositor's clip. Tri-state discipline: unknown stream peak
+                # or unknown monitor peak -> no substitution ("auto").
+                peak_val = "auto"
+                self._effective_peak_source = "auto"
+                monitor_peak = self._monitor_peak_nits()
+                stream_peak = self._stream_peak_nits()
+                if (
+                    monitor_peak is not None
+                    and stream_peak is not None
+                    and monitor_peak < stream_peak * 0.9
+                ):
+                    peak_val = int(monitor_peak)
+                    self._effective_peak_source = f"monitor ({peak_val} nits)"
+            else:
+                peak_val = int(float(target_peak))
+                self._effective_peak_source = f"user preset ({peak_val} nits)"
 
             # The published GL texture carries Gdk.ColorState Rec.2100 PQ, i.e.
             # GTK/the compositor decode it as BT.2020 + PQ by contract. The
@@ -247,6 +274,7 @@ class HdrController(GObject.Object):
             ]
         else:
             # Safe SDR fallback: restore initial mpv profile or defaults (P2-13)
+            self._effective_peak_source = "auto"
             defaults = {
                 "target-prim": "auto",
                 "target-peak": "auto",
@@ -334,6 +362,54 @@ class HdrController(GObject.Object):
     def dovi_unsupported(self) -> bool:
         """True when the stream's Dolby Vision profile cannot be rendered here."""
         return bool((self._dovi_info or {}).get("unsupported"))
+
+    def _stream_peak_nits(self):
+        """Peak of the playing stream in nits from cached video-params, or
+        None when unknown (no guessed defaults — unknown must change
+        nothing)."""
+        params = self._last_video_params
+        if not isinstance(params, dict):
+            return None
+        try:
+            sig_peak = float(params.get("sig-peak"))
+        except (TypeError, ValueError):
+            return None
+        if sig_peak <= 0:
+            return None
+        return sig_peak * 203.0
+
+    def _monitor_peak_nits(self):
+        """Peak luminance of the output the video sits on, in nits.
+
+        Uses the connector hint when available; without a hint, falls back to
+        the single HDR output if there is exactly one (unambiguous), else
+        None. Only HDR outputs count — in force-hdr-onto-SDR the compositor
+        converts and its peak is meaningless here."""
+        try:
+            states = wayland_output_hdr.get_output_hdr_states()
+        except Exception:
+            return None
+        if not states:
+            return None
+        info = None
+        if self._output_hint and self._output_hint in states:
+            info = states[self._output_hint]
+        else:
+            hdr_infos = [i for i in states.values() if i.hdr]
+            if len(hdr_infos) == 1:
+                info = hdr_infos[0]
+        if info is None or not info.hdr:
+            return None
+        if info.max_lum and info.max_lum > 0:
+            return float(info.max_lum)
+        return None
+
+    @property
+    def effective_peak_source(self) -> str:
+        """Human-readable origin of the current target-peak value
+        ('auto' | 'monitor (N nits)' | 'user preset (N nits)') — read-only,
+        shown in the diagnostics dialog."""
+        return self._effective_peak_source
 
     @property
     def output_hint(self):

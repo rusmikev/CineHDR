@@ -74,7 +74,7 @@ flowchart TD
     SystemUnsupported --> ApplySDR
 
     subgraph HDR_Active ["Active HDR State (Rec.2100 PQ / GL_RGBA16F)"]
-        ApplyHDR --> MPVProps["Set libmpv Properties:\n- target-trc = pq\n- target-prim = bt.2020\n- target-peak = [preset / auto]"]
+        ApplyHDR --> MPVProps["Set libmpv Properties:\n- target-trc = pq\n- target-prim = bt.2020\n- target-peak = [preset / monitor max_lum / auto]"]
         MPVProps --> TextureState["Ensure GL_RGBA16F FBO Pool & Attach\nGdk.ColorState.get_rec2100_pq() to Gdk.GLTexture"]
     end
 
@@ -99,10 +99,12 @@ When HDR rendering is active (`hdr_enabled == True`), `HdrController.apply_hdr_s
 * **Profile 5 (`IPTPQc2` Proprietary Color Space):** Attaching a `Rec.2100 PQ` color state to unshaped Profile 5 IPT frames yields false colors (green/purple tint) *and* flips the monitor into HDR mode. Note that content detection alone cannot prevent this: libplacebo's `pl_map_avdovi_metadata()` rewrites the decoder-side frame parameters to `primaries=bt.2020` / `transfer=pq` for every single-layer DoVi stream, so `video-params` reports `gamma="pq"` and `is_hdr_content()` returns `True` for Profile 5 as well. The refusal therefore lives in `HdrController.is_hdr_active`, as a **capability gate placed ahead of the user's `hdr-mode`** (`DOVI_UNSUPPORTED_PROFILES = (5,)`): Profile 5 always falls back to `mpv`'s SDR tone mapping, and even `force-hdr` cannot override it, because forcing HDR cannot repair the picture — it only adds a wrong mode switch on top of wrong colors. A one-shot warning is logged (`check_dovi_warning()`).
 * **Profile Source:** `get_dovi_info()` reads the profile from the *track* properties (`current-tracks/video/dolby-vision-profile` / `dolby-vision-level`) — the only reliable source, since `video-params` never carries it. The `colormatrix == "dolbyvision"` fingerprint is used as a **presence** signal only: libplacebo sets it identically for Profiles 5 and 8, so it cannot tell them apart. When the profile cannot be read, the stream is reported as *detected, profile unknown* and the pipeline is left untouched — refusing HDR on a guess would needlessly downgrade a perfectly playable Profile 8 stream.
 
-### C. Peak Computation Strategy (`hdr-compute-peak = auto`)
-CineHDR leaves `hdr-compute-peak` set to `libmpv`'s default (`auto`).
-* **Tone Mapping Active (Numeric `target-peak` e.g., 400 nits):** `libmpv` automatically enables dynamic per-frame peak luminance detection on the GPU to cleanly compress highlights.
-* **Pass-through Active (`target-peak = auto`):** `libmpv` automatically bypasses the GPU peak computation pass, saving video memory bandwidth and GPU power during direct pass-through.
+### C. Peak Strategy: user preset > monitor luminance > auto (`hdr-compute-peak = auto`)
+CineHDR leaves `hdr-compute-peak` set to `libmpv`'s default (`auto`) and resolves `target-peak` in the HDR branch in this order:
+* **User preset (e.g. 400 nits):** always wins. `libmpv` tone-maps to that peak and automatically enables dynamic per-frame peak detection on the GPU.
+* **Automatic monitor peak:** with the preset on `auto`, when the output's image description (invariant G) reports a peak luminance meaningfully below the stream's peak (`max_lum < sig_peak × 203 × 0.9`), that `max_lum` is handed to mpv as a numeric `target-peak`. mpv then tone-maps *inside* PQ to the panel's real capability instead of leaving the excess to the compositor's clip — the case that matters on 400–600 nit displays playing 1000–4000 nit masters. The per-frame peak-detection pass this enables is exactly what makes the compression clean, so it is a feature here, not a cost. Tri-state discipline applies: an unknown stream peak (no cached `video-params`/`sig-peak`) or unknown monitor peak means **no substitution**. The connector hint selects the output; without a hint the single HDR output is used when unambiguous. The origin of the active value is exposed as `HdrController.effective_peak_source` and shown in the diagnostics Target Tone Mapping row.
+* **True pass-through (`target-peak = auto`):** when the monitor is at least as bright as the content (or peaks are unknown), `libmpv` bypasses the GPU peak-computation pass, saving bandwidth and power.
+* **Caveat under A/B validation:** compositors may tone-map on top (KWin does); double tone mapping can over-compress highlights. Release gating for this feature is the manual A/B on a mid-range HDR display listed in the roadmap — until then treat `monitor (...)` substitutions as candidate behaviour, revertible per user via an explicit preset.
 
 ### D. Framebuffer Pool & VRAM Lifecycle (`GLFramebufferPool`)
 * **Dynamic Format Allocation:** `GLFramebufferPool.ensure()` dynamically selects internal texture formats: `GL_RGBA16F` (16-bit float per channel, 64 bpp) when `hdr_enabled` is True, and `GL_RGBA8` (8-bit integer, 32 bpp) when SDR is active, cutting VRAM bandwidth by 50% during SDR playback.
