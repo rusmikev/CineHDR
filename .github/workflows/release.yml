@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: "Build and Release Flatpak"
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install deps
+        if: ${{ matrix.arch != 'x86_64' }}
+        run: |
+          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
+          tar xzvf docker.tgz
+          mv docker/* /usr/bin
+
+      - name: Set up QEMU
+        if: ${{ matrix.arch != 'x86_64' }}
+        id: qemu
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: CineHDR-${{ matrix.arch }}.flatpak
+          manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
+          cache-key: flatpak-builder-release-${{ github.sha }}
+          run-tests: ${{ matrix.arch == 'x86_64' }}
+          arch: ${{ matrix.arch }}
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: CineHDR-${{ matrix.arch }}.flatpak
+          generate_release_notes: true

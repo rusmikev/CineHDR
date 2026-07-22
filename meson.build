@@ -1,5 +1,5 @@
 project('cinehdr',
-          version: '1.7.3',
+          version: '1.7.3.1.0',
     meson_version: '>= 1.0.0',
   default_options: [ 'warning_level=2', 'werror=false', ],
 )

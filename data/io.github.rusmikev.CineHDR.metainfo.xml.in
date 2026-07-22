@@ -70,6 +70,18 @@
   </requires>
 
   <releases>
+    <release version="1.7.3.1.0" date="2026-07-22">
+      <description translate="no">
+        <ul>
+          <li>First major release of CineHDR</li>
+          <li>Full Wayland HDR support (Rec.2100 PQ / 16-bit float)</li>
+          <li>HDR Diagnostics overlay</li>
+          <li>Dynamic auto target-peak detection based on monitor luminance</li>
+          <li>Fallback logic for SDR screens and missing Wayland protocols</li>
+          <li>Refactored OpenGL rendering pipeline to eliminate tearing and race conditions</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.7.3" date="2026-07-11">
       <description translate="no">
         <ul>
