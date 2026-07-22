@@ -70,7 +70,7 @@
   </requires>
 
   <releases>
-    <release version="1.7.3.1.0" date="2026-07-22">
+    <release version="1.7.4.1.0" date="2026-07-22">
       <description translate="no">
         <ul>
           <li>First major release of CineHDR</li>
