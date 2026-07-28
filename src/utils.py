@@ -17,44 +17,53 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import gi
-import os
 import ctypes
+import logging
+import os
 import threading
 from urllib.parse import urlparse
+
+import gi
 
 gi.require_version("Gdk", "4.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("GdkX11", "4.0")
 gi.require_version("GdkWayland", "4.0")
-from gi.repository import Gdk, GLib
 from gi.repository import (
-    GdkX11,
+    Gdk,
     GdkWayland,  # pyright: ignore[reportAttributeAccessIssue]
+    GdkX11,
+    GLib,
 )
+
+logging.basicConfig(format="%(levelname)s: [%(filename)s:%(lineno)d] %(message)s")
+logger = logging.getLogger(__name__)
 
 gtk = ctypes.CDLL("libgtk-4.so.1")
 display = Gdk.Display.get_default()
 
 
 try:
-    xdg_pictures = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
+    join = os.path.join
+
+    XDG_PICTURES = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES)
     SCREENSHOT_DIR = (
-        os.path.join(xdg_pictures, "CineHDR Screenshots") if xdg_pictures else ""
+        join(XDG_PICTURES, "CineHDR Screenshots") if XDG_PICTURES else ""
     )
 
-    base_config = GLib.get_user_config_dir()
-    CONFIG_DIR = os.path.join(base_config, "cinehdr")
-    INPUT_CONF = os.path.join(CONFIG_DIR, "input.conf")
-    MPV_CONF = os.path.join(CONFIG_DIR, "mpv.conf")
-    WATCH_HISTORY_JSONL = os.path.join(CONFIG_DIR, "watch_history.jsonl")
+    BASE_CONFIG = GLib.get_user_config_dir()
 
-    old_last_pl_file = os.path.join(CONFIG_DIR, "last-playlist.m3u8")
-    playlist_dir = os.path.join(CONFIG_DIR, "last-playlist")
-    LAST_PLAYLIST_FILE = os.path.join(playlist_dir, "last-playlist.m3u8")
+    CONFIG_DIR = join(BASE_CONFIG, "cinehdr")
+    INPUT_CONF = join(CONFIG_DIR, "input.conf")
+    MPV_CONF = join(CONFIG_DIR, "mpv.conf")
+    WATCH_HISTORY_JSONL = join(CONFIG_DIR, "watch_history.jsonl")
+
+    OLD_PL_FILE = join(CONFIG_DIR, "last-playlist.m3u8")
+    PLAYLIST_DIR = join(CONFIG_DIR, "last-playlist")
+    LAST_PLAYLIST_FILE = join(PLAYLIST_DIR, "last-playlist.m3u8")
 
     os.makedirs(CONFIG_DIR, exist_ok=True)
-    os.makedirs(playlist_dir, exist_ok=True)
+    os.makedirs(PLAYLIST_DIR, exist_ok=True)
 
     for file in [
         INPUT_CONF,
@@ -64,13 +73,14 @@ try:
         if not os.path.exists(file):
             open(file, "w").close()
 
-    if os.path.exists(old_last_pl_file):
+    if os.path.exists(OLD_PL_FILE):
         from shutil import move
 
-        move(old_last_pl_file, playlist_dir)
+        move(OLD_PL_FILE, PLAYLIST_DIR)
+except Exception:
+    logger.exception("Failed to create files/folders")
 
-except Exception as e:
-    print("Error creating files/folders", repr(e))
+
 
 is_flatpak = os.environ.get("container") == "flatpak"
 
@@ -86,7 +96,7 @@ def get_has_host_permission():
                     perms = line.split("=")[-1].strip().split(";")
                     return "host" in perms
     except Exception:
-        pass
+        logger.exception("get_has_host_permission failed")
 
     return False
 
@@ -100,35 +110,39 @@ def get_mouse_bindings(bindings):
         for b in bindings:
             if "MBTN" in b["key"]:
                 active_mouse_bindings[b["key"]] = b["cmd"]
-    except Exception as e:
-        print("get_mouse_bindings error:", e)
+    except Exception:
+        logger.exception("get_mouse_bindings failed")
 
     return active_mouse_bindings
 
 
-def parse_nonrepeat_bindings(bindings):
+def parse_bindings(bindings):
     non_repeatable = set()
+    has_enter, has_kp_enter = False, False
     try:
         for b in bindings:
             key = b.get("key")
-            cmd = b.get("cmd", "")
+            cmd = b.get("cmd", "ignore")
+
+            if key == "ENTER" and cmd != "ignore":
+                has_enter = True
+
+            if key == "KP_ENTER" and cmd != "ignore":
+                has_kp_enter = True
 
             if key and "nonrepeatable" in cmd:
                 if len(key) == 1 and key.isupper() and key.isalpha():
                     key = f"Shift+{key}"
-
                 non_repeatable.add(key)
-    except Exception as e:
-        print("parse_nonrepeat_bindings error:", e)
+    except Exception:
+        logger.exception("parse_nonrepeat_bindings failed")
 
-    return non_repeatable
+    return (non_repeatable, has_enter, has_kp_enter)
 
 
 def is_local_path(path):
     parsed = urlparse(str(path))
-    if not parsed.scheme or parsed.scheme == "file" or len(parsed.scheme) == 1:
-        return True
-    return False
+    return bool(not parsed.scheme or parsed.scheme == "file" or len(parsed.scheme) == 1)
 
 
 def idle_add_once(function, *args, **kwargs) -> int:
@@ -153,6 +167,8 @@ def timeout_add_seconds_once(interval: int, function, *args, **kwargs) -> int:
         return GLib.SOURCE_REMOVE
 
     return GLib.timeout_add_seconds(interval, wrapper)
+
+
 def get_gpu_vendor(libgl):
     display = Gdk.Display.get_default()
     if not display:
@@ -200,8 +216,8 @@ def get_display_param():
             ptr = gtk.gdk_x11_display_get_xdisplay(get_pointer(display))
             if ptr:
                 param["x11_display"] = ptr
-    except Exception as e:
-        print(f"Error getting display param: {e}")
+    except Exception:
+        logger.exception("get_display_param failed")
 
     return param
 
@@ -223,6 +239,17 @@ def format_time(seconds):
     else:
         return f"{m}:{s:02d}"
 
+
+def append_modifiers(key_state, mods: list):
+    """Adds Ctrl/Alt/Shift/Meta"""
+    if key_state & Gdk.ModifierType.CONTROL_MASK:
+        mods.append("Ctrl")
+    if key_state & Gdk.ModifierType.ALT_MASK:
+        mods.append("Alt")
+    if key_state & Gdk.ModifierType.SHIFT_MASK:
+        mods.append("Shift")
+    if key_state & Gdk.ModifierType.META_MASK:
+        mods.append("Meta")
 
 class PrimaryClick:
     PLAY_PAUSE = 0
@@ -266,8 +293,15 @@ KEY_REMAP: dict = {
     "F18": "F18",
     "F19": "F19",
     "F20": "F20",
+    "F21": "F21",
+    "F22": "F22",
+    "F23": "F23",
+    "F24": "F24",
     "Escape": "ESC",
+    "Return": "ENTER",
     "BackSpace": "BS",
+    "Tab": "TAB",
+    "ISO_Left_Tab": "TAB",
     "Page_Up": "PGUP",
     "Page_Down": "PGDWN",
     "Left": "LEFT",
@@ -279,6 +313,9 @@ KEY_REMAP: dict = {
     "Insert": "INS",
     "Delete": "DEL",
     "Pause": "PAUSE",
+    "Print": "PRINT",
+    "Sys_Req": "PRINT",
+    "Menu": "MENU",
     "space": "SPACE",
     "KP_Add": "KP_ADD",
     "KP_Subtract": "KP_SUBTRACT",
@@ -293,24 +330,36 @@ KEY_REMAP: dict = {
     "KP_7": "KP7",
     "KP_8": "KP8",
     "KP_9": "KP9",
+    "KP_0": "KP0",
+    "KP_Decimal": "KP_DEC",
+    "KP_Delete": "KP_DEL",
+    "KP_Separator": "KP_SEPARATOR",
+    "KP_Insert": "KP_INS",
+    "KP_Enter": "KP_ENTER",
     "KP_End": "KP_END",
     "KP_Down": "KP_DOWN",
     "KP_Page_Down": "KP_PGDWN",
+    "KP_Next": "KP_PGDWN",
     "KP_Left": "KP_LEFT",
     "KP_Begin": "KP_BEGIN",
     "KP_Right": "KP_RIGHT",
     "KP_Home": "KP_HOME",
     "KP_Up": "KP_UP",
     "KP_Page_Up": "KP_PGUP",
-    "XF86AudioRaiseVolume": "VOLUME_UP",
-    "XF86AudioLowerVolume": "VOLUME_DOWN",
-    "XF86AudioMute": "MUTE",
-    "XF86PowerOff": "POWER",
-    "XF86AudioPlay": "PLAY",
-    "XF86AudioPause": "PAUSE",
-    "XF86AudioStop": "STOP",
-    "XF86AudioNext": "NEXT",
-    "XF86AudioPrev": "PREV",
+    "KP_Prior": "KP_PGUP",
+    "AudioRaiseVolume": "VOLUME_UP",
+    "AudioLowerVolume": "VOLUME_DOWN",
+    "AudioMute": "MUTE",
+    "PowerOff": "POWER",
+    "AudioPlay": "PLAY",
+    "AudioPause": "PAUSE",
+    "AudioStop": "STOP",
+    "AudioNext": "NEXT",
+    "AudioPrev": "PREV",
+    "AudioRewind": "PREV",
+    "AudioForward": "NEXT",
+    "AudioMedia": "MEDIA",
+    "AudioMicMute": "MUTE",
     "ZoomIn": "ZOOMIN",
     "ZoomOut": "ZOOMOUT",
 }

@@ -52,6 +52,7 @@ cine_sources = [
   'hdr_menu.py',
   'history.py',
   'main.py',
+  'mpv_gl_area.py',
   'mpris.py',
   'options.py',
   'playlist.py',

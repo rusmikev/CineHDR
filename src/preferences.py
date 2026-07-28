@@ -17,8 +17,10 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import gi
+import logging
 from gettext import gettext as _
+
+import gi
 
 gi.require_version("Adw", "1")
 gi.require_version("Gdk", "4.0")
@@ -26,9 +28,11 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, Gtk
-from .utils import CONFIG_DIR, has_host_permission, is_flatpak
+from .utils import CONFIG_DIR, display, has_host_permission, is_flatpak
 
+logger = logging.getLogger(__name__)
 settings = Gio.Settings.new("io.github.rusmikev.CineHDR")
+
 
 
 def sync_mpv_with_settings(window):
@@ -73,6 +77,7 @@ class Preferences(Adw.Dialog):
     copy_cmd_button: Gtk.Button = Gtk.Template.Child()
     open_new_row: Adw.SwitchRow = Gtk.Template.Child()
     thumb_preview_row: Adw.SwitchRow = Gtk.Template.Child()
+    offload_row: Adw.SwitchRow = Gtk.Template.Child()
     hwdec_row: Adw.SwitchRow = Gtk.Template.Child()
     normalize_volume_row: Adw.SwitchRow = Gtk.Template.Child()
     save_session_switch: Gtk.Switch = Gtk.Template.Child()
@@ -135,6 +140,7 @@ class Preferences(Adw.Dialog):
             ("open-new-windows", self.open_new_row, "active"),
             ("thumbnail-preview", self.thumb_preview_row, "active"),
             ("normalize-volume", self.normalize_volume_row, "active"),
+            ("graphics-offload", self.offload_row, "active"),
             ("hwdec", self.hwdec_row, "active"),
             ("save-session", self.save_session_switch, "active"),
             ("save-video-position", self.save_position_switch, "active"),
@@ -159,6 +165,7 @@ class Preferences(Adw.Dialog):
             "subtitle-bg": self._on_sub_bg_changed,
             "audio-languages": self._on_alang_changed,
             "thumbnail-preview": self._on_thumb_preview_changed,
+            "graphics-offload": self._on_offload_changed,
             "hwdec": self._on_hwdec_changed,
             "normalize-volume": self._on_norm_volume_changed,
             "save-video-position": self._on_save_pos_changed,
@@ -206,13 +213,24 @@ class Preferences(Adw.Dialog):
         self.mpv["alang"] = settings.get_string(key)
 
     def _on_thumb_preview_changed(self, settings, key):
-        if not settings.get_boolean(key) and self.win.preview_player:
-            self.win.preview_player.terminate()
-            self.win.preview_player = None
-            self.win.thumb_preview.props.visible = False
-        elif not self.mpv.idle_active:
-            self.win.thumb_preview.props.visible = True
-            self.win.setup_preview_player()
+        if settings.get_boolean(key):
+            for w in self.win.app.get_windows():
+                if not w.mpv.idle_active:
+                    w._setup_thumb_preview()
+            return
+
+        for w in self.win.app.get_windows():
+            if w.thumb_area:
+                w.thumb_area.unrealize()
+                w.thumb_area.unmap()
+                w.thumb_area = None
+
+    def _on_offload_changed(self, settings, key):
+        self.win.offload.set_enabled(
+            Gtk.GraphicsOffloadEnabled.ENABLED
+            if settings.get_boolean(key)
+            else Gtk.GraphicsOffloadEnabled.DISABLED
+        )
 
     def _on_hwdec_changed(self, settings, key):
         hwdec_enabled = settings.get_boolean(key)
@@ -235,20 +253,13 @@ class Preferences(Adw.Dialog):
 
     def _on_sub_color_selected(self, color_btn, *arg):
         rgba = color_btn.get_rgba()
-        hex_color = "#{:02x}{:02x}{:02x}".format(
-            int(rgba.red * 255), int(rgba.green * 255), int(rgba.blue * 255)
-        )
+        hex_color = f"#{''.join(f'{int(c * 255):02x}' for c in (rgba.red, rgba.green, rgba.blue))}"
         settings.set_string("subtitle-color", hex_color)
 
     def _on_sub_bg_color_selected(self, color_btn, *arg):
         rgba = color_btn.get_rgba()
         # sub-back-color is #AARRGGBB
-        hex_color = "#{:02x}{:02x}{:02x}{:02x}".format(
-            int(rgba.alpha * 255),
-            int(rgba.red * 255),
-            int(rgba.green * 255),
-            int(rgba.blue * 255),
-        )
+        hex_color = f"#{''.join(f'{int(c * 255):02x}' for c in (rgba.alpha, rgba.red, rgba.green, rgba.blue))}"
         settings.set_string("subtitle-bg-color", hex_color)
 
     def _on_sub_color_reset(self, _button):
@@ -297,8 +308,8 @@ class Preferences(Adw.Dialog):
                 settings.set_string("subtitle-font", font_full)
                 self.font_label.set_label(font_full)
 
-            except Exception as e:
-                print(f"Features selection error: {e}")
+            except Exception:
+                logger.exception("Features selection failed")
 
         dialog.choose_face(self.win, None, None, callback)
 
@@ -312,8 +323,8 @@ class Preferences(Adw.Dialog):
         def on_launch_finished(launcher, task, *args):
             try:
                 launcher.launch_finish(task)
-            except Exception as e:
-                print(f"Failed to open folder: {e}")
+            except Exception:
+                logger.exception("Failed to open folder")
 
         f_launcher = Gtk.FileLauncher.new(Gio.File.new_for_path(CONFIG_DIR))
         f_launcher.launch(self.win, None, on_launch_finished, None)

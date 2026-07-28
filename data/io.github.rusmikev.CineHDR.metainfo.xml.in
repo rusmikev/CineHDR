@@ -70,6 +70,17 @@
   </requires>
 
   <releases>
+    <release version="1.8.0.1.0" date="2026-07-28">
+      <description translate="no">
+        <ul>
+          <li>Merged upstream v1.8.0 updates and improvements</li>
+          <li>Hardware-accelerated thumbnail previews using ThumbPreviewGLArea</li>
+          <li>Added Graphics Offload preference</li>
+          <li>Timeline UX enhancements and scrubbing pause feature</li>
+          <li>Maintained full Wayland HDR Passthrough and diagnostics engine</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.7.4.1.0" date="2026-07-22">
       <description translate="no">
         <ul>
@@ -79,6 +90,14 @@
           <li>Dynamic auto target-peak detection based on monitor luminance</li>
           <li>Fallback logic for SDR screens and missing Wayland protocols</li>
           <li>Refactored OpenGL rendering pipeline to eliminate tearing and race conditions</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.7.4" date="2026-07-18">
+      <description translate="no">
+        <ul>
+          <li>New: Changed window menu to context menu for secondary click option</li>
+          <li>Window menu still accessible via secondary click on title bar or controls</li>
         </ul>
       </description>
     </release>
@@ -92,7 +111,7 @@
     <release version="1.7.2" date="2026-07-10">
       <description translate="no">
         <ul>
-          <li>New: middle click mute icon to toggle mute</li>
+          <li>New: middle click volume icon to toggle mute</li>
           <li>A toast is now displayed when restoring session</li>
           <li>Fixed a crash occurring when closing the video options menu</li>
         </ul>
