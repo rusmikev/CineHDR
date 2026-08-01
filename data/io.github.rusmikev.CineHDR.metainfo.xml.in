@@ -70,6 +70,17 @@
   </requires>
 
   <releases>
+    <release version="1.8.1.1.0" date="2026-08-01">
+      <description translate="no">
+        <ul>
+          <li>Merged upstream v1.8.1 updates and optimizations</li>
+          <li>Asynchronous thumbnail preview seek based on mpv seeking state</li>
+          <li>Disabled thumbnail previews for audio-only streams</li>
+          <li>Corrected MPRIS Seeked D-Bus signal timing</li>
+          <li>Maintained full Wayland HDR Passthrough engine</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.0.1.0" date="2026-07-28">
       <description translate="no">
         <ul>

@@ -75,11 +75,9 @@ class BaseGLArea(Gtk.GLArea):
         raise NotImplementedError("Subclasses must implement _on_realize")
 
     def _on_render(self, _area, _context):
-        if not self._ctx:
-            logger.warning("BaseGLArea has no mpv context")
-            return
         try:
             glGetIntegerv(GL_FRAMEBUFFER_BINDING, self._fbo)
+            assert self._ctx is not None
             self._ctx.render(
                 flip_y=True,
                 opengl_fbo={
@@ -133,20 +131,30 @@ class ThumbPreviewGLArea(BaseGLArea):
         )
         self.connect("unrealize", self._on_unrealize)
 
+        self._time = None
+        self._is_seeking = False
+
+        @self._mpv.property_observer("seeking")
+        def on_seeking_change(_name, seeking):
+            if not seeking:
+                self._is_seeking = False
+                self._flush_seek()
+
     def _on_realize(self, _area):
-        self.make_current()
-        if not self._mpv:
-            logger.warning("ThumbPreviewGLArea has no mpv instance")
-            return
-        self._ctx = self._setup_mpv_context(self._mpv)
+        try:
+            self.make_current()
+            assert self._mpv is not None
+            self._ctx = self._setup_mpv_context(self._mpv)
+        except Exception:
+            logger.exception("ThumbPreviewGLArea _on_realize failed")
 
     def _on_unrealize(self, _area):
         try:
             self.make_current()
-            if self._ctx:
-                self._ctx.free()
-            if self._mpv:
-                self._mpv.terminate()
+            assert self._ctx is not None
+            self._ctx.free()
+            assert self._mpv is not None
+            self._mpv.terminate()
         except Exception:
             logger.exception("ThumbPreviewGLArea unrealize failed")
         finally:
@@ -154,22 +162,29 @@ class ThumbPreviewGLArea(BaseGLArea):
             self._ctx = None
 
     def load_file(self, path):
-        if not self._mpv:
-            logger.warning("ThumbPreviewGLArea has no mpv instance on load_file")
-            return
         try:
+            assert self._mpv is not None
             self._mpv.loadfile(path, "replace")
         except Exception:
             logger.exception("ThumbPreviewGLArea load_file failed")
 
     def seek(self, time):
-        if not self._mpv:
-            logger.warning("ThumbPreviewGLArea has no mpv instance on seek")
-            return
+        self._time = time
+        self._flush_seek()
+
+    def _flush_seek(self):
         try:
+            if self._is_seeking or self._time is None:
+                return
+
+            time = self._time
+            self._is_seeking = True
+            self._time = None
+
+            assert self._mpv is not None
             self._mpv.command_async("seek", time, "absolute+keyframes")
         except Exception:
-            logger.exception("ThumbPreviewGLArea seek failed")
+            logger.exception("ThumbPreviewGLArea _flush_seek failed")
 
 
 class VideoGLArea(BaseGLArea):

@@ -23,7 +23,6 @@ import logging
 import os
 import shlex
 from gettext import gettext as _
-from time import time
 from typing import cast
 from urllib.parse import urlparse
 
@@ -163,6 +162,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.inhibit_cookie: int = 0
         self.video_path: str | None = None
         self.startup: bool = True
+        self.is_audio: bool = False
         self.space_hold_id: int = 0
         self.space_holding: bool = False
         self.space_pressed: bool = False
@@ -179,10 +179,8 @@ class CineWindow(Adw.ApplicationWindow):
         self.skip_obs_count: int = 0
         self.playing_on_press: bool = False
         self.thumb_area: ThumbPreviewGLArea | None = None
-        self.thumb_w, self.thumb_h, self.video_w, self.video_h = 1280, 720, 1280, 720
-        self.late_preview_id: int = 0
+        self.thumb_w: int = 1280
         self.is_local_path: bool = True
-        self.last_preview_update: float = 0
         self.prog_fine_tune: bool = False
         self.error_count: int = 0
         self.pressed_combos: set[str] = set()
@@ -251,9 +249,7 @@ class CineWindow(Adw.ApplicationWindow):
         if self.mpv["window-maximized"] or settings.get_boolean("is-maximized"):
             self.maximize()
 
-        self.conf_hwdec = list(
-            filter(lambda x: x != "no", cast(list, self.mpv["hwdec"]))
-        )
+        self.conf_hwdec = list(filter(lambda x: x != "no", cast(list, self.mpv.hwdec)))
         self.mpv["vo"] = "libmpv"
         self.mpv["osc"] = "no"
         self.mpv["load-console"] = "no"
@@ -677,13 +673,15 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.video_tracks_menu.remove_all()
 
+        video_count = 0
         for track in track_list:
-            if track["type"] in ("sub", "audio", "video"):
+            track_type = track.get("type")
+            if track_type in ("sub", "audio", "video"):
                 self._add_track_to_menu(track)
+            if track_type == "video" and not track.get("albumart"):
+                video_count += 1
 
-        video_count = len(
-            [t for t in track_list if t["type"] == "video" and not t.get("albumart")]
-        )
+        self.is_audio = video_count == 0
         self.video_tracks_menu_btn.set_visible(video_count > 1)
 
         def hide_box_first_model_btn(menu_btn):
@@ -960,8 +958,16 @@ class CineWindow(Adw.ApplicationWindow):
             self.thumb_frame.set_child(self.thumb_area)
             self.thumb_area.realize()
 
-        v_width = self.video_w
-        v_height = self.video_h
+        v_width, v_height = 1280, 720
+
+        try:
+            if self.mpv.vid:
+                self.mpv.wait_for_property("width", timeout=2)
+                self.mpv.wait_for_property("height", timeout=2)
+                v_width = cast(int, self.mpv.width)
+                v_height = cast(int, self.mpv.height)
+        except Exception:
+            logger.exception("Failed to get video w/h")
 
         if v_width >= v_height:
             # Horizontal or square
@@ -974,8 +980,8 @@ class CineWindow(Adw.ApplicationWindow):
             height = 168
             width = int((v_width / v_height) * height)
 
-        self.thumb_w, self.thumb_h = width, height
-        self.thumb_area.set_size_request(self.thumb_w, self.thumb_h)
+        self.thumb_w = width
+        self.thumb_area.set_size_request(width, height)
         self.thumb_area.load_file(self.video_path)
         self._set_time_tooltip()
 
@@ -990,10 +996,6 @@ class CineWindow(Adw.ApplicationWindow):
         self.prog_width = self.video_progress_scale.get_width()
         self.duration = float(self.mpv.duration or 0)
         self.prev_reveal = False
-        self.show_thumb_preview = (
-            settings.get_boolean("thumbnail-preview") and self.is_local_path
-        )
-        idle_add_once(self._update_video_preview, True)
 
     def _move_time_tooltip(self, revealer, layer: Gtk.Fixed, x, tooltip_w):
         x_pos = max(0, min(x - (tooltip_w / 2) + 23, self.width - tooltip_w))
@@ -1008,15 +1010,12 @@ class CineWindow(Adw.ApplicationWindow):
             self._hide_time_tooltip()
             return
 
+        show_thumb = self.thumb_area is not None and not self.is_audio
+
         if not self.prev_reveal:
-            self.tooltip_thumb_revealer.set_reveal_child(self.show_thumb_preview)
+            self.tooltip_thumb_revealer.set_reveal_child(show_thumb)
             self.tooltip_label_revealer.set_reveal_child(True)
             self.prev_reveal = True
-
-        if self.late_preview_id > 0:
-            GLib.source_remove(self.late_preview_id)
-
-        self.late_preview_id = timeout_add_once(100, self._late_update_preview)
 
         if self.prog_width <= 0:
             return
@@ -1042,26 +1041,14 @@ class CineWindow(Adw.ApplicationWindow):
             self.tooltip_label_revealer, self.tooltip_label_layer, x, label_w
         )
 
-        if not self.show_thumb_preview:
+        if self.thumb_area is None:
             return
 
         self._move_time_tooltip(
             self.tooltip_thumb_revealer, self.tooltip_thumb_layer, x, self.thumb_w + 12
         )
-        curr_time = time()
-        if curr_time - self.last_preview_update > 0.175:
-            self.last_preview_update = curr_time
-            idle_add_once(self._update_video_preview)
 
-    def _update_video_preview(self):
-        if not self.thumb_area:
-            return
-        self.thumb_area.seek(self.hover_time)
-
-    def _late_update_preview(self):
-        """Update preview when the cursor is stopped"""
-        self.late_preview_id = 0
-        idle_add_once(self._update_video_preview)
+        idle_add_once(self.thumb_area.seek, self.hover_time)
 
     def _go_to_chapter_start(self, *args):
         if self.curr_chapter_time is not None:
@@ -1854,16 +1841,6 @@ class CineWindow(Adw.ApplicationWindow):
             except mpv.ShutdownError:
                 pass
 
-        @self.mpv.property_observer("width")
-        @self.mpv.property_observer("height")
-        def on_w_h_change(name, value):
-            if not value:
-                return
-            elif name == "width":
-                self.video_w = value
-            elif name == "height":
-                self.video_h = value
-
         @self.mpv.property_observer("path")
         def on_path_change(_name, path):
             self.video_path = path
@@ -1932,8 +1909,9 @@ class CineWindow(Adw.ApplicationWindow):
             idle_add_once(self._update_progress, float(value or 0))
 
         @self.mpv.property_observer("seeking")
-        def on_seeking_change(_name, _is_seeking):
-            idle_add_once(self.app_mpris._emit_seeked)
+        def on_seeking_change(_name, seeking):
+            if not seeking:
+                idle_add_once(self.app_mpris._emit_seeked)
 
         @self.mpv.property_observer("duration")
         def on_duration_change(_name, value):
