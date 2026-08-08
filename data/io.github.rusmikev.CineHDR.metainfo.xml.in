@@ -70,6 +70,18 @@
   </requires>
 
   <releases>
+    <release version="1.8.2.1.0" date="2026-08-08">
+      <description translate="no">
+        <ul>
+          <li>Merged upstream v1.8.2 updates and new features</li>
+          <li>Added A-B Loop button and tristate loop mode (off / file / playlist)</li>
+          <li>Persisted loop state across application restarts</li>
+          <li>Improved Drag-and-Drop file indicator</li>
+          <li>Optimized async mpv property setters</li>
+          <li>Maintained full Wayland HDR Passthrough engine</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.1.1.0" date="2026-08-01">
       <description translate="no">
         <ul>

@@ -14,7 +14,7 @@ template $CineWindow: Adw.ApplicationWindow {
 
     setters {
       controls_separator.visible: false;
-      controls_wrap_box.child-spacing: 2;
+      controls_wrap_box.child-spacing: 6;
     }
   }
 
@@ -157,6 +157,7 @@ template $CineWindow: Adw.ApplicationWindow {
                 wrap-reverse: true;
                 justify: spread;
                 justify-last-line: true;
+                line-spacing: 5;
 
                 Button previous_btn {
                   styles [
@@ -166,7 +167,7 @@ template $CineWindow: Adw.ApplicationWindow {
 
                   icon-name: "cine-skip-backward-symbolic";
                   tooltip-text: _("Previous");
-                  clicked => $_on_previous_clicked();
+                  clicked => $on_previous_clicked();
                 }
 
                 Button play_pause_btn {
@@ -178,7 +179,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   icon-name: "cine-playback-start-symbolic";
                   tooltip-text: _("Play/Pause");
                   halign: center;
-                  clicked => $_on_play_pause_clicked();
+                  clicked => $_cycle_pause();
                 }
 
                 Button next_btn {
@@ -190,7 +191,7 @@ template $CineWindow: Adw.ApplicationWindow {
                   icon-name: "cine-skip-forward-symbolic";
                   tooltip-text: _("Next");
                   halign: center;
-                  clicked => $_on_next_clicked();
+                  clicked => $on_next_clicked();
                 }
 
                 MenuButton volume_menu_btn {
@@ -309,30 +310,28 @@ template $CineWindow: Adw.ApplicationWindow {
                   toggled => $_on_shuffle_toggled();
                 }
 
-                ToggleButton loop_playlist_btn {
+                ToggleButton ab_loop_btn {
+                  styles [
+                    "circular",
+                    "flat",
+                  ]
+
+                  icon-name: "cine-ab-loop-symbolic";
+                  tooltip-text: _("Set/Clear A-B Loop Points");
+                  valign: end;
+                  halign: center;
+                }
+
+                ToggleButton loop_btn {
                   styles [
                     "circular",
                     "flat",
                   ]
 
                   icon-name: "cine-playlist-repeat-symbolic";
-                  tooltip-text: _("Loop Playlist");
+                  tooltip-text: _("Loop");
                   valign: end;
                   halign: center;
-                  toggled => $_on_loop_playlist_toggled();
-                }
-
-                ToggleButton loop_file_btn {
-                  styles [
-                    "circular",
-                    "flat",
-                  ]
-
-                  icon-name: "cine-repeat-file-symbolic";
-                  tooltip-text: _("Loop File");
-                  valign: end;
-                  halign: center;
-                  toggled => $_on_loop_file_toggled();
                 }
 
                 Button {

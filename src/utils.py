@@ -77,6 +77,9 @@ try:
         from shutil import move
 
         move(OLD_PL_FILE, PLAYLIST_DIR)
+    elif not os.path.exists(LAST_PLAYLIST_FILE):
+        open(LAST_PLAYLIST_FILE, "w").close()
+
 except Exception:
     logger.exception("Failed to create files/folders")
 
@@ -145,28 +148,21 @@ def is_local_path(path):
     return bool(not parsed.scheme or parsed.scheme == "file" or len(parsed.scheme) == 1)
 
 
-def idle_add_once(function, *args, **kwargs) -> int:
-    def wrapper():
-        function(*args, **kwargs)
-        return GLib.SOURCE_REMOVE
-
-    return GLib.idle_add(wrapper)
+def _run_once(func, *args, **kwargs):
+    func(*args, **kwargs)
+    return GLib.SOURCE_REMOVE
 
 
-def timeout_add_once(interval: int, function, *args, **kwargs) -> int:
-    def wrapper():
-        function(*args, **kwargs)
-        return GLib.SOURCE_REMOVE
-
-    return GLib.timeout_add(interval, wrapper)
+def idle_add_once(func, *args, **kwargs) -> int:
+    return GLib.idle_add(_run_once, func, *args, **kwargs)
 
 
-def timeout_add_seconds_once(interval: int, function, *args, **kwargs) -> int:
-    def wrapper():
-        function(*args, **kwargs)
-        return GLib.SOURCE_REMOVE
+def timeout_add_once(interval: int, func, *args, **kwargs) -> int:
+    return GLib.timeout_add(interval, _run_once, func, *args, **kwargs)
 
-    return GLib.timeout_add_seconds(interval, wrapper)
+
+def timeout_add_seconds_once(interval: int, func, *args, **kwargs) -> int:
+    return GLib.timeout_add_seconds(interval, _run_once, func, *args, **kwargs)
 
 
 def get_gpu_vendor(libgl):
