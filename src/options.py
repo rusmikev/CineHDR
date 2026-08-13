@@ -129,9 +129,8 @@ class OptionsMenuButton(Gtk.MenuButton):
         if not self.get_active():
             return
 
-        hwdec_on = settings.get_boolean("hwdec")
-        hwdec = str(self._win.mpv.hwdec_current)
-        self.flip_box.props.visible = not (hwdec_on and "-copy" not in hwdec)
+        if hwdec := cast(str, self._win.mpv.hwdec_current):
+            self.flip_box.props.visible = hwdec == "no" or "-copy" in hwdec
 
         aspect_overr = cast(float, self._win.mpv["video-aspect-override"])
         target_val = aspect_overr if aspect_overr > 0 else -1
