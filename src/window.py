@@ -181,7 +181,7 @@ class CineWindow(Adw.ApplicationWindow):
         self._playing_on_press: bool = False
         self.thumb_area: ThumbPreviewGLArea | None = None
         self._thumb_w: int = 1280
-        self._is_local_path: bool = True
+        self.is_local_path: bool = True
         self._prog_fine_tune: bool = False
         self._error_count: int = 0
         self._pressed_combos: set[str] = set()
@@ -235,11 +235,16 @@ class CineWindow(Adw.ApplicationWindow):
         )
 
         self.gl_area = MpvVideoWidget(self.mpv)
+        self._video_area = self.gl_area
+
         def update_hdr_btn():
             is_vis = getattr(self.gl_area.hdr_controller, "is_hdr_content", False)
             self.hdr_menu_btn.set_visible(bool(is_vis))
-        self.gl_area.hdr_controller.on_content_change_cb = lambda: idle_add_once(update_hdr_btn)
-        self.offload = Gtk.GraphicsOffload(child=self.gl_area)
+
+        self.gl_area.hdr_controller.on_content_change_cb = lambda: idle_add_once(
+            update_hdr_btn
+        )
+        self.offload: Gtk.GraphicsOffload = Gtk.GraphicsOffload(child=self.gl_area)
         self.offload.set_black_background(True)
         self.video_overlay.set_child(self.offload)
 
@@ -272,10 +277,10 @@ class CineWindow(Adw.ApplicationWindow):
         except Exception:
             logger.exception("load-input-conf failed")
 
-        self.bindings = cast(dict, self.mpv.input_bindings)
-        self.mouse_bindings: dict = get_mouse_bindings(self.bindings)
-        self.nonrepeat_keys, self.has_enter_binding, self.has_kp_enter_binding = (
-            parse_bindings(self.bindings)
+        self._input_bindings = cast(dict, self.mpv.input_bindings)
+        self._mouse_binds: dict = get_mouse_bindings(self._input_bindings)
+        self._nonrepeat_keys, self._has_enter_binding, self._has_kp_enter_binding = (
+            parse_bindings(self._input_bindings)
         )
 
         sync_mpv_with_settings(self)
@@ -339,7 +344,7 @@ class CineWindow(Adw.ApplicationWindow):
             Adw.ShortcutsDialog,  # pyright: ignore[reportAttributeAccessIssue]
             builder.get_object("shortcuts_dialog"),
         )
-        populate_shortcuts_dialog_mpv(self.shortcuts_dialog, self.bindings)
+        populate_shortcuts_dialog_mpv(self.shortcuts_dialog, self._input_bindings)
         self.shortcuts_dialog.present(self)
 
     def _present_history(self, *args):
@@ -985,7 +990,6 @@ class CineWindow(Adw.ApplicationWindow):
         self.thumb_area.set_size_request(width, height)
         a = self.thumb_area
         a.stop() if self._is_audio else a.load_file(self._video_path)
-        self._set_time_tooltip()
 
     def _hide_time_tooltip(self, *args):
         self.prev_reveal = False
@@ -1278,8 +1282,6 @@ class CineWindow(Adw.ApplicationWindow):
         if not button or not button.get_active():
             self.mpv.ab_loop_a = False
             self.mpv.ab_loop_b = False
-            self.video_progress_scale.clear_marks()
-            self.ab_loop_btn.remove_css_class("a-loop")
         else:
             self.mpv.command_async("ab-loop")
 
@@ -1451,8 +1453,8 @@ class CineWindow(Adw.ApplicationWindow):
         if self._space_holding and event_type == "keyup":
             self._set_space_holding(False)
 
-        enter = key_name == "Return" and not self.has_enter_binding
-        kp_enter = key_name == "KP_Enter" and not self.has_kp_enter_binding
+        enter = key_name == "Return" and not self._has_enter_binding
+        kp_enter = key_name == "KP_Enter" and not self._has_kp_enter_binding
 
         if key_name in ("Tab", "ISO_Left_Tab") or (enter or kp_enter):
             self.revealer_ui.set_reveal_child(True)
@@ -1476,7 +1478,7 @@ class CineWindow(Adw.ApplicationWindow):
         combo = "+".join(mods + [mpv_key])
 
         if event_type == "keypress":
-            if combo in self.nonrepeat_keys and combo in self._pressed_combos:
+            if combo in self._nonrepeat_keys and combo in self._pressed_combos:
                 return True
             self._pressed_combos.add(combo)
         elif event_type == "keyup":
@@ -1593,13 +1595,13 @@ class CineWindow(Adw.ApplicationWindow):
 
                 self._click_delay_id = timeout_add_once(self._click_time, click)
                 return
-        elif n_press == 2 and (cmd_str_dbl := self.mouse_bindings.get(f"{button}_DBL")):
+        elif n_press == 2 and (cmd_str_dbl := self._mouse_binds.get(f"{button}_DBL")):
             self._run_command(cmd_str_dbl)
             return
 
         if is_secondary_pause:
             self._cycle_pause()
-        elif cmd_str := self.mouse_bindings.get(button):
+        elif cmd_str := self._mouse_binds.get(button):
             self._run_command(cmd_str)
 
     def _cancel_click_hold(self, *args):
@@ -1784,17 +1786,19 @@ class CineWindow(Adw.ApplicationWindow):
         def on_f_loaded():
             try:
                 self.spinner.set_visible(False)
-                self._is_local_path = is_local_path(self.mpv.path)
+                self.is_local_path = is_local_path(self.mpv.path)
                 self.start_page.set_sensitive(True)
                 self.hide_ui_timeout()
                 self._on_ab_loop_btn_toggled(None)
 
-                if settings.get_boolean("thumbnail-preview") and self._is_local_path:
+                if settings.get_boolean("thumbnail-preview") and self.is_local_path:
                     self.setup_thumb_preview()
                 elif self.thumb_area:
                     self.thumb_area.unrealize()
                     self.thumb_area.unmap()
                     self.thumb_area = None
+
+                self._set_time_tooltip()
 
                 self._mpris.update_metadata()
             except mpv.ShutdownError:
@@ -1891,7 +1895,7 @@ class CineWindow(Adw.ApplicationWindow):
                 scale.add_mark(b_time, Gtk.PositionType.BOTTOM, None)
                 btn.remove_css_class("a-loop")
 
-            if ab_off and name == "ab-loop-b":
+            if ab_off and name == "ab-loop-a":
                 btn.remove_css_class("a-loop")
                 scale.clear_marks()
                 for chapter in self._chapters:
@@ -2062,7 +2066,7 @@ class CineWindow(Adw.ApplicationWindow):
             self.title_widget.set_visible(not is_idle)
             self.start_page.set_visible(is_idle)
             self.controls_box.set_visible(not is_idle)
-            self.video_area.set_visible(not is_idle)
+            self._video_area.set_visible(not is_idle)
 
             self.drop_label.props.label = (
                 _("Play") if is_idle else _("Play or Add Subtitles")
@@ -2161,8 +2165,8 @@ class CineWindow(Adw.ApplicationWindow):
             if not value:
                 if hasattr(self, "gl_area") and hasattr(self.gl_area, "clear_frame"):
                     idle_add_once(self.gl_area.clear_frame)
-                elif hasattr(self, "video_area"):
-                    idle_add_once(self.video_area.queue_render)
+                elif hasattr(self, "_video_area"):
+                    idle_add_once(self._video_area.queue_render)
                 if hasattr(self, "hdr_menu_btn"):
                     idle_add_once(self.hdr_menu_btn.set_visible, False)
 
