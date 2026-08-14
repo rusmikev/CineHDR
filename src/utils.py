@@ -195,18 +195,21 @@ def get_display_param():
     # see https://gist.github.com/omnp/6ac3385e2b3f6cab987d84e6477e636a
 
     def get_pointer(display):
+        if not hasattr(display, "__gpointer__"):
+            return None
         ctypes.pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p
         ctypes.pythonapi.PyCapsule_GetPointer.argtypes = (ctypes.py_object,)
         return ctypes.pythonapi.PyCapsule_GetPointer(display.__gpointer__, None)
 
     try:
-        if isinstance(display, GdkWayland.WaylandDisplay):
+        disp_class = display.__class__.__name__.lower()
+        if "wayland" in disp_class and hasattr(gtk, "gdk_wayland_display_get_wl_display"):
             gtk.gdk_wayland_display_get_wl_display.restype = ctypes.c_void_p
             gtk.gdk_wayland_display_get_wl_display.argtypes = [ctypes.c_void_p]
             ptr = gtk.gdk_wayland_display_get_wl_display(get_pointer(display))
             if ptr:
                 param["wl_display"] = ptr
-        elif isinstance(display, GdkX11.X11Display):
+        elif "x11" in disp_class and hasattr(gtk, "gdk_x11_display_get_xdisplay"):
             gtk.gdk_x11_display_get_xdisplay.restype = ctypes.c_void_p
             gtk.gdk_x11_display_get_xdisplay.argtypes = [ctypes.c_void_p]
             ptr = gtk.gdk_x11_display_get_xdisplay(get_pointer(display))

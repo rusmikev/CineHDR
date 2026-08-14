@@ -251,7 +251,7 @@ class _InterfaceTable:
         self._fill(
             self.info,
             b"wp_image_description_info_v1",
-            methods=[(b"destroy", b"", [])],
+            methods=[],
             events=[
                 (b"done", b"", []),
                 (b"icc_file", b"hu", [None, None]),
@@ -653,7 +653,10 @@ def _query_one_output(lib, display, queue, mgr, table, keep, out_ptr) -> Optiona
         )
     finally:
         if info_obj:
-            _marshal_destroy(lib, info_obj)
+            try:
+                lib.wl_proxy_destroy(ctypes.c_void_p(info_obj))
+            except Exception:
+                pass
         if img:
             _marshal_destroy(lib, img)
         if cm_out:
