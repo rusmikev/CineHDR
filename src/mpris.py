@@ -270,9 +270,11 @@ class MPRIS:
 
     def _handle_method(self, method, params):
         try:
+            win = self._app.props.active_window
             p = self._mpv
-            if not p:
-                return
+            assert p and win
+
+            win.skip_pause_obs_count = 0  # type: ignore
 
             if method == "PlayPause":
                 p.pause = not p.pause
@@ -281,12 +283,10 @@ class MPRIS:
             elif method == "Play":
                 p.pause = False
             elif method == "Previous":
-                win = self._app.props.active_window
-                if win and win.can_go_prev:  # type: ignore
+                if win.can_go_prev:  # type: ignore
                     win.on_previous_clicked()  # type: ignore
             elif method == "Next":
-                win = self._app.props.active_window
-                if win and win.can_go_next:  # type: ignore
+                if win.can_go_next:  # type: ignore
                     win.on_next_clicked()  # type: ignore
             elif method == "Stop":
                 p.stop()
@@ -301,13 +301,13 @@ class MPRIS:
                 p.time_pos = pos_usec / 1_000_000.0
                 self.emit_seeked()
             elif method == "Raise":
-                win = self._app.props.active_window
-                if win:
-                    win.present()
+                win.present()
             elif method == "Quit":
                 self._app.quit()
         except mpv.ShutdownError:
             pass
+        except Exception:
+            logger.exception("_handle_method failed")
 
     def emit_seeked(self):
         try:
@@ -376,47 +376,37 @@ class MPRIS:
     def _on_set_property(self, _con, _sender, _path, interface, prop, value):
         try:
             p = self._mpv
-            if not p:
+            if not p or interface != MEDIAPLAYER2_PLAYER:
                 return False
 
-            if interface == MEDIAPLAYER2_PLAYER:
-                if prop == "Volume":
-                    new_vol = value.get_double()
-                    p.volume = new_vol * 100.0
-                    self._emit_props_changed(
-                        {"Volume": GLib.Variant("d", float(new_vol))}
-                    )
-                    return True
+            if prop == "Volume":
+                new_vol = value.get_double()
+                p.volume = new_vol * 100.0
+                self._emit_props_changed({"Volume": GLib.Variant("d", float(new_vol))})
+                return True
 
-                if prop == "LoopStatus":
-                    new_loop = value.get_string()
+            if prop == "LoopStatus":
+                new_loop = value.get_string()
+                if new_loop == "None":
+                    p.loop_playlist = "no"
+                    p.loop_file = "no"
+                elif new_loop == "Track":
+                    p.loop_file = "inf"
+                    p.loop_playlist = "no"
+                elif new_loop == "Playlist":
+                    p.loop_file = "no"
+                    p.loop_playlist = "inf"
+                self._emit_props_changed({"LoopStatus": GLib.Variant("s", new_loop)})
+                return True
 
-                    if new_loop == "None":
-                        p.loop_playlist = "no"
-                        p.loop_file = "no"
-                    elif new_loop == "Track":
-                        p.loop_file = "inf"
-                        p.loop_playlist = "no"
-                    elif new_loop == "Playlist":
-                        p.loop_file = "no"
-                        p.loop_playlist = "inf"
-
-                    self._emit_props_changed(
-                        {"LoopStatus": GLib.Variant("s", new_loop)}
-                    )
-                    return True
-
-                if prop == "Shuffle":
-                    new_shuffle = value.get_boolean()
-                    p._shuffle = new_shuffle
-                    win = self._app.props.active_window
-                    if win:
-                        btn = win.shuffle_toggle_btn  # type: ignore
-                        btn.props.active = new_shuffle
-                    self._emit_props_changed(
-                        {"Shuffle": GLib.Variant("b", new_shuffle)}
-                    )
-                    return True
+            if prop == "Shuffle":
+                new_shuffle = value.get_boolean()
+                p._shuffle = new_shuffle
+                if win := self._app.props.active_window:
+                    btn = win.shuffle_toggle_btn  # type: ignore
+                    btn.props.active = new_shuffle
+                self._emit_props_changed({"Shuffle": GLib.Variant("b", new_shuffle)})
+                return True
         except mpv.ShutdownError:
             pass
 

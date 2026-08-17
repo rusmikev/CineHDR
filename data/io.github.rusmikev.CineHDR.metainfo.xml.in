@@ -70,6 +70,17 @@
   </requires>
 
   <releases>
+    <release version="1.8.4.1.0" date="2026-08-17">
+      <description translate="no">
+        <ul>
+          <li>Merged upstream v1.8.4 updates and improvements</li>
+          <li>Hardware-accelerated video flip via GLSL shaders (flip-h, flip-v) with hwdec support</li>
+          <li>Fixed Flatpak Wayland color-management protocol cleanup</li>
+          <li>Improved pause synchronization and MPRIS input handling</li>
+          <li>Full Wayland HDR Passthrough and color management engine</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.2.1.0" date="2026-08-08">
       <description translate="no">
         <ul>

@@ -96,6 +96,20 @@ class MpvVideoWidget(Gtk.Widget):
             mpv_player,
             on_change_cb=lambda: idle_add_once(self.queue_draw)
         )
+        self._window = None
+
+    def setup_window_integration(self, window):
+        """Clean integration hook for window-level HDR UI (e.g. hdr_menu_btn)."""
+        self._window = window
+
+        def update_hdr_btn():
+            btn = getattr(window, "hdr_menu_btn", None)
+            if btn:
+                is_vis = getattr(self.hdr_controller, "is_hdr_content", False)
+                btn.set_visible(bool(is_vis))
+
+        self.hdr_controller.on_content_change_cb = lambda: idle_add_once(update_hdr_btn)
+        idle_add_once(update_hdr_btn)
 
     def _update_cached_hdr_support(self, *args):
         from .hdr_detection import invalidate_hdr_support_cache
@@ -420,5 +434,8 @@ class MpvVideoWidget(Gtk.Widget):
             self.fbo_pool.release_buffer(self._fallback_slot)
             self._fallback_slot = None
         self.queue_draw()
+        btn = getattr(getattr(self, "_window", None), "hdr_menu_btn", None)
+        if btn:
+            btn.set_visible(False)
 
 

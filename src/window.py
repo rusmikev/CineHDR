@@ -177,7 +177,7 @@ class CineWindow(Adw.ApplicationWindow):
         self._wheel_accum_x: float = 0.0
         self._wheel_accum_y: float = 0.0
         self._hide_icon_indicator: bool = True
-        self._skip_obs_count: int = 0
+        self.skip_pause_obs_count: int = 0
         self._playing_on_press: bool = False
         self.thumb_area: ThumbPreviewGLArea | None = None
         self._thumb_w: int = 1280
@@ -228,23 +228,15 @@ class CineWindow(Adw.ApplicationWindow):
             ytdl=True,
             ytdl_raw_options="yes-playlist=",
             cursor_autohide_fs_only=True,
-            directory_filter_types="video,audio",
             autocreate_playlist="filter",
             save_watch_history=True,
             watch_history_path=WATCH_HISTORY_JSONL,
         )
 
-        self.gl_area = MpvVideoWidget(self.mpv)
-        self._video_area = self.gl_area
-
-        def update_hdr_btn():
-            is_vis = getattr(self.gl_area.hdr_controller, "is_hdr_content", False)
-            self.hdr_menu_btn.set_visible(bool(is_vis))
-
-        self.gl_area.hdr_controller.on_content_change_cb = lambda: idle_add_once(
-            update_hdr_btn
-        )
-        self.offload: Gtk.GraphicsOffload = Gtk.GraphicsOffload(child=self.gl_area)
+        self._video_area = VideoGLArea(self.mpv)
+        if hasattr(self._video_area, "setup_window_integration"):
+            self._video_area.setup_window_integration(self)
+        self.offload: Gtk.GraphicsOffload = Gtk.GraphicsOffload(child=self._video_area)
         self.offload.set_black_background(True)
         self.video_overlay.set_child(self.offload)
 
@@ -869,12 +861,16 @@ class CineWindow(Adw.ApplicationWindow):
         self.chapters_menu_btn.popup()
 
     def _on_save_session(self, *args, close=False):
-        settings.set_boolean("save-session", True)
-        save_last_playlist_file(self.mpv)
-        if close:
-            self.close()
-        else:
+        try:
+            settings.set_boolean("save-session", True)
+            save_last_playlist_file(self.mpv)
+            if close:
+                self.close()
+                return
+            self.mpv.write_watch_later_config()
             idle_add_once(self.show_toast, _("Session Saved"))
+        except Exception:
+            logger.exception("_on_save_session failed")
 
     def _on_open_url(self, *args, add=False):
         mode = "append-play" if add else "replace"
@@ -975,14 +971,12 @@ class CineWindow(Adw.ApplicationWindow):
         except Exception:
             logger.exception("Failed to get video w/h")
 
-        if v_width >= v_height:
-            # Horizontal or square
+        if v_width >= v_height:  # Horizontal or square
             width = 200
             height = int((v_height / v_width) * width)
             if height == width:
                 width, height = 168, 168
-        else:
-            # Vertical
+        else:  # Vertical
             height = 168
             width = int((v_width / v_height) * height)
 
@@ -1246,21 +1240,21 @@ class CineWindow(Adw.ApplicationWindow):
         try:
             self._playing_on_press = not self.mpv.pause
             if self._playing_on_press:
-                self._skip_obs_count += 1
+                self.skip_pause_obs_count += 1
                 self.mpv.command("set", "pause", "yes")
         except Exception:
             logger.exception("_on_progress_pressed failed")
-            self._skip_obs_count = 0
+            self.skip_pause_obs_count = 0
 
     def _on_progress_released(self, *args):
         try:
             if self._playing_on_press:
-                self._skip_obs_count += 1
+                self.skip_pause_obs_count += 1
                 self._playing_on_press = False
                 self.mpv.command("set", "pause", "no")
         except Exception:
             logger.exception("_on_progress_released failed")
-            self._skip_obs_count = 0
+            self.skip_pause_obs_count = 0
 
     def _on_progress_adjusted(self, adjustment):
         self.mpv.command_async("seek", adjustment.props.value, "absolute")
@@ -1448,6 +1442,7 @@ class CineWindow(Adw.ApplicationWindow):
                     pass
 
     def _on_key_event(self, _controller, keyval, _keycode, state, event_type):
+        self.skip_pause_obs_count = 0
         key_name = Gdk.keyval_name(keyval)
 
         if self._space_holding and event_type == "keyup":
@@ -1514,6 +1509,7 @@ class CineWindow(Adw.ApplicationWindow):
             pass
 
     def _on_click_pressed(self, gesture, _n_press, x, y, button):
+        self.skip_pause_obs_count = 0
         if self._is_hovering_ui() and button != "MBTN_MID":
             return
 
@@ -1615,6 +1611,7 @@ class CineWindow(Adw.ApplicationWindow):
             pass
 
     def _on_mouse_scroll(self, controller, dx, dy):
+        self.skip_pause_obs_count = 0
         event: Gdk.ScrollEvent = controller.get_current_event()
         state = event.get_modifier_state()
 
@@ -1727,8 +1724,8 @@ class CineWindow(Adw.ApplicationWindow):
 
     def do_close_request(self) -> bool:
         try:
-            if hasattr(self, "gl_area") and hasattr(self.gl_area, "shutdown_render_context"):
-                self.gl_area.shutdown_render_context()
+            if hasattr(self, "_video_area") and hasattr(self._video_area, "shutdown_render_context"):
+                self._video_area.shutdown_render_context()
         except Exception as e:
             logging.error(f"Error shutting down render context: {e}")
 
@@ -2049,15 +2046,16 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("pause")
         def on_pause_change(_name, paused):
-            if self._skip_obs_count > 0:
-                self._skip_obs_count -= 1
-                return
-
             if self.mpv.eof_reached:  # allow to replay at eof, requires keep-open
                 self.mpv.seek(0, reference="absolute")
+                self.skip_pause_obs_count = 0
+
+            if self.skip_pause_obs_count > 0:
+                self.skip_pause_obs_count -= 1
+                return
 
             idle_add_once(self._sync_inhibit)
-            self._update_play_pause_icon(paused)
+            idle_add_once(self._update_play_pause_icon, paused)
 
         def sync_idle_active(is_idle):
             self._actions["open-sub-menu"].set_enabled(not is_idle)
@@ -2163,12 +2161,11 @@ class CineWindow(Adw.ApplicationWindow):
         def on_vid_change(_name, value):
             idle_add_once(self.audio_only_icon.set_visible, not bool(value))
             if not value:
-                if hasattr(self, "gl_area") and hasattr(self.gl_area, "clear_frame"):
-                    idle_add_once(self.gl_area.clear_frame)
-                elif hasattr(self, "_video_area"):
+                # clear the last frame, which sometimes can still be present
+                if hasattr(self._video_area, "clear_frame"):
+                    idle_add_once(self._video_area.clear_frame)
+                else:
                     idle_add_once(self._video_area.queue_render)
-                if hasattr(self, "hdr_menu_btn"):
-                    idle_add_once(self.hdr_menu_btn.set_visible, False)
 
         @self.mpv.property_observer("video-zoom")
         def on_zoom_change(_name, value):
