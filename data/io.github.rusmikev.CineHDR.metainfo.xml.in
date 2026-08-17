@@ -70,7 +70,7 @@
   </requires>
 
   <releases>
-    <release version="1.8.4.1.0" date="2026-08-17">
+    <release version="1.8.4.1.1" date="2026-08-17">
       <description translate="no">
         <ul>
           <li>Merged upstream v1.8.4 updates and improvements</li>
