@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    name: "Build and Release Flatpak"
+  build-flatpak:
+    name: "Build Flatpak"
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
@@ -48,8 +48,29 @@ jobs:
           run-tests: ${{ matrix.arch == 'x86_64' }}
           arch: ${{ matrix.arch }}
 
-      - name: Upload Release Asset
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CineHDR-${{ matrix.arch }}
+          path: CineHDR-${{ matrix.arch }}.flatpak
+          if-no-files-found: error
+
+  publish-release:
+    name: "Publish GitHub Release"
+    needs: build-flatpak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: CineHDR-*
+          merge-multiple: true
+
+      - name: Publish Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: CineHDR-${{ matrix.arch }}.flatpak
+          files: |
+            CineHDR-*.flatpak
           generate_release_notes: true
