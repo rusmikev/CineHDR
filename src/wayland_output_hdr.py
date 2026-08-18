@@ -382,13 +382,25 @@ def _get_monitor_outputs() -> Optional[List[Any]]:
 # The probe
 # ──────────────────────────────────────────────────────────────
 
+
+_backend_disabled = False
+_backend_error_count = 0
+
 def probe_outputs() -> Optional[Dict[str, OutputHdrInfo]]:
-    """Query the image description of every output. Tri-state contract:
-    dict on success, None whenever a definitive answer is impossible."""
+    global _backend_disabled, _backend_error_count
+    if _backend_disabled:
+        return None
     try:
-        return _probe_outputs_unsafe()
+        res = _probe_outputs_unsafe()
+        _backend_error_count = 0
+        return res
     except Exception as e:
-        logging.debug(f"wayland_output_hdr: probe failed: {e}")
+        _backend_error_count += 1
+        if _backend_error_count >= 3:
+            _backend_disabled = True
+            logging.error(f"wayland_output_hdr: Backend disabled due to repeated protocol/FFI errors: {e}")
+        else:
+            logging.warning(f"wayland_output_hdr: probe failed: {e}")
         return None
 
 
