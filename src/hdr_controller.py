@@ -166,6 +166,7 @@ class HdrController(GObject.Object):
         self._hdr_support_warned = False
         self._dovi_info: Optional[dict] = None
         self._dovi_warned = False
+        self._force_hdr_warned = False
 
         self._initial_mpv_props = {}
         # target-colorspace-hint is deliberately absent: it is a no-op under
@@ -298,6 +299,19 @@ class HdrController(GObject.Object):
         # a code path that already required HDR support to be present.
         self.check_unsupported_warning()
         self.check_dovi_warning()
+        self.check_force_hdr_warning()
+
+        import json
+        telemetry = {
+            "source_hdr": self._is_hdr_content,
+            "target_trc": next((v for p, v in props if p == "target-trc"), "auto"),
+            "target_peak": next((v for p, v in props if p == "target-peak"), "auto"),
+            "tone_mapping_active": not self.is_hdr_active,
+            "display_hdr": get_monitor_hdr_state(self._output_hint),
+            "hdr_mode": self._hdr_mode,
+            "dovi_profile": self.dovi_profile,
+        }
+        logging.info(f"HDR Pipeline Telemetry: {json.dumps(telemetry)}")
 
         if self.on_change_cb:
             self.on_change_cb()
@@ -467,6 +481,18 @@ class HdrController(GObject.Object):
             "unshaped IPT data as HDR.",
             self.dovi_profile,
         )
+
+    def check_force_hdr_warning(self):
+        """Log a warning if force-hdr is used and the monitor is SDR."""
+        if self._hdr_mode == "force-hdr" and not self._force_hdr_warned:
+            if get_monitor_hdr_state(self._output_hint) is False:
+                self._force_hdr_warned = True
+                logging.warning(
+                    "Force HDR mode is active, but the target monitor is reporting SDR. "
+                    "HDR metadata will be sent to the compositor, which may lead to incorrect colors "
+                    "due to compositor-side conversions. HDR Signaling: forced, Display HDR: OFF, "
+                    "Tone mapping: bypassed."
+                )
 
     def check_unsupported_warning(self, gdk_display: Any = None):
         """Log a warning if HDR is requested and content is HDR, but display/GTK lacks support."""
