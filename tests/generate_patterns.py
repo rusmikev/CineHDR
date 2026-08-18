@@ -3,6 +3,7 @@ import subprocess
 import os
 
 # SMPTE ST 2084 (PQ) OETF
+# Maps absolute luminance in nits (L) to normalized non-linear PQ code value (0.0 to 1.0)
 def linear_to_pq(l_nits):
     l = np.clip(l_nits / 10000.0, 0, 1)
     m1 = 2610 / 16384
@@ -33,7 +34,6 @@ def generate_video(filename, patches, max_cll=1000):
     height = 720
     frames = 24
     
-    # Arrange patches in a grid
     cols = min(len(patches), 5)
     rows = (len(patches) + cols - 1) // cols
     
@@ -55,18 +55,14 @@ def generate_video(filename, patches, max_cll=1000):
         
         img[y:y+h, x:x+w] = p[:h, :w]
         
-    # Write to raw RGB 16-bit little-endian
     raw_path = filename + ".raw"
     with open(raw_path, 'wb') as f:
-        # Convert to 16-bit LE, RGB interlaced
         img_bytes = img.tobytes()
         for _ in range(frames):
             f.write(img_bytes)
             
-    # Use ffmpeg to encode to HEVC 10-bit HDR
-    # -pix_fmt gbrp10le for RGB 10-bit, then convert to yuv420p10le
     cmd = [
-        "ffmpeg", "-y",
+        "ffmpeg", "-y", "-v", "error",
         "-f", "rawvideo",
         "-video_size", f"{width}x{height}",
         "-pixel_format", "rgb48le",
@@ -85,28 +81,32 @@ def generate_video(filename, patches, max_cll=1000):
 if __name__ == "__main__":
     os.makedirs("tests/clips", exist_ok=True)
     
-    # 1. Luminance scale
+    # 1. Luminance scale (Neutral Axis & Monotonicity & Identity)
     lum_patches = [
-        ("0.001_nit", 0.001, 0.001, 0.001),
-        ("0.01_nit", 0.01, 0.01, 0.01),
-        ("0.1_nit", 0.1, 0.1, 0.1),
-        ("1_nit", 1, 1, 1),
-        ("10_nit", 10, 10, 10),
-        ("100_nit", 100, 100, 100),
-        ("203_nit", 203, 203, 203),
-        ("400_nit", 400, 400, 400),
-        ("1000_nit", 1000, 1000, 1000),
-        ("4000_nit", 4000, 4000, 4000),
+        ("0.001", 0.001, 0.001, 0.001),
+        ("0.01", 0.01, 0.01, 0.01),
+        ("0.1", 0.1, 0.1, 0.1),
+        ("1", 1, 1, 1),
+        ("10", 10, 10, 10),
+        ("100", 100, 100, 100),
+        ("203", 203, 203, 203),
+        ("400", 400, 400, 400),
+        ("1000", 1000, 1000, 1000),
+        ("4000", 4000, 4000, 4000),
     ]
     generate_video("tests/clips/luma_steps.mkv", lum_patches, max_cll=4000)
     
-    # 2. Gamut patches (100% BT.2020 Red, Green, Blue at 203 nits)
+    # 2. Gamut patches (Primaries, Secondaries, Grays)
     gamut_patches = [
-        ("Red_203", 203, 0, 0),
-        ("Green_203", 0, 203, 0),
-        ("Blue_203", 0, 0, 203),
-        ("White_203", 203, 203, 203),
+        ("White_100", 1000, 1000, 1000),
+        ("Gray_50", 500, 500, 500),
+        ("Gray_25", 250, 250, 250),
+        ("R_100", 1000, 0, 0),
+        ("G_100", 0, 1000, 0),
+        ("B_100", 0, 0, 1000),
+        ("C_100", 0, 1000, 1000),
+        ("M_100", 1000, 0, 1000),
+        ("Y_100", 1000, 1000, 0),
+        ("R_50", 500, 0, 0),
     ]
     generate_video("tests/clips/gamut_test.mkv", gamut_patches, max_cll=1000)
-    
-    print("Test patterns generated successfully.")
