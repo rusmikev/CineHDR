@@ -328,9 +328,7 @@ class MpvVideoWidget(Gtk.Widget):
         if not has_set_sync and slot.fence and glClientWaitSync:
             # GTK < 4.16: no GdkGLTextureBuilder.set_sync, so wait for the
             # GPU on the CPU side before publishing the texture. The timeout
-            # is bounded so a stalled driver cannot freeze the UI thread; on
-            # timeout the frame is published anyway (worst case is a torn
-            # frame — same as having no synchronization at all) (F5).
+            # is bounded so a stalled driver cannot freeze the UI thread.
             try:
                 wait_result = glClientWaitSync(
                     slot.fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_CLIENT_WAIT_TIMEOUT_NS
@@ -338,8 +336,10 @@ class MpvVideoWidget(Gtk.Widget):
                 if wait_result in (GL_TIMEOUT_EXPIRED, GL_WAIT_FAILED):
                     logging.warning(
                         f"glClientWaitSync returned 0x{wait_result:04x}; "
-                        "publishing frame without GPU sync"
+                        "dropping frame to avoid tearing/artifacts"
                     )
+                    self.fbo_pool.release_buffer(slot)
+                    return GLib.SOURCE_REMOVE
             except Exception:
                 pass
 
