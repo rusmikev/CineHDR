@@ -1519,3 +1519,84 @@ class TestAutoTargetPeak(unittest.TestCase):
         self.assertEqual(props.get("target-peak"), "auto")
         self.assertEqual(props.get("target-trc"), "auto")
         self.assertEqual(controller.effective_peak_source, "auto")
+
+class TestHdrControllerPeakMath(unittest.TestCase):
+    def setUp(self):
+        from src.hdr_controller import HdrController
+        class MockMpv:
+            pass
+        self.mock_mpv = MockMpv()
+        self.controller = HdrController(self.mock_mpv)
+
+    def test_stream_peak_nits_standard_hdr10(self):
+        # 1000 nits = 1000 / 203 ~= 4.926
+        self.controller._last_video_params = {"sig-peak": 4.9261}
+        self.assertAlmostEqual(self.controller._stream_peak_nits(), 1000.0, places=1)
+
+    def test_stream_peak_nits_4000(self):
+        # 4000 nits = 4000 / 203 ~= 19.704
+        self.controller._last_video_params = {"sig-peak": 19.7044}
+        self.assertAlmostEqual(self.controller._stream_peak_nits(), 4000.0, places=1)
+
+    def test_stream_peak_nits_sdr_reference(self):
+        # 203 nits = 1.0
+        self.controller._last_video_params = {"sig-peak": 1.0}
+        self.assertAlmostEqual(self.controller._stream_peak_nits(), 203.0, places=1)
+
+    def test_stream_peak_nits_invalid(self):
+        self.controller._last_video_params = {"sig-peak": 0}
+        self.assertIsNone(self.controller._stream_peak_nits())
+        self.controller._last_video_params = {"sig-peak": -1.0}
+        self.assertIsNone(self.controller._stream_peak_nits())
+        self.controller._last_video_params = {"sig-peak": "invalid"}
+        self.assertIsNone(self.controller._stream_peak_nits())
+        self.controller._last_video_params = None
+        self.assertIsNone(self.controller._stream_peak_nits())
+
+
+class TestHdrDetectionDolbyVision(unittest.TestCase):
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_dovi_profile_5_blocked(self, _g, _s):
+        from src.hdr_controller import HdrController
+        class MockMpv:
+            def __init__(self):
+                self._props = {"video-params": {"gamma": "pq"}}
+            def __getattr__(self, name):
+                return self._props.get(name)
+            def __setattr__(self, name, value):
+                if name == "_props":
+                    super().__setattr__(name, value)
+                elif name.startswith("target-") or name == "hdr-compute-peak":
+                    self._props[name] = value
+
+        mock = MockMpv()
+        controller = HdrController(mock)
+        controller._is_hdr_content = True
+        controller._dovi_info = {"unsupported": True} # This represents P5 which is set as unsupported
+        controller.hdr_mode = "auto"
+        # Should be false because DoVi is unsupported
+        self.assertFalse(controller.is_hdr_active)
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_dovi_profile_8_allowed(self, _g, _s):
+        from src.hdr_controller import HdrController
+        class MockMpv:
+            def __init__(self):
+                self._props = {"video-params": {"gamma": "pq"}}
+            def __getattr__(self, name):
+                return self._props.get(name)
+            def __setattr__(self, name, value):
+                if name == "_props":
+                    super().__setattr__(name, value)
+                elif name.startswith("target-") or name == "hdr-compute-peak":
+                    self._props[name] = value
+        
+        mock = MockMpv()
+        controller = HdrController(mock)
+        controller._is_hdr_content = True
+        controller._dovi_info = {"unsupported": False} # Represents P8
+        controller.hdr_mode = "auto"
+        # Should be true
+        self.assertTrue(controller.is_hdr_active)
