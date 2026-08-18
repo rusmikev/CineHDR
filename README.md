@@ -40,7 +40,7 @@ CineHDR combines a clean interface with a high-performance engine to deliver a s
 
 ### Features
 
-- **HDR Support** — Pass HDR10/HLG color state signal to compatible Wayland compositors
+- **HDR Support** — HDR content is rendered to a Rec.2100 PQ output surface and presented through GTK/Wayland color management (HDR10/HLG presentation with limited Dolby Vision fallback)
 - **Simple Design** — A refined, distraction-free interface
 - **MPV-Based** — Leverages the robust power of MPV for great playback and format support
 - **Audio and Subtitles** — Control track selection and synchronization for both

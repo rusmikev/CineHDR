@@ -131,6 +131,9 @@ The compositor capability probe (invariant E) still leaves one quality gap: a co
 * **Multi-monitor:** `MpvVideoWidget` pushes the connector of the monitor it currently sits on (`Gdk.Display.get_monitor_at_surface`, re-evaluated on realize and `enter-monitor`/`leave-monitor`) into `HdrController.set_output_hint()`; without a hint, *any* HDR output keeps HDR allowed, and only "all outputs SDR" blocks.
 * **Caching:** `is_hdr_active` is evaluated per rendered frame while one probe costs three compositor round-trips per output, so results are cached for `CACHE_TTL_SECONDS` (2 s) and invalidated together with the other caches. Toggling monitor HDR mid-playback is therefore picked up within ~2 s / next settings re-apply; a persistent `image_description_changed` listener integrated into the GLib main loop is the planned follow-up (docs/ROADMAP.md).
 
+### H. HLG Semantics (Conversion to PQ)
+When HLG content is detected (`gamma == "hlg"`), CineHDR initiates the HDR pipeline. However, `HdrController.apply_hdr_settings()` sets `target-trc = pq` and the GL texture is tagged with `Gdk.ColorState.get_rec2100_pq()`. This means that **HLG content is converted to PQ by mpv** before presentation. It is not passed through as native HLG to the Wayland compositor. This conversion is intentional, as PQ surfaces are more widely supported across compositors, but it is important to understand that the pipeline is ultimately a PQ presentation path for both HDR10 and HLG.
+
 ---
 
 ## 4. Troubleshooting & Diagnostics Mapping
