@@ -70,7 +70,7 @@
   </requires>
 
   <releases>
-    <release version="1.8.5" date="2026-08-23">
+    <release version="1.8.5.2.0" date="2026-08-23">
       <description translate="no">
         <ul>
           <li>Merged upstream v1.8.5 and updated yt-dlp to 2026.08.19</li>
