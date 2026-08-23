@@ -179,7 +179,7 @@ class HdrController(GObject.Object):
         self._dovi_info: Optional[dict] = None
         self._dovi_warned = False
         self._force_hdr_warned = False
-        self.supports_dovi_reshaping = False
+        self._supports_dovi_reshaping = False
 
         self._initial_mpv_props = {}
         # target-colorspace-hint is deliberately absent: it is a no-op under
@@ -264,6 +264,7 @@ class HdrController(GObject.Object):
         if getattr(self, "_disconnected", False) or not self.mpv:
             return
         hdr_output_active = self.is_hdr_active
+        effective_target_peak = "auto"
         if hdr_output_active:
             target_peak = self._hdr_target_peak
             if target_peak not in HDR_PEAK_PRESETS:
@@ -287,44 +288,64 @@ class HdrController(GObject.Object):
                     if monitor_peak < stream_peak * 0.9:
                         peak_val = int(round(monitor_peak))
                         self._effective_peak_source = f"monitor ({peak_val} nits)"
-                try:
-                    self.mpv["target-peak"] = peak_val
-                except Exception as e:
-                    logging.warning(f"Failed to set mpv target-peak ({peak_val}): {e}")
+                effective_target_peak = peak_val
             else:
                 peak_val = int(float(target_peak))
+                effective_target_peak = peak_val
                 self._effective_peak_source = f"user preset ({peak_val} nits)"
-                try:
-                    self.mpv["target-peak"] = peak_val
-                except Exception as e:
-                    logging.warning(f"Failed to set mpv target-peak ({peak_val}): {e}")
-            try:
-                self.mpv["target-trc"] = "pq"
-                self.mpv["target-prim"] = "bt.2020"
-            except Exception as e:
-                logging.warning(f"Failed to set mpv HDR target parameters: {e}")
-            self.check_force_hdr_warning()
+
+            # Contract: GL texture color state (Rec.2100) fixes primaries to
+            # BT.2020. mpv must render into that gamut; letting it default to
+            # the monitor gamut would cause GDK to convert twice and distort
+            # colors.
+            # hdr-compute-peak is intentionally left untouched: mpv's default
+            # ("auto") already enables per-frame peak detection when tone
+            # mapping is active (numeric target-peak) and skips the extra GPU
+            # pass in true pass-through (target-peak=auto).
+            props = [
+                ("target-trc", "pq"),
+                ("target-prim", "bt.2020"),
+                ("target-peak", peak_val),
+            ]
         else:
+            # Safe SDR fallback: restore initial mpv profile or defaults
             self._effective_peak_source = "auto"
+            defaults = {
+                "target-prim": "auto",
+                "target-peak": "auto",
+                "target-trc": "auto",
+            }
+            props = []
+            for prop, default_val in defaults.items():
+                val = getattr(self, "_initial_mpv_props", {}).get(prop)
+                if val is None:
+                    val = default_val
+                props.append((prop, val))
+
+        for prop, val in props:
             try:
-                for prop, val in self._initial_mpv_props.items():
-                    if val is not None:
-                        self.mpv[prop] = val
-                    else:
-                        self.mpv[prop] = "auto"
+                self.mpv[prop] = val
+            except mpv.ShutdownError:
+                # Property observers can deliver their final empty state after
+                # CineHDR has asked libmpv to quit. This is normal shutdown,
+                # not an HDR configuration failure.
+                return
             except Exception as e:
-                logging.warning(f"Failed to reset mpv properties for SDR: {e}")
-            self.check_dovi_warning()
-            self.check_unsupported_warning()
+                logging.warning(f"Failed to set mpv property '{prop}' to '{val}': {e}")
+
+        self.check_unsupported_warning()
+        self.check_dovi_warning()
+        self.check_force_hdr_warning()
+
         import json
         telemetry = {
             "source_hdr": self._is_hdr_content,
             "target_trc": "pq" if hdr_output_active else "auto",
-            "target_peak": self._hdr_target_peak if hdr_output_active else "auto",
+            "target_peak": effective_target_peak,
             "tone_mapping_active": is_tone_mapping_active(
                 self._is_hdr_content,
                 hdr_output_active,
-                self._hdr_target_peak if hdr_output_active else "auto",
+                effective_target_peak,
             ),
             "display_hdr": get_monitor_hdr_state(self._output_hint, allow_probe=False),
             "hdr_mode": self._hdr_mode,
@@ -367,13 +388,13 @@ class HdrController(GObject.Object):
 
     @hdr_mode.setter
     def hdr_mode(self, value: str):
+        """In-memory setter for validator/temporary overrides. Does NOT write GSettings."""
         if value not in HDR_MODES:
             value = "auto"
         if self._hdr_mode != value:
             self._hdr_mode = value
             self._force_hdr_warned = False
             self._hdr_support_warned = False
-            save_hdr_mode(value)
             self.apply_hdr_settings()
             if self.on_change_cb:
                 self.on_change_cb()
@@ -423,9 +444,18 @@ class HdrController(GObject.Object):
         return self._dovi_info is not None
 
     @property
+    def supports_dovi_reshaping(self) -> bool:
+        """Version-qualified capability check: True when active renderer supports DoVi reshaping."""
+        return getattr(self, "_supports_dovi_reshaping", False)
+
+    @supports_dovi_reshaping.setter
+    def supports_dovi_reshaping(self, value: bool) -> None:
+        self._supports_dovi_reshaping = bool(value)
+
+    @property
     def dovi_unsupported(self) -> bool:
         """True when the stream's Dolby Vision profile cannot be rendered here."""
-        if getattr(self, "supports_dovi_reshaping", False):
+        if self.supports_dovi_reshaping:
             return False
         return bool((self._dovi_info or {}).get("unsupported"))
 
