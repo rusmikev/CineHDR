@@ -1,0 +1,10 @@
+{
+  "schema": "cinehdr.mpv_patch_manifest.v1",
+  "base_commit": "62f1494661b362eac02e7d6c2f9173f53c0f278f",
+  "target_commit": "97179bce7ed980c53647d6344916f632fe689e9e",
+  "branch": "libmpv-gpu-next",
+  "upstream_repository": "https://github.com/mpv-player/mpv.git",
+  "fork_repository": "https://github.com/lhc70000/mpv.git",
+  "patch_file": "0001-Experimental-gpu-next-support-in-libmpv.patch",
+  "patch_sha256": "fd8a3d1c2be8cb8896cc32b1fc2e0358ca03549772424f09d1d060b4a923902a"
+}
