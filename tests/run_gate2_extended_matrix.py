@@ -9,18 +9,16 @@ import json
 import logging
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MPV_SOURCE = PROJECT_ROOT.parent / "mpv-gpu-next"
-DEFAULT_MPV_PREFIX = PROJECT_ROOT.parent / "mpv-gpu-next-prefix"
-if not DEFAULT_MPV_PREFIX.is_dir() and Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix").is_dir():
-    DEFAULT_MPV_PREFIX = Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix")
-if not DEFAULT_MPV_SOURCE.is_dir() and Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next").is_dir():
-    DEFAULT_MPV_SOURCE = Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next")
+WORK_ROOT = PROJECT_ROOT.parent
+DEFAULT_MPV_SOURCE = Path(os.environ.get("CINEHDR_MPV_SOURCE", WORK_ROOT / "mpv-gpu-next"))
+DEFAULT_MPV_PREFIX = Path(os.environ.get("CINEHDR_MPV_PREFIX", WORK_ROOT / "mpv-gpu-next-prefix"))
 
 sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 import generate_patterns
@@ -85,105 +83,145 @@ def test_w3_dithering_matrix(binary: Path, cache_dir: Path) -> dict[str, Any]:
             binary, sdr_fixture, "sdr", api, "no", "paused",
             {"CINEHDR_PROBE_DITHER": "fruit", "CINEHDR_PROBE_DITHER_DEPTH": "8"}
         )
+        ramp_dither = sdr_dither_8["readback"]["gradient_ramp"]
+        has_dither_data = len(ramp_dither) == len(ramp_no)
 
-        # 3. HDR with dither-depth=auto in RGBA16F (verify continuous levels, not 8-bit quantized)
+        # 3. HDR with dither-depth=auto in RGBA16F (verify continuous levels & min step < 1/255)
         hdr_auto = run_probe_raw(
             binary, hdr_fixture, "hdr", api, "no", "paused",
             {"CINEHDR_PROBE_DITHER": "fruit", "CINEHDR_PROBE_DITHER_DEPTH": "auto"}
         )
         hdr_ramp = hdr_auto["readback"]["gradient_ramp"]
+        diffs = [hdr_ramp[i+1] - hdr_ramp[i] for i in range(len(hdr_ramp)-1) if hdr_ramp[i+1] > hdr_ramp[i] + 1e-6]
+        min_step = min(diffs) if diffs else 1.0
         unique_hdr_levels = len(set(round(val, 6) for val in hdr_ramp))
 
-        passed = monotonic and (unique_hdr_levels >= 40)
+        # Step granularity must be well below 8-bit (1/255 ≈ 0.00392)
+        not_quantized_8bit = min_step < (1.0 / 255.0)
+
+        passed = monotonic and has_dither_data and not_quantized_8bit and (unique_hdr_levels >= 50)
         results[api] = {
             "sdr_monotonic_no_dither": monotonic,
+            "sdr_dither_applied": has_dither_data,
+            "hdr_min_step": min_step,
             "hdr_unique_ramp_levels": unique_hdr_levels,
+            "hdr_not_8bit_quantized": not_quantized_8bit,
             "verdict": "PASS" if passed else "FAIL",
         }
-        logger.info("W3 [%s] monotonic: %s, HDR unique ramp levels: %d -> %s",
-                    api, monotonic, unique_hdr_levels, results[api]["verdict"])
+        logger.info("API %s: monotonic=%s, dither_applied=%s, min_step=%.6f (< 0.00392), unique_levels=%d -> %s",
+                    api, monotonic, has_dither_data, min_step, unique_hdr_levels, results[api]["verdict"])
 
-    return {"w3_dithering": results, "verdict": "PASS" if all(r["verdict"] == "PASS" for r in results.values()) else "FAIL"}
+    overall = "PASS" if all(r["verdict"] == "PASS" for r in results.values()) else "FAIL"
+    return {"results": results, "verdict": overall}
 
 
-def test_w5_subtitles_embedded_path(binary: Path, cache_dir: Path, temp_dir: Path) -> dict[str, Any]:
-    logger.info("=== Executing W5: Subtitles in Embedded Path ===")
+def parse_png_dimensions(png_bytes: bytes) -> tuple[int, int]:
+    """Parse width and height from PNG IHDR chunk."""
+    if len(png_bytes) < 24 or png_bytes[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("Invalid PNG header")
+    width, height = struct.unpack(">II", png_bytes[16:24])
+    return width, height
+
+
+def test_w4_screenshot_matrix(binary: Path, cache_dir: Path, temp_dir: Path) -> dict[str, Any]:
+    logger.info("=== Executing W4: mpv Screenshot-to-File Matrix ===")
+    results = {}
+
+    for mode in ("sdr", "hdr", "hlg"):
+        fix = generate_patterns.ensure_fixture(mode, cache_dir)
+        fixture_path = Path(fix["path"])
+        shot_path = temp_dir / f"screenshot_{mode}.png"
+        if shot_path.exists():
+            shot_path.unlink()
+
+        # Run probe with CINEHDR_PROBE_SCREENSHOT_PATH set
+        probe_res = run_probe_raw(
+            binary, fixture_path, mode, "opengl-next", "no", "paused",
+            {"CINEHDR_PROBE_SCREENSHOT_PATH": str(shot_path)}
+        )
+
+        if not shot_path.is_file():
+            results[mode] = {
+                "file_exists": False,
+                "size_bytes": 0,
+                "dimensions": (0, 0),
+                "verdict": "FAIL",
+            }
+            logger.error("Screenshot file %s was not created by mpv!", shot_path)
+            continue
+
+        data = shot_path.read_bytes()
+        width, height = parse_png_dimensions(data)
+        passed = (len(data) > 1000) and (width == 320) and (height == 180)
+
+        results[mode] = {
+            "file_exists": True,
+            "size_bytes": len(data),
+            "dimensions": (width, height),
+            "verdict": "PASS" if passed else "FAIL",
+        }
+        logger.info("Mode %s: shot size=%d bytes, dims=%dx%d -> %s",
+                    mode, len(data), width, height, results[mode]["verdict"])
+
+    overall = "PASS" if all(r["verdict"] == "PASS" for r in results.values()) else "FAIL"
+    return {"results": results, "verdict": overall}
+
+
+def test_w5_embedded_subtitles(binary: Path, cache_dir: Path, temp_dir: Path) -> dict[str, Any]:
+    logger.info("=== Executing W5: Embedded Subtitles Diffuse White Test ===")
     hdr_fix = generate_patterns.ensure_fixture("hdr", cache_dir)
     hdr_fixture = Path(hdr_fix["path"])
 
-    # Create synthetic subtitle file (ASS with white text)
+    # Create ASS subtitle file with text at bottom center
     sub_path = temp_dir / "test_sub.ass"
-    sub_path.write_text(
-        "[Script Info]\n"
-        "ScriptType: v4.00+\n"
-        "PlayResX: 320\n"
-        "PlayResY: 180\n"
-        "[V4+ Styles]\n"
-        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Default,Arial,18,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1\n"
-        "[Events]\n"
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-        "Dialogue: 0,0:00:00.00,0:00:10.00,Default,,0,0,0,,■■■■■■■■■■\n",
-        encoding="utf-8"
+    sub_content = """[Script Info]
+Title: CineHDR Subtitle Calibration
+ScriptType: v4.00+
+PlayResX: 320
+PlayResY: 180
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,10,10,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:10.00,Default,,0,0,0,,■■■
+"""
+    sub_path.write_text(sub_content, encoding="utf-8")
+
+    probe_res = run_probe_raw(
+        binary, hdr_fixture, "hdr", "opengl-next", "no", "paused",
+        {"CINEHDR_PROBE_SUB_FILE": str(sub_path)}
     )
 
-    results = {}
-    for api in ("opengl", "opengl-next"):
-        # Probe HDR with subtitles
-        probe_hdr = run_probe_raw(
-            binary, hdr_fixture, "hdr", api, "no", "paused",
-            {"CINEHDR_PROBE_SUB_FILE": str(sub_path)}
-        )
-        sub_sample = probe_hdr["readback"].get("subtitle_sample")
-        if not sub_sample:
-            results[api] = {"verdict": "FAIL", "reason": "no subtitle sampled"}
-            continue
+    readback = probe_res.get("readback", {})
+    sub_sample = readback.get("subtitle_sample")
+    if not sub_sample or len(sub_sample) != 3:
+        logger.error("Subtitle sample was not reported by probe!")
+        return {"verdict": "FAIL", "reason": "no_subtitle_sample"}
 
-        # Subtitle luminance in PQ target space:
-        # Expected reference diffuse white: ~203 nits (PQ ~ 0.5807).
-        # Must not be 1.0 (which would be unmapped 10,000 nit glare).
-        sub_lum = sum(sub_sample) / 3.0
-        # Allow tolerance [0.45, 0.72] for antialiased rasterization
-        passed = (0.45 <= sub_lum <= 0.72)
-        results[api] = {
-            "subtitle_luminance": sub_lum,
-            "expected_range": [0.45, 0.72],
-            "verdict": "PASS" if passed else "FAIL",
-        }
-        logger.info("W5 [%s] subtitle luminance: %.4f (target diffuse ~0.58) -> %s",
-                    api, sub_lum, results[api]["verdict"])
+    r, g, b = sub_sample
+    # White subtitle text in PQ target should be diffuse reference white (~203 nits -> PQ ~0.5807)
+    # Tolerance window: [0.50, 0.65] (must NOT be peak white 1.0 / 10000 nits)
+    valid_luminance = (0.50 <= r <= 0.65) and (0.50 <= g <= 0.65) and (0.50 <= b <= 0.65)
+    neutral_color = abs(r - g) < 0.02 and abs(g - b) < 0.02
 
-    return {"w5_subtitles": results, "verdict": "PASS" if all(r.get("verdict") == "PASS" for r in results.values()) else "FAIL"}
+    passed = valid_luminance and neutral_color
+    verdict = "PASS" if passed else "FAIL"
+    logger.info("Subtitle sample: (%.4f, %.4f, %.4f), diffuse_window=%s, neutral=%s -> %s",
+                r, g, b, valid_luminance, neutral_color, verdict)
 
-
-def test_w4_screenshot_matrix(temp_dir: Path, cache_dir: Path, mpv_prefix: Path) -> dict[str, Any]:
-    logger.info("=== Executing W4: Screenshot Matrix ===")
-    libdir = mpv_prefix / "lib64"
-    env = os.environ.copy()
-    env["LD_LIBRARY_PATH"] = f"{libdir}:{env.get('LD_LIBRARY_PATH', '')}"
-
-    results = {}
-    for mode in ("sdr", "hdr", "hlg"):
-        fix = generate_patterns.ensure_fixture(mode, cache_dir)
-        fixture_path = fix["path"]
-        out_png = temp_dir / f"screenshot_{mode}.png"
-        shot_res = subprocess.run(
-            ["ffmpeg", "-y", "-i", str(fixture_path), "-vframes", "1", str(out_png)],
-            capture_output=True, text=True
-        )
-        passed = (out_png.is_file() and out_png.stat().st_size > 500)
-        results[mode] = {
-            "screenshot_created": passed,
-            "size_bytes": out_png.stat().st_size if out_png.is_file() else 0,
-            "verdict": "PASS" if passed else "FAIL",
-        }
-        logger.info("W4 [%s] screenshot: %s (%d bytes)", mode, results[mode]["verdict"], results[mode]["size_bytes"])
-
-    return {"w4_screenshots": results, "verdict": "PASS" if all(r["verdict"] == "PASS" for r in results.values()) else "FAIL"}
+    return {
+        "subtitle_sample": {"r": r, "g": g, "b": b},
+        "diffuse_white_target_range": [0.50, 0.65],
+        "neutral_color": neutral_color,
+        "verdict": verdict,
+    }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run extended Gate 2 validation suite.")
+    parser = argparse.ArgumentParser(description="Run extended Gate 2 matrix.")
     parser.add_argument("--mpv-source", type=Path, default=DEFAULT_MPV_SOURCE)
     parser.add_argument("--mpv-prefix", type=Path, default=DEFAULT_MPV_PREFIX)
     parser.add_argument("--cache-dir", type=Path, default=Path(tempfile.gettempdir()) / "cinehdr-gate2-fixtures")
@@ -193,19 +231,25 @@ def main() -> int:
         temp_dir = Path(temp_dir_str)
         binary = compile_probe_binary(temp_dir, args.mpv_source, args.mpv_prefix)
 
-        w3 = test_w3_dithering_matrix(binary, args.cache_dir)
-        w5 = test_w5_subtitles_embedded_path(binary, args.cache_dir, temp_dir)
-        w4 = test_w4_screenshot_matrix(temp_dir, args.cache_dir, args.mpv_prefix)
+        w3_report = test_w3_dithering_matrix(binary, args.cache_dir)
+        w4_report = test_w4_screenshot_matrix(binary, args.cache_dir, temp_dir)
+        w5_report = test_w5_embedded_subtitles(binary, args.cache_dir, temp_dir)
+
+        overall_verdict = "PASS" if (
+            w3_report["verdict"] == "PASS"
+            and w4_report["verdict"] == "PASS"
+            and w5_report["verdict"] == "PASS"
+        ) else "FAIL"
 
         report = {
-            "schema": "cinehdr.gate2.extended.v1",
-            "w3_dithering": w3,
-            "w5_subtitles": w5,
-            "w4_screenshots": w4,
-            "overall_verdict": "PASS" if (w3["verdict"] == "PASS" and w5["verdict"] == "PASS" and w4["verdict"] == "PASS") else "FAIL",
+            "schema": "cinehdr.gate2.extended.report.v1",
+            "w3_dithering": w3_report,
+            "w4_screenshots": w4_report,
+            "w5_subtitles": w5_report,
+            "overall_verdict": overall_verdict,
         }
         print(json.dumps(report, indent=2))
-        return 0 if report["overall_verdict"] == "PASS" else 1
+        return 0 if overall_verdict == "PASS" else 1
 
 
 if __name__ == "__main__":

@@ -66,6 +66,12 @@ struct probe_result {
     bool subtitle_sampled;
     int rendered_frames;
     GLenum gl_error;
+    double frame_time_mean_ms;
+    double frame_time_p50_ms;
+    double frame_time_p95_ms;
+    double frame_time_p99_ms;
+    int dropped_frames;
+    int benchmark_frame_count;
 };
 
 static const char *patch_names[PATCH_COUNT] = {
@@ -271,7 +277,8 @@ static int capture(const char *video_file, const char *mode, const char *api,
     const int depth = is_hdr ? 16 : 8;
     const char *target_primaries = is_hdr ? "bt.2020" : "bt.709";
     const char *target_transfer = is_hdr ? "pq" : "srgb";
-    const char *target_peak = is_hdr ? "1000" : "100";
+    const char *target_peak_env = getenv("CINEHDR_PROBE_TARGET_PEAK");
+    const char *target_peak = target_peak_env ? target_peak_env : (is_hdr ? "1000" : "100");
     int status = -1;
     mpv_handle *mpv = NULL;
     mpv_render_context *render_context = NULL;
@@ -526,6 +533,12 @@ static int capture(const char *video_file, const char *mode, const char *api,
         goto done;
     }
 
+    const char *screenshot_path = getenv("CINEHDR_PROBE_SCREENSHOT_PATH");
+    if (screenshot_path) {
+        const char *shot_cmd[] = {"screenshot-to-file", screenshot_path, "video", NULL};
+        mpv_command(mpv, shot_cmd);
+    }
+
     const size_t component_count = (size_t) FRAME_WIDTH * FRAME_HEIGHT * 4;
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     if (is_hdr) {
@@ -641,6 +654,70 @@ static int capture(const char *video_file, const char *mode, const char *api,
             }
         }
     }
+
+    const char *bench_str = getenv("CINEHDR_PROBE_BENCHMARK_FRAMES");
+    int bench_count = bench_str ? atoi(bench_str) : 0;
+    if (result->rendered_frames && bench_count > 0) {
+        if (bench_count > 2000)
+            bench_count = 2000;
+        double *timings = calloc(bench_count, sizeof(double));
+        double sum = 0.0;
+        int valid_frames = 0;
+        mpv_opengl_fbo b_target = {
+            .fbo = (int) framebuffer,
+            .w = FRAME_WIDTH,
+            .h = FRAME_HEIGHT,
+            .internal_format = (int) internal_format,
+        };
+        int b_flip_y = 0;
+        int b_block = 0;
+        mpv_render_param b_params[] = {
+            {MPV_RENDER_PARAM_OPENGL_FBO, &b_target},
+            {MPV_RENDER_PARAM_FLIP_Y, &b_flip_y},
+            {MPV_RENDER_PARAM_DEPTH, (void *) &depth},
+            {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &b_block},
+            {MPV_RENDER_PARAM_INVALID, NULL},
+        };
+        for (int i = 0; i < bench_count; i++) {
+            struct timespec t0, t1;
+            clock_gettime(CLOCK_MONOTONIC, &t0);
+            glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+            glViewport(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
+            int r_err = mpv_render_context_render(render_context, b_params);
+            glFinish();
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            if (r_err >= 0) {
+                mpv_render_context_report_swap(render_context);
+                double frame_ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1000000.0;
+                timings[valid_frames++] = frame_ms;
+                sum += frame_ms;
+            }
+        }
+        if (valid_frames > 0) {
+            for (int i = 0; i < valid_frames - 1; i++) {
+                for (int j = i + 1; j < valid_frames; j++) {
+                    if (timings[i] > timings[j]) {
+                        double tmp = timings[i];
+                        timings[i] = timings[j];
+                        timings[j] = tmp;
+                    }
+                }
+            }
+            result->benchmark_frame_count = valid_frames;
+            result->frame_time_mean_ms = sum / valid_frames;
+            result->frame_time_p50_ms = timings[(int)(valid_frames * 0.50)];
+            result->frame_time_p95_ms = timings[(int)(valid_frames * 0.95)];
+            result->frame_time_p99_ms = timings[(int)(valid_frames * 0.99)];
+        }
+        free(timings);
+        int64_t drops = 0;
+        if (mpv_get_property(mpv, "vo-drop-frame-count", MPV_FORMAT_INT64, &drops) >= 0 ||
+            mpv_get_property(mpv, "drop-frame-count", MPV_FORMAT_INT64, &drops) >= 0)
+        {
+            result->dropped_frames = (int) drops;
+        }
+    }
+
     status = 0;
 
 done:
@@ -743,6 +820,16 @@ static void print_result(const char *mode, const char *api, const char *timestam
                result->subtitle_sample[0], result->subtitle_sample[1], result->subtitle_sample[2]);
     }
     fputs("},\n  \"errors\": {\"mpv\": null, \"fbo\": null, \"gl\": null},\n", stdout);
+    if (result->benchmark_frame_count > 0) {
+        printf("  \"performance\": {\n");
+        printf("    \"total_frames\": %d,\n", result->benchmark_frame_count);
+        printf("    \"mean_ms\": %.4f,\n", result->frame_time_mean_ms);
+        printf("    \"p50_ms\": %.4f,\n", result->frame_time_p50_ms);
+        printf("    \"p95_ms\": %.4f,\n", result->frame_time_p95_ms);
+        printf("    \"p99_ms\": %.4f,\n", result->frame_time_p99_ms);
+        printf("    \"dropped_frames\": %d\n", result->dropped_frames);
+        printf("  },\n");
+    }
     printf("  \"rendered_frames\": %d\n}\n", result->rendered_frames);
 }
 

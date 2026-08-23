@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""A/B Performance benchmark and soak harness: opengl vs opengl-next."""
+"""A/B Performance Benchmark Suite: comparing opengl vs opengl-next under EGL render loop."""
 
 from __future__ import annotations
 
@@ -9,84 +9,92 @@ import json
 import logging
 import os
 from pathlib import Path
-import statistics
 import subprocess
 import sys
 import tempfile
-import time
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MPV_PREFIX = PROJECT_ROOT.parent / "mpv-gpu-next-prefix"
-if not DEFAULT_MPV_PREFIX.is_dir() and Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix").is_dir():
-    DEFAULT_MPV_PREFIX = Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix")
+WORK_ROOT = PROJECT_ROOT.parent
+DEFAULT_MPV_SOURCE = Path(os.environ.get("CINEHDR_MPV_SOURCE", WORK_ROOT / "mpv-gpu-next"))
+DEFAULT_MPV_PREFIX = Path(os.environ.get("CINEHDR_MPV_PREFIX", WORK_ROOT / "mpv-gpu-next-prefix"))
 
 sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 import generate_patterns
+import run_pixel_pipeline
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("performance_ab")
 
 
-def run_playback_benchmark(
-    video_path: Path,
-    api: str,
-    duration_seconds: float,
-    mpv_prefix: Path,
-) -> dict[str, Any]:
-    libdir = mpv_prefix / "lib64"
-    env = os.environ.copy()
-    env["LD_LIBRARY_PATH"] = f"{libdir}:{env.get('LD_LIBRARY_PATH', '')}"
-
-    # Use mpv to benchmark rendering frames over duration
+def run_benchmark_for_api(binary: Path, fixture_path: Path, api: str, frames: int = 120) -> dict[str, Any]:
     cmd = [
-        "mpv",
-        str(video_path),
-        "--vo=null",
-        "--ao=null",
-        "--video-sync=display-resample",
-        f"--length={duration_seconds}",
-        "--untimed=yes",
-        "--msg-level=all=info",
+        str(binary),
+        str(fixture_path),
+        "hdr",
+        api,
+        "0.041667",
+        "no",
+        "continuous-identical",
     ]
-    t0 = time.perf_counter()
-    res = subprocess.run(cmd, env=env, capture_output=True, text=True)
-    t1 = time.perf_counter()
-    wall_time = t1 - t0
-
-    # Parse stderr/stdout for frame stats
-    return {
-        "api": api,
-        "wall_time_seconds": round(wall_time, 4),
-        "status": "PASS" if res.returncode == 0 else "FAIL",
-    }
+    env = os.environ.copy()
+    env["CINEHDR_PROBE_BENCHMARK_FRAMES"] = str(frames)
+    res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if res.returncode != 0:
+        raise RuntimeError(f"benchmark probe failed for {api} ({res.returncode}):\n{res.stderr}\n{res.stdout}")
+    data = json.loads(res.stdout)
+    perf = data.get("performance")
+    if not perf:
+        raise RuntimeError(f"No performance telemetry returned for {api}:\n{res.stdout}")
+    return perf
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run A/B performance benchmark.")
+    parser.add_argument("--mpv-source", type=Path, default=DEFAULT_MPV_SOURCE)
     parser.add_argument("--mpv-prefix", type=Path, default=DEFAULT_MPV_PREFIX)
-    parser.add_argument("--duration", type=float, default=5.0)
+    parser.add_argument("--cache-dir", type=Path, default=Path(tempfile.gettempdir()) / "cinehdr-gate2-fixtures")
+    parser.add_argument("--frames", type=int, default=120)
     args = parser.parse_args()
 
-    fixtures_dir = Path(tempfile.gettempdir()) / "cinehdr-gate2-fixtures"
-    fix = generate_patterns.ensure_fixture("hdr", fixtures_dir)
-    video_path = Path(fix["path"])
+    fix = generate_patterns.ensure_fixture("hdr", args.cache_dir)
+    fixture_path = Path(fix["path"])
 
-    logger.info("=== Running Performance Benchmark (HDR video) ===")
-    legacy = run_playback_benchmark(video_path, "opengl", args.duration, args.mpv_prefix)
-    logger.info("Legacy: %s in %.3fs", legacy["status"], legacy["wall_time_seconds"])
+    with tempfile.TemporaryDirectory(prefix="cinehdr-perf-ab-") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        binary = temp_dir / "pixel_validator_egl"
+        run_pixel_pipeline.compile_probe(binary, args.mpv_source, args.mpv_prefix, os.environ.get("CC", "cc"))
 
-    gpu_next = run_playback_benchmark(video_path, "opengl-next", args.duration, args.mpv_prefix)
-    logger.info("GPU Next: %s in %.3fs", gpu_next["status"], gpu_next["wall_time_seconds"])
+        logger.info("=== Running Legacy (opengl) Benchmark (%d frames) ===", args.frames)
+        legacy_perf = run_benchmark_for_api(binary, fixture_path, "opengl", args.frames)
+        logger.info("Legacy: mean=%.2f ms, p50=%.2f ms, p95=%.2f ms, p99=%.2f ms, drops=%d",
+                    legacy_perf["mean_ms"], legacy_perf["p50_ms"], legacy_perf["p95_ms"], legacy_perf["p99_ms"], legacy_perf["dropped_frames"])
 
-    report = {
-        "schema": "cinehdr.gate2.performance.v1",
-        "legacy": legacy,
-        "gpu_next": gpu_next,
-        "verdict": "PASS" if (legacy["status"] == "PASS" and gpu_next["status"] == "PASS") else "FAIL",
-    }
-    print(json.dumps(report, indent=2))
-    return 0 if report["verdict"] == "PASS" else 1
+        logger.info("=== Running GPU Next (opengl-next) Benchmark (%d frames) ===", args.frames)
+        gpu_next_perf = run_benchmark_for_api(binary, fixture_path, "opengl-next", args.frames)
+        logger.info("GPU Next: mean=%.2f ms, p50=%.2f ms, p95=%.2f ms, p99=%.2f ms, drops=%d",
+                    gpu_next_perf["mean_ms"], gpu_next_perf["p50_ms"], gpu_next_perf["p95_ms"], gpu_next_perf["p99_ms"], gpu_next_perf["dropped_frames"])
+
+        # ADR-0001 Criteria:
+        # 1. No excessive dropped frames (drops <= legacy_drops + 3)
+        # 2. p95 render time is no more than 25% worse than legacy (or faster)
+        no_excess_drops = gpu_next_perf["dropped_frames"] <= legacy_perf["dropped_frames"] + 3
+        p95_within_budget = gpu_next_perf["p95_ms"] <= (legacy_perf["p95_ms"] * 1.25 + 0.5)
+
+        passed = no_excess_drops and p95_within_budget
+        verdict = "PASS" if passed else "FAIL"
+
+        report = {
+            "schema": "cinehdr.performance.ab.report.v1",
+            "frames_tested": args.frames,
+            "legacy": legacy_perf,
+            "gpu_next": gpu_next_perf,
+            "no_excess_drops": no_excess_drops,
+            "p95_within_budget": p95_within_budget,
+            "verdict": verdict,
+        }
+        print(json.dumps(report, indent=2))
+        return 0 if verdict == "PASS" else 1
 
 
 if __name__ == "__main__":
