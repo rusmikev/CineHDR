@@ -450,7 +450,7 @@ class TestRenderTargetSpec(unittest.TestCase):
             source = source_file.read()
 
         self.assertIn("def do_size_allocate(self, width: int, height: int, baseline: int)", source)
-        self.assertIn("Gtk.Widget.do_size_allocate(self, width, height, baseline)", source)
+        self.assertIn("self.gl_area.size_allocate(alloc, baseline)", source)
         self.assertIn("target_configuration_requires_redraw(", source)
         self.assertIn("self._schedule_render(force_redraw=True)", source)
         self.assertIn("update_flags = self.mpv_ctx.update()", source)
@@ -464,11 +464,15 @@ class TestRenderTargetSpec(unittest.TestCase):
             props=SimpleNamespace(scale_factor=2),
             current_texture=object(),
             _schedule_render=Mock(),
+            gl_area=Mock(),
         )
-        with patch("src.video_widget.Gtk.Widget.do_size_allocate") as parent:
-            MpvVideoWidget.do_size_allocate(widget, 1280, 720, -1)
+        MpvVideoWidget.do_size_allocate(widget, 1280, 720, -1)
 
-        parent.assert_called_once_with(widget, 1280, 720, -1)
+        self.assertEqual(widget.gl_area.size_allocate.call_count, 1)
+        alloc, baseline = widget.gl_area.size_allocate.call_args[0]
+        self.assertEqual(alloc.width, 1280)
+        self.assertEqual(alloc.height, 720)
+        self.assertEqual(baseline, -1)
         self.assertEqual(widget._last_target_configuration, (1280, 720, 2))
         widget._schedule_render.assert_called_once_with(force_redraw=True)
 

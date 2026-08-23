@@ -92,7 +92,6 @@ class MpvVideoWidget(Gtk.Widget):
     ):
         super().__init__()
         self.mpv = mpv_player
-        # self.set_layout_manager(Gtk.BinLayout())
 
         # GLArea to manage context initialization and life-cycle
         self.gl_area = Gtk.GLArea()
@@ -260,7 +259,7 @@ class MpvVideoWidget(Gtk.Widget):
         """Remember the active video selection before libmpv tears its VO down."""
         self._video_selection_for_context_restore = None
         try:
-            current_video = self.mpv.get_property("vid")
+            current_video = getattr(self.mpv, "vid", None)
             if current_video in (False, None, "no", "auto") or (
                 isinstance(current_video, (int, str)) and str(current_video).isdigit() is False
             ):
