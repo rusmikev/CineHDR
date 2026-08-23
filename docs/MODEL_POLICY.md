@@ -1,0 +1,146 @@
+# Model Usage Policy
+
+## Purpose
+
+This policy routes work to the least expensive model that can complete it
+reliably without allowing model-cost pressure to silently change the
+architecture. Model output is evidence and implementation assistance, not an
+architectural authority. Decisions are accepted because their assumptions,
+trade-offs, and validation plan are sound.
+
+The policy applies to interactive Codex work, delegated tasks, reviews, and
+future automation in the CineHDR GPU Next development line.
+
+Review this policy after the first working GPU Next milestone and whenever the
+available model family or subscription-limit behavior changes. Do not silently
+substitute another model for an unavailable Architect tier; record the blocked
+decision and continue only work that does not depend on it.
+
+## Core rules
+
+1. Use the lowest tier that is appropriate for the task's **risk**, not merely
+   for its apparent size.
+2. Architecture is decided with `gpt-5.6-sol` and recorded before a lower tier
+   implements it.
+3. Routine implementation defaults to `gpt-5.6-terra`, not the smallest model.
+4. `gpt-5.6-luna` is restricted to bounded, mechanical work with explicit
+   acceptance criteria.
+5. No model may approve its own result solely because it is the strongest
+   available model. Tests, measurements, source evidence, and review remain
+   mandatory.
+6. If the architecture model is temporarily unavailable, continue independent
+   research, tests, fixtures, documentation, and mechanical preparation. Do
+   not let a lower tier make the blocked decision implicitly.
+
+## Routing matrix
+
+| Tier | Default configuration | Use for | Do not use for |
+| --- | --- | --- | --- |
+| Architect | `gpt-5.6-sol`, `high` reasoning | Renderer boundaries, ownership and lifetime, concurrency and synchronization, color-pipeline invariants, libmpv/libplacebo API strategy, dependency strategy, ADR review, milestone failure analysis | Reformatting, repetitive edits, routine test runs, bulk documentation cleanup |
+| Engineer | `gpt-5.6-terra`, `medium` reasoning | Bounded feature implementation, normal debugging, test design, refactoring inside an accepted architecture, integration work, code review | Introducing a new backend contract or changing an HDR invariant without an ADR |
+| Operator | `gpt-5.6-luna`, `low` reasoning | Renames, manifest checksum updates, generated-file maintenance, translations, formatting, executing prescribed test matrices, small isolated test fixtures | Ambiguous debugging, FFI, GPU synchronization, color science, dependency upgrades with behavioral impact |
+
+`gpt-5.6-sol` with `max` reasoning is exceptional. Use it only when a hard
+problem has resisted a normal `high` pass, when contradictory evidence must be
+reconciled, or before a difficult-to-reverse milestone decision. The reason for
+using `max` must be stated in the task record.
+
+## What counts as architecture in this project
+
+The following changes require the Architect tier before implementation:
+
+- selecting or replacing the libmpv GPU Next integration approach;
+- changing the render-backend interface or fallback policy;
+- changing ownership, lifetime, threading, fences, frame queues, or FBO/texture
+  synchronization;
+- changing HDR detection, transfer-function, primaries, peak-luminance, gamut,
+  or tone-mapping invariants;
+- changing Dolby Vision or HDR10+ capability policy;
+- changing the GTK/GDK/Wayland color-state and compositor hand-off design;
+- adding, replacing, or substantially upgrading mpv, FFmpeg, libplacebo, GTK,
+  or a protocol/FFI dependency;
+- changing persistent settings, public configuration, packaging guarantees, or
+  supported platform boundaries;
+- accepting a performance/correctness trade-off that changes user-visible
+  behavior.
+
+An architectural decision must produce a short ADR containing the context,
+options considered, selected option, rejected alternatives, risks, rollback
+plan, and measurable validation criteria.
+
+## Escalation rules
+
+Escalate from Luna to Terra when any of these becomes true:
+
+- the task is ambiguous or requires choosing between implementations;
+- a change crosses module boundaries;
+- a test failure is not explained by the task brief;
+- the first implementation attempt fails;
+- the diff changes behavior rather than only representation or metadata.
+
+Escalate from Terra to Sol when any of these becomes true:
+
+- an architectural item listed above is encountered;
+- two bounded implementation/debugging attempts fail for the same reason;
+- tests and documentation imply conflicting invariants;
+- the proposed fix adds a new global state, background thread, FFI boundary,
+  fallback mode, or dependency;
+- correctness cannot be demonstrated without choosing a new product or quality
+  trade-off.
+
+Escalation is not failure. It is the mechanism that keeps cheaper attempts from
+turning into expensive rework.
+
+## Task hand-off contract
+
+A task sent to Terra or Luna must be bounded and include:
+
+- the exact objective and files in scope;
+- the already accepted architectural constraints;
+- explicit non-goals;
+- commands or checks that demonstrate completion;
+- the conditions that require escalation rather than improvisation.
+
+Give lower-tier models the smallest sufficient context packet. Do not spend
+tokens sending the full repository history when a decision summary, relevant
+files, and tests are sufficient.
+
+## Review and verification
+
+- Luna changes require a diff inspection and the prescribed check. Terra can
+  perform the review unless an architecture trigger is present.
+- Terra changes require relevant automated tests and a review of boundary
+  assumptions. Sol reviews milestone integrations and architecture-sensitive
+  diffs, not every routine edit.
+- GPU/color correctness claims require pixel tests or real-hardware evidence;
+  model confidence and screenshots alone are insufficient.
+- Performance claims require comparable measurements using the same media,
+  configuration, hardware, and observation window.
+- A lower-tier implementation that contradicts an ADR is rejected even if its
+  tests pass; either restore the decision or reopen the ADR with Sol.
+
+## Budget controls
+
+- Batch related architecture questions into one decision brief for Sol.
+- Ask Sol for the decision, risks, invariants, and validation plan; delegate
+  mechanical implementation after the decision is recorded.
+- Prefer one focused Sol review of a prepared diff over using Sol to generate
+  every intermediate edit.
+- Stop repeated retries after the escalation threshold instead of increasing
+  prompt length indefinitely.
+- Parallelize only independent workstreams with non-overlapping ownership.
+- Preserve concise ADRs and test evidence so later sessions do not have to
+  rediscover settled reasoning.
+
+## Subscription-limit caveat
+
+The model tiers describe capability, latency, and cost positioning. They do not
+guarantee how a particular Codex subscription counts every request or token.
+This policy therefore optimizes expected resource use and continuity of work;
+actual limit consumption should be observed in the product and the routing
+adjusted from evidence, without downgrading architectural safety.
+
+During the first milestone, record the routed tier, retries, escalations,
+verification result, and whether a stronger model had to redo the work. Use
+that evidence to tune this policy instead of assuming that the smallest model
+always produces the lowest total consumption.

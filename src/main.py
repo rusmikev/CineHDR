@@ -35,6 +35,7 @@ from gi.repository import Adw, Gio, GLib, Gtk, Gdk
 
 from .mpris import MPRIS
 from .preferences import Preferences, settings
+from .render_backend import select_process_backend
 from .save_session import is_same_playlist
 from .window import CineWindow
 
@@ -61,9 +62,19 @@ class CineApplication(Adw.Application):
     """The main application singleton class."""
 
     def __init__(self):
+        self.gpu_validation_config = None
+        application_flags = Gio.ApplicationFlags.HANDLES_OPEN
+        if os.environ.get("CINEHDR_GPU_VALIDATION", "").strip():
+            from .gpu_validation import validation_config_from_env
+
+            self.gpu_validation_config = validation_config_from_env(os.environ)
+            # A validation run must not be forwarded to an already-open normal
+            # CineHDR process: its renderer is immutable for that process.
+            application_flags |= Gio.ApplicationFlags.NON_UNIQUE
+
         super().__init__(
             application_id="io.github.rusmikev.CineHDR",
-            flags=Gio.ApplicationFlags.HANDLES_OPEN,
+            flags=application_flags,
             resource_base_path="/io/github/rusmikev/CineHDR",
         )
 
@@ -76,7 +87,33 @@ class CineApplication(Adw.Application):
             None,
         )
 
+        self.render_backend_selection = select_process_backend(
+            settings.get_string("render-backend"), os.environ
+        )
+        self._render_fallback_toast_shown = False
+        self._gpu_validation_session = None
+        self._gpu_validation_setup_failures = ()
+        logger.info(
+            "Process video renderer configured=%s requested=%s source=%s "
+            "creation_fallback=%s",
+            self.render_backend_selection.configured.value,
+            self.render_backend_selection.requested.value,
+            self.render_backend_selection.source.value,
+            self.render_backend_selection.allow_creation_fallback,
+        )
+
         self.connect("shutdown", self._on_shutdown)
+
+    def notify_render_fallback_once(self, window, reason: str):
+        """Show at most one fallback notification for the whole process."""
+        if self._render_fallback_toast_shown:
+            return
+        self._render_fallback_toast_shown = True
+        logger.warning("GPU Next startup fallback: %s", reason)
+        window.show_toast(
+            _("GPU Next is unavailable. Using the standard renderer."),
+            True,
+        )
 
     def do_startup(self):
         self.mpris = MPRIS(self)
@@ -135,11 +172,8 @@ class CineApplication(Adw.Application):
                         width = int(parts[0])
                         height = int(parts[1])
 
-                        try:
-                            rotation = int(parts[2]) if len(parts) > 2 else 0
-                        except Exception:
-                            logger.exception("Failed to get rotation")
-                            rotation = 0
+                        rotation_value = parts[2].strip() if len(parts) > 2 else ""
+                        rotation = int(rotation_value) if rotation_value else 0
 
                         if abs(rotation) in (90, 270):
                             w = height
@@ -158,6 +192,16 @@ class CineApplication(Adw.Application):
                 win.mpv.write_watch_later_config()
             win.mpv.stop()
 
+        if (
+            self.gpu_validation_config is not None
+            and self._gpu_validation_session is None
+        ):
+            from .gpu_validation import prepare_validation_player
+
+            self._gpu_validation_setup_failures = prepare_validation_player(
+                win.mpv, self.gpu_validation_config.mode
+            )
+
         for gfile in files:
             path = gfile.get_path() or gfile.get_uri()
             if path:
@@ -169,6 +213,17 @@ class CineApplication(Adw.Application):
             w.mpv.pause = w != win
 
         win.hide_ui_timeout()
+
+        if (
+            self.gpu_validation_config is not None
+            and self._gpu_validation_session is None
+        ):
+            from .gpu_validation import GpuValidationSession
+
+            self._gpu_validation_session = GpuValidationSession(
+                win, self.gpu_validation_config
+            )
+            GLib.idle_add(self._gpu_validation_session.start)
 
     def find_first_file(self, gfile, visited=None):
         """Local-only recursive search."""
@@ -304,6 +359,8 @@ class CineApplication(Adw.Application):
             self.set_accels_for_action(f"app.{name}", shortcuts)
 
     def _on_shutdown(self, *args):
+        if self._gpu_validation_session is not None:
+            self._gpu_validation_session.abort()
         for win in self.get_windows():
             win.close()
 

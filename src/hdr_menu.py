@@ -21,6 +21,10 @@ from .hdr_controller import (
     save_hdr_config,
     _get_hdr_settings,
 )
+from .render_backend import (
+    RenderSelectionSource,
+    renderer_preference_requires_restart,
+)
 
 
 @Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/hdr_menu.ui")
@@ -30,6 +34,9 @@ class HdrMenuButton(Gtk.MenuButton):
     hdr_mode_dropdown: Gtk.DropDown = Gtk.Template.Child()
     hdr_peak_row: Gtk.Box = Gtk.Template.Child()
     hdr_peak_dropdown: Gtk.DropDown = Gtk.Template.Child()
+    gpu_next_switch: Gtk.Switch = Gtk.Template.Child()
+    renderer_restart_label: Gtk.Label = Gtk.Template.Child()
+    renderer_session_label: Gtk.Label = Gtk.Template.Child()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -100,14 +107,79 @@ class HdrMenuButton(Gtk.MenuButton):
                 else 0
             )
             self.hdr_peak_dropdown.set_selected(peak_idx)
+
+            renderer = self._gsettings.get_string("render-backend")
+            self.gpu_next_switch.set_active(renderer == "gpu-next")
+            active_backend = getattr(
+                self._video_area, "render_backend_active", None
+            )
+            session_status = getattr(
+                self._video_area, "render_session_status", "not-initialized"
+            )
+            active_label = (
+                _("GPU Next (Experimental)")
+                if active_backend == "opengl-next"
+                else _("Standard Renderer")
+                if active_backend == "opengl"
+                else _("Not initialized")
+            )
+            if session_status in (
+                "initialization-failure",
+                "runtime-failure",
+                "lifecycle-failure",
+            ):
+                active_label = _("{renderer} — stopped").format(
+                    renderer=active_label
+                )
+            self.renderer_session_label.set_label(
+                _("Current session: {renderer}").format(renderer=active_label)
+            )
+            self._update_renderer_restart_indicator(renderer)
         except Exception as e:
             logger.error(f"Error syncing HDR UI: {e}")
         finally:
             self._syncing_ui = False
 
     @property
+    def _video_area(self) -> Any:
+        return getattr(self.win, "_video_area", None) or getattr(
+            self.win, "gl_area", None
+        )
+
+    @property
     def _controller(self) -> Any:
-        return getattr(self.win.gl_area, "hdr_controller", self.win.gl_area)
+        area = self._video_area
+        return getattr(area, "hdr_controller", area)
+
+    def _update_renderer_restart_indicator(self, configured: str):
+        app = getattr(self.win, "app", None)
+        selection = getattr(app, "render_backend_selection", None)
+        if (
+            selection
+            and selection.source is RenderSelectionSource.ENVIRONMENT
+        ):
+            self.renderer_restart_label.set_label(
+                _("Developer environment override is active. The saved choice "
+                  "will apply after the override is removed.")
+            )
+            self.renderer_restart_label.set_visible(True)
+            return
+        restart_required = bool(
+            selection
+            and renderer_preference_requires_restart(selection, configured)
+        )
+        self.renderer_restart_label.set_label(
+            _("Restart required to use this renderer selection.")
+        )
+        self.renderer_restart_label.set_visible(restart_required)
+
+    @Gtk.Template.Callback()
+    def _on_gpu_next_changed(self, switch, gparam):
+        if self._syncing_ui:
+            return
+        configured = "gpu-next" if switch.get_active() else "legacy"
+        self._gsettings.set_string("render-backend", configured)
+        self._update_renderer_restart_indicator(configured)
 
     @Gtk.Template.Callback()
     def _on_hdr_reset(self, *args):
@@ -116,14 +188,14 @@ class HdrMenuButton(Gtk.MenuButton):
         ctrl = self._controller
         ctrl.hdr_mode = "auto"
         ctrl.hdr_target_peak = "auto"
-        self.win.gl_area.queue_draw()
+        self._video_area.queue_draw()
         self._save_hdr_full_config()
 
     @Gtk.Template.Callback()
     def _on_hdr_peak_reset(self, *args):
         self.hdr_peak_dropdown.set_selected(0)
         self._controller.hdr_target_peak = "auto"
-        self.win.gl_area.queue_draw()
+        self._video_area.queue_draw()
         self._save_hdr_full_config()
 
     @Gtk.Template.Callback()
@@ -135,7 +207,7 @@ class HdrMenuButton(Gtk.MenuButton):
         self._controller.hdr_mode = mode
         is_sdr_forced = (mode == "force-sdr")
         self.hdr_peak_row.set_sensitive(not is_sdr_forced)
-        self.win.gl_area.queue_draw()
+        self._video_area.queue_draw()
         self._save_hdr_full_config()
 
     @Gtk.Template.Callback()
@@ -146,7 +218,7 @@ class HdrMenuButton(Gtk.MenuButton):
         ctrl = self._controller
         peak = HDR_PEAK_PRESETS[idx] if 0 <= idx < len(HDR_PEAK_PRESETS) else "auto"
         ctrl.hdr_target_peak = peak
-        self.win.gl_area.queue_draw()
+        self._video_area.queue_draw()
         self._save_hdr_full_config()
 
     @Gtk.Template.Callback()
@@ -171,4 +243,3 @@ class HdrMenuButton(Gtk.MenuButton):
             save_hdr_config(config)
         finally:
             self._syncing_ui = False
-

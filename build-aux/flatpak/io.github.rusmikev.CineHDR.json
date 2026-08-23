@@ -3,6 +3,9 @@
     "runtime": "org.gnome.Platform",
     "runtime-version": "50",
     "sdk": "org.gnome.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable"
+    ],
     "command": "cinehdr",
     "finish-args": [
         "--share=ipc",
@@ -24,6 +27,7 @@
         "/man",
         "/share/doc",
         "/share/gtk-doc",
+        "/share/hwdata",
         "/share/man",
         "/share/pkgconfig",
         "*.la",
@@ -46,26 +50,31 @@
             "buildsystem": "meson",
             "config-opts": [
                 "-Dlibmpv=true",
+                "-Dcplayer=false",
                 "-Dbuild-date=false",
+                "-Dtests=false",
                 "-Dalsa=disabled",
-                "-Dlua=enabled"
+                "-Dlua=enabled",
+                "-Ddrm=enabled",
+                "-Dvaapi=enabled",
+                "-Dvaapi-drm=enabled"
+            ],
+            "post-install": [
+                "test -e /app/lib/libmpv.so.2",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libavcodec.so.62]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libavutil.so.60]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libplacebo.so.360]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libdrm.so.2]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libdisplay-info.so.3]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libva-drm.so.2]'",
+                "readelf -d /app/lib/libplacebo.so.360 | grep -F 'Shared library: [libdovi.so.3]'"
             ],
             "sources": [
                 {
-                    "type": "archive",
-                    "url": "https://github.com/mpv-player/mpv/archive/v0.41.0.tar.gz",
-                    "sha256": "ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209",
-                    "x-checker-data": {
-                        "type": "anitya",
-                        "project-id": 5348,
-                        "stable-only": true,
-                        "url-template": "https://github.com/mpv-player/mpv/archive/v$version.tar.gz",
-                        "is-important": true
-                    }
-                },
-                {
-                    "type": "patch",
-                    "path": "fix-screenshots.diff"
+                    "type": "git",
+                    "url": "https://github.com/lhc70000/mpv.git",
+                    "branch": "libmpv-gpu-next",
+                    "commit": "97179bce7ed980c53647d6344916f632fe689e9e"
                 }
             ],
             "modules": [
@@ -104,6 +113,9 @@
                         {
                             "type": "archive",
                             "url": "https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz",
+                            "mirror-urls": [
+                                "https://deb.debian.org/debian/pool/main/u/uchardet/uchardet_0.0.8.orig.tar.xz"
+                            ],
                             "sha256": "e97a60cfc00a1c147a674b097bb1422abd9fa78a2d9ce3f3fdcc2e78a34ac5f0",
                             "x-checker-data": {
                                 "type": "anitya",
@@ -115,8 +127,100 @@
                     ]
                 },
                 {
+                    "name": "hwdata",
+                    "buildsystem": "simple",
+                    "build-commands": [
+                        "./configure --prefix=/app --disable-blacklist",
+                        "make install",
+                        "test -e /app/share/hwdata/pnp.ids",
+                        "pkg-config --atleast-version=0.410 hwdata"
+                    ],
+                    "sources": [
+                        {
+                            "type": "git",
+                            "url": "https://github.com/vcrhonek/hwdata.git",
+                            "commit": "8bb6c48dc2e683777e625d1c9ef02c1b25b741cd"
+                        }
+                    ]
+                },
+                {
+                    "name": "libdisplay-info",
+                    "buildsystem": "meson",
+                    "post-install": [
+                        "test -e /app/lib/libdisplay-info.so.3",
+                        "readelf -d /app/lib/libdisplay-info.so.3 | grep -F 'Library soname: [libdisplay-info.so.3]'"
+                    ],
+                    "sources": [
+                        {
+                            "type": "git",
+                            "url": "https://gitlab.freedesktop.org/emersion/libdisplay-info.git",
+                            "commit": "47a5590e9c4eb35d67651b8c05a55f1a48259329"
+                        }
+                    ]
+                },
+                {
+                    "name": "ffmpeg",
+                    "buildsystem": "simple",
+                    "build-commands": [
+                        "./configure --prefix=/app --libdir=/app/lib --disable-debug --disable-doc --disable-static --enable-shared --enable-gpl --enable-version3 --enable-libdrm --enable-vaapi --enable-vulkan --disable-libplacebo",
+                        "make -j${FLATPAK_BUILDER_N_JOBS}",
+                        "make install",
+                        "test -e /app/lib/libavcodec.so.62",
+                        "test -e /app/lib/libavutil.so.60",
+                        "/app/bin/ffmpeg -version 2>/dev/null | grep -m1 -F 'ffmpeg version 8.1.2 '",
+                        "pkg-config --atleast-version=62 libavcodec"
+                    ],
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "url": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+                            "sha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
+                        }
+                    ]
+                },
+                {
+                    "name": "libdovi",
+                    "buildsystem": "simple",
+                    "build-options": {
+                        "append-path": "/usr/lib/sdk/rust-stable/bin",
+                        "env": {
+                            "CARGO_HOME": "/run/build/libdovi/cargo",
+                            "CARGO_NET_OFFLINE": "true"
+                        }
+                    },
+                    "build-commands": [
+                        "cargo cbuild --frozen --offline --release --features capi",
+                        "cargo cinstall --frozen --offline --release --features capi --prefix=/app --libdir=/app/lib",
+                        "test -e /app/lib/libdovi.so.3",
+                        "pkg-config --atleast-version=3.3.2 dovi"
+                    ],
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "archive-type": "tar-gzip",
+                            "url": "https://static.crates.io/crates/dolby_vision/dolby_vision-3.3.2.crate",
+                            "sha256": "533d9f32336f4d03822e87fcee32277fd4a52e3f1278549bf42c8b28e3b0f798"
+                        },
+                        "cargo-sources-dolby_vision-3.3.2.json"
+                    ]
+                },
+                {
                     "name": "libplacebo",
                     "buildsystem": "meson",
+                    "config-opts": [
+                        "-Dopengl=enabled",
+                        "-Dvulkan=enabled",
+                        "-Ddovi=enabled",
+                        "-Dlibdovi=enabled",
+                        "-Ddemos=false",
+                        "-Dtests=false"
+                    ],
+                    "post-install": [
+                        "test -e /app/lib/libplacebo.so",
+                        "pkg-config --atleast-version=7.360.1 libplacebo",
+                        "test \"$(pkg-config --variable=pl_has_dovi libplacebo)\" = \"1\"",
+                        "test \"$(pkg-config --variable=pl_has_libdovi libplacebo)\" = \"1\""
+                    ],
                     "sources": [
                         {
                             "type": "git",

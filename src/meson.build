@@ -2,19 +2,30 @@ pkgdatadir = get_option('prefix') / get_option('datadir') / meson.project_name()
 moduledir = pkgdatadir / 'cinehdr'
 gnome = import('gnome')
 
+blueprint_sources = files(
+  'history.blp',
+  'playlist.blp',
+  'preferences.blp',
+  'options.blp',
+  'hdr_menu.blp',
+  'hdr_diagnostics.blp',
+  'shortcuts-dialog.blp',
+  'window.blp',
+)
+
 blueprints = custom_target('blueprints',
-  input: files(
-    'history.blp',
-    'playlist.blp',
-    'preferences.blp',
-    'options.blp',
-    'hdr_menu.blp',
-    'hdr_diagnostics.blp',
-    'shortcuts-dialog.blp',
-    'window.blp',
-  ),
-  output: '.',
-  command: [find_program('blueprint-compiler'), 'batch-compile', '@OUTPUT@', '@CURRENT_SOURCE_DIR@', '@INPUT@'],
+  input: blueprint_sources,
+  output: [
+    'history.ui',
+    'playlist.ui',
+    'preferences.ui',
+    'options.ui',
+    'hdr_menu.ui',
+    'hdr_diagnostics.ui',
+    'shortcuts-dialog.ui',
+    'window.ui',
+  ],
+  command: [find_program('blueprint-compiler'), 'batch-compile', '@OUTDIR@', '@CURRENT_SOURCE_DIR@', '@INPUT@'],
 )
 
 cinehdr_resources = gnome.compile_resources('cinehdr',
@@ -46,8 +57,10 @@ cine_sources = [
   'shaders/flip-h.glsl',
   'shaders/flip-v.glsl',
   '__init__.py',
+  'diagnostics_report.py',
   'gl_bindings.py',
   'gl_renderer.py',
+  'gpu_validation.py',
   'hdr_controller.py',
   'hdr_detection.py',
   'hdr_diagnostics.py',
@@ -59,6 +72,7 @@ cine_sources = [
   'options.py',
   'playlist.py',
   'preferences.py',
+  'render_backend.py',
   'save_session.py',
   'shortcuts.py',
   'utils.py',

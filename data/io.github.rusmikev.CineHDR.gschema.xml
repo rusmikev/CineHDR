@@ -5,6 +5,10 @@
 		<value nick="playlist" value="1" />
 		<value nick="file" value="2" />
 	</enum>
+	<enum id="io.github.rusmikev.CineHDR.RenderBackend">
+		<value nick="legacy" value="0" />
+		<value nick="gpu-next" value="1" />
+	</enum>
 	<schema id="io.github.rusmikev.CineHDR" path="/io/github/rusmikev/CineHDR/">
 		<key name="open-new-windows" type="b">
 			<default>true</default>
@@ -74,6 +78,10 @@
 		</key>
 		<key name="hdr-target-prim" type="s">
 			<default>"auto"</default>
+		</key>
+		<key name="render-backend" enum="io.github.rusmikev.CineHDR.RenderBackend">
+			<default>'legacy'</default>
+			<summary>Video renderer used after restarting CineHDR</summary>
 		</key>
 	</schema>
 </schemalist>

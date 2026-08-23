@@ -183,9 +183,12 @@ def is_hdr_content(params: dict) -> bool:
 #     so tagging it Rec.2100 PQ would show broken colors *and* switch the
 #     monitor into HDR mode. mpv's SDR tone mapping is the lesser evil.
 #
-#   * Profiles 7 and 8 carry an HDR10-compatible base layer: after the same
-#     revert mpv renders correct BT.2020 + PQ and only the dynamic metadata is
-#     lost. They must keep working in HDR.
+#   * Profile 7 and common Profile 8 variants carry a usable HDR base layer:
+#     after the same revert mpv can keep those cases in HDR while losing the
+#     dynamic metadata. Profile 8 alone does not prove HDR10 compatibility;
+#     that requires dv_bl_signal_compatibility_id, which mpv does not currently
+#     expose as a track property. Keep these profiles working as before, but do
+#     not label every Profile 8 stream as an HDR10 fallback in diagnostics.
 DOVI_UNSUPPORTED_PROFILES = (5,)
 
 
@@ -311,4 +314,3 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
             "(wp_color_manager_v1) — HDR pass-through is impossible, using mpv tone mapping"
         )
     return "Wayland compositor does not support HDR/color management"
-

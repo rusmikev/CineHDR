@@ -28,6 +28,7 @@ gi.require_version("GLib", "2.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, Gtk
+from .render_backend import RenderSelectionSource
 from .utils import CONFIG_DIR, display, has_host_permission, is_flatpak
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class Preferences(Adw.Dialog):
     thumb_preview_row: Adw.SwitchRow = Gtk.Template.Child()
     offload_row: Adw.SwitchRow = Gtk.Template.Child()
     hwdec_row: Adw.SwitchRow = Gtk.Template.Child()
+    renderer_row: Adw.SwitchRow = Gtk.Template.Child()
     normalize_volume_row: Adw.SwitchRow = Gtk.Template.Child()
     save_session_switch: Gtk.Switch = Gtk.Template.Child()
     save_position_switch: Gtk.Switch = Gtk.Template.Child()
@@ -108,6 +110,24 @@ class Preferences(Adw.Dialog):
 
         self._bind_ui()
         self._setup_mpv_updates()
+        self.renderer_row.set_active(
+            settings.get_string("render-backend") == "gpu-next"
+        )
+        selection = getattr(
+            getattr(window, "app", None), "render_backend_selection", None
+        )
+        if (
+            selection
+            and selection.source is RenderSelectionSource.ENVIRONMENT
+        ):
+            self.renderer_row.set_subtitle(
+                _("Developer environment override is active. The saved choice "
+                  "will apply after the override is removed, not after a "
+                  "restart with the same override.")
+            )
+        self.renderer_row.connect(
+            "notify::active", self._on_renderer_row_changed
+        )
 
         font = settings.get_string("subtitle-font")
         self.font_label.set_label(font)
@@ -174,6 +194,7 @@ class Preferences(Adw.Dialog):
             "hwdec": self._on_hwdec_changed,
             "normalize-volume": self._on_norm_volume_changed,
             "save-video-position": self._on_save_pos_changed,
+            "render-backend": self._on_render_backend_changed,
         }
 
         self._setting_ids = [
@@ -245,6 +266,16 @@ class Preferences(Adw.Dialog):
             self._mpv["hwdec"] = self._win.conf_hwdec + ["auto"]
         else:
             self._mpv["hwdec"] = "no"
+
+    def _on_renderer_row_changed(self, row, _param):
+        configured = "gpu-next" if row.get_active() else "legacy"
+        if settings.get_string("render-backend") != configured:
+            settings.set_string("render-backend", configured)
+
+    def _on_render_backend_changed(self, changed_settings, key):
+        active = changed_settings.get_string(key) == "gpu-next"
+        if self.renderer_row.get_active() != active:
+            self.renderer_row.set_active(active)
 
     def _on_save_pos_changed(self, settings, _key):
         self._mpv["save-position-on-quit"] = settings.get_boolean("save-video-position")

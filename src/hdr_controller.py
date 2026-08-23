@@ -28,6 +28,7 @@ OpenGL rendering widgets from HDR business logic. It handles:
 """
 
 import logging
+import mpv
 from typing import Any, Optional
 from gi.repository import GObject, Gio, GLib
 from .utils import idle_add_once
@@ -46,6 +47,16 @@ from .hdr_detection import (
 # tests/test_hdr.py (no duplicated tables).
 HDR_MODES = ("auto", "force-hdr", "force-sdr")
 HDR_PEAK_PRESETS = ("auto", "200", "400", "600", "1000", "1600")
+
+
+def is_tone_mapping_active(
+    source_hdr: bool, hdr_output_active: bool, target_peak: object
+) -> bool:
+    """Describe both HDR-to-SDR and numeric-peak HDR-to-HDR mapping."""
+    return bool(
+        source_hdr
+        and (not hdr_output_active or target_peak not in (None, "auto"))
+    )
 
 
 def _get_hdr_settings() -> Optional[Gio.Settings]:
@@ -231,7 +242,8 @@ class HdrController(GObject.Object):
         """Apply tone mapping parameters and target primaries for HDR playback."""
         if getattr(self, "_disconnected", False) or not self.mpv:
             return
-        if self.is_hdr_active:
+        hdr_output_active = self.is_hdr_active
+        if hdr_output_active:
             target_peak = self._hdr_target_peak
             if target_peak not in HDR_PEAK_PRESETS:
                 target_peak = "auto"
@@ -291,6 +303,11 @@ class HdrController(GObject.Object):
         for prop, val in props:
             try:
                 self.mpv[prop] = val
+            except mpv.ShutdownError:
+                # Property observers can deliver their final empty state after
+                # CineHDR has asked libmpv to quit. This is normal shutdown,
+                # not an HDR configuration failure.
+                return
             except Exception as e:
                 logging.warning(f"Failed to set mpv property '{prop}' to '{val}': {e}")
 
@@ -306,7 +323,11 @@ class HdrController(GObject.Object):
             "source_hdr": self._is_hdr_content,
             "target_trc": next((v for p, v in props if p == "target-trc"), "auto"),
             "target_peak": next((v for p, v in props if p == "target-peak"), "auto"),
-            "tone_mapping_active": not self.is_hdr_active,
+            "tone_mapping_active": is_tone_mapping_active(
+                self._is_hdr_content,
+                hdr_output_active,
+                next((v for p, v in props if p == "target-peak"), "auto"),
+            ),
             "display_hdr": get_monitor_hdr_state(self._output_hint),
             "hdr_mode": self._hdr_mode,
             "dovi_profile": self.dovi_profile,
@@ -474,11 +495,11 @@ class HdrController(GObject.Object):
             return
         self._dovi_warned = True
         logging.warning(
-            "Dolby Vision Profile %s detected. The libmpv render API uses mpv's "
-            "legacy GPU renderer, which cannot apply the Dolby Vision RPU reshaping "
-            "(implemented only by libplacebo / vo=gpu-next), so the decoded frame is "
-            "not Rec.2100 PQ. Falling back to SDR tone mapping instead of tagging "
-            "unshaped IPT data as HDR.",
+            "Dolby Vision Profile %s detected. Dolby Vision RPU reshaping is "
+            "disabled until the active embedded renderer passes CineHDR's "
+            "validation gate, so the decoded frame is not treated as Rec.2100 "
+            "PQ. Falling back to SDR tone mapping instead of tagging unshaped "
+            "IPT data as HDR.",
             self.dovi_profile,
         )
 
@@ -519,5 +540,3 @@ class HdrController(GObject.Object):
             except Exception:
                 pass
         self._mpv_observers = []
-
-

@@ -921,7 +921,7 @@ class TestHdrDiagnostics(unittest.TestCase):
 
     @unittest.mock.patch("src.hdr_diagnostics.check_hdr_support", return_value=True)
     def test_update_diagnostics_dolby_vision_profile_8(self, mock_check):
-        """Profile 8 is reported as an HDR10 base layer, not as SDR-forced."""
+        """Pinned GPU Next reports mapped RPU without claiming native DV."""
         from src.hdr_diagnostics import HdrDiagnosticsDialog
 
         class MockActionRow:
@@ -941,6 +941,13 @@ class TestHdrDiagnostics(unittest.TestCase):
         class MockGLArea:
             hdr_controller = MockController()
             _color_state = None
+            render_backend_active = "opengl-next"
+            render_session_status = "active"
+            render_runtime = {
+                "mpv_version": "mpv v0.41.0-dev-g97179bce7",
+                "libplacebo_version": "v7.360.1",
+                "ffmpeg_version": "8.1.2",
+            }
 
         class MockMpvP8:
             def get_property(self, name):
@@ -968,9 +975,38 @@ class TestHdrDiagnostics(unittest.TestCase):
 
         subtitle = diag.dovi_profile_row.subtitle
         self.assertIn("Profile 8", subtitle)
-        self.assertIn("HDR10", subtitle)
+        self.assertIn("RPU metadata mapped", subtitle)
+        self.assertIn("validation pending", subtitle)
         self.assertIn("Level 6", subtitle)
         self.assertNotIn("forced to SDR", subtitle)
+        self.assertNotIn("native", subtitle.lower())
+
+    def test_hdr_status_distinguishes_hdr_tone_mapping_from_passthrough(self):
+        from src.hdr_diagnostics import _hdr_status_text
+
+        mapped = _hdr_status_text(
+            is_active=True,
+            supported=True,
+            mode="auto",
+            is_content=True,
+            source_peak_nits=1001,
+            target_peak=279,
+        )
+        self.assertIn("tone-mapped", mapped)
+        self.assertIn("1001", mapped)
+        self.assertIn("279", mapped)
+        self.assertNotIn("Pass-through", mapped)
+
+        pq_output = _hdr_status_text(
+            is_active=True,
+            supported=True,
+            mode="auto",
+            is_content=True,
+            source_peak_nits=1000,
+            target_peak=1000,
+        )
+        self.assertIn("Rec.2100 PQ", pq_output)
+        self.assertNotIn("Pass-through", pq_output)
 
 
 class TestAuditFixes(unittest.TestCase):

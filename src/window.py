@@ -41,7 +41,7 @@ from .gl_bindings import libgl
 from .hdr_menu import HdrMenuButton
 from .history import HistoryDialog
 from .mpris import MPRIS
-from .mpv_gl_area import ThumbPreviewGLArea
+from .mpv_gl_area import ThumbPreviewGLArea, VideoGLArea
 from .options import OptionsMenuButton
 from .playlist import Playlist, PlaylistItemObj
 from .preferences import settings, sync_mpv_with_settings
@@ -73,8 +73,6 @@ from .utils import (
     timeout_add_once,
     timeout_add_seconds_once,
 )
-from .video_widget import MpvVideoWidget
-
 logger = logging.getLogger(__name__)
 gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
 
@@ -139,6 +137,9 @@ class CineWindow(Adw.ApplicationWindow):
         super().__init__(**kwargs)
         self.app: Adw.Application = cast(Adw.Application, kwargs.get("application"))
         self._mpris: MPRIS = self.app.mpris  # type: ignore
+        self._is_gpu_validation: bool = (
+            getattr(self.app, "gpu_validation_config", None) is not None
+        )
 
         Gtk.WindowGroup().add_window(self)
 
@@ -233,7 +234,10 @@ class CineWindow(Adw.ApplicationWindow):
             watch_history_path=WATCH_HISTORY_JSONL,
         )
 
-        self._video_area = VideoGLArea(self.mpv)
+        self._video_area = VideoGLArea(
+            self.mpv,
+            render_backend_selection=self.app.render_backend_selection,  # type: ignore
+        )
         if hasattr(self._video_area, "setup_window_integration"):
             self._video_area.setup_window_integration(self)
         self.offload: Gtk.GraphicsOffload = Gtk.GraphicsOffload(child=self._video_area)
@@ -277,7 +281,11 @@ class CineWindow(Adw.ApplicationWindow):
 
         sync_mpv_with_settings(self)
 
-        if settings.get_boolean("save-session") and is_activate:
+        if (
+            settings.get_boolean("save-session")
+            and is_activate
+            and not self._is_gpu_validation
+        ):
             restore_last_playlist(self, self.app, self.mpv)
 
     def _setup_actions(self):
@@ -861,6 +869,9 @@ class CineWindow(Adw.ApplicationWindow):
         self.chapters_menu_btn.popup()
 
     def _on_save_session(self, *args, close=False):
+        if self._is_gpu_validation:
+            logger.info("Ignoring session save during GPU validation")
+            return
         try:
             settings.set_boolean("save-session", True)
             save_last_playlist_file(self.mpv)
@@ -1732,7 +1743,11 @@ class CineWindow(Adw.ApplicationWindow):
         try:
             same_playlist = is_same_playlist(self.mpv.playlist)
             save_pos = settings.get_boolean("save-video-position")
-            if same_playlist or save_pos:
+            if self._is_gpu_validation:
+                # Validation seeks must never overwrite the user's real
+                # watch-later position for the sample.
+                self.mpv.quit()
+            elif same_playlist or save_pos:
                 self.mpv.quit_watch_later()
             else:
                 self.mpv.quit()
@@ -2104,7 +2119,7 @@ class CineWindow(Adw.ApplicationWindow):
                         obj.notify("playing")
 
                 self._hide_icon_indicator = False
-                self.app_mpris._update_metadata()
+                self._mpris.update_metadata()
             except mpv.ShutdownError:
                 pass
 

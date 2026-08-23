@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $HdrDiagnosticsDialog: Adw.Dialog {
-  title: _("HDR Diagnostics");
+  title: _("Video Output Diagnostics");
   name: "hdr-diagnostics";
   content-width: 520;
   content-height: 480;
@@ -11,19 +11,79 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
     [top]
     Adw.HeaderBar {
       [end]
-      Button refresh_btn {
-        icon-name: "view-refresh-symbolic";
-        tooltip-text: _("Refresh");
-        styles [
-          "flat",
-        ]
-        clicked => $_on_refresh();
+      Box {
+        Button copy_btn {
+          icon-name: "edit-copy-symbolic";
+          tooltip-text: _("Copy diagnostics");
+          styles [
+            "flat",
+          ]
+          clicked => $_on_copy();
+        }
+
+        Button refresh_btn {
+          icon-name: "view-refresh-symbolic";
+          tooltip-text: _("Refresh");
+          styles [
+            "flat",
+          ]
+          clicked => $_on_refresh();
+        }
       }
     }
 
     content: Adw.PreferencesPage {
       Adw.PreferencesGroup {
-        title: _("Output &amp; Color State");
+        title: _("Video Renderer");
+        description: _("Changes apply after restarting CineHDR.");
+
+        Adw.ActionRow renderer_active_row {
+          title: _("Current Renderer");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow renderer_configured_row {
+          title: _("After Restart");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow renderer_reason_row {
+          title: _("Status");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow renderer_target_row {
+          title: _("Render Target");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow renderer_requested_row {
+          title: _("Requested This Session");
+          subtitle: "Checking...";
+          visible: false;
+        }
+
+        Adw.ActionRow renderer_dependency_row {
+          title: _("Renderer Dependencies");
+          subtitle: "Checking...";
+          visible: false;
+        }
+
+        Adw.ActionRow gpu_next_capability_row {
+          title: _("GPU Next Capability");
+          subtitle: "Checking...";
+          visible: false;
+        }
+
+        Adw.ActionRow dovi_capability_row {
+          title: _("Dolby Vision Capability");
+          subtitle: "Checking...";
+          visible: false;
+        }
+      }
+
+      Adw.PreferencesGroup {
+        title: _("Output & Color State");
         description: _("Current GTK and OpenGL rendering surface status.");
 
         Adw.ActionRow status_row {
@@ -77,7 +137,7 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
         }
 
         Adw.ActionRow resolution_row {
-          title: _("Resolution &amp; Pixel Format");
+          title: _("Resolution & Pixel Format");
           subtitle: "Checking...";
         }
 
