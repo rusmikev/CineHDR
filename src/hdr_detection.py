@@ -48,7 +48,9 @@ def invalidate_hdr_support_cache():
     wayland_output_hdr.invalidate()
 
 
-def get_monitor_hdr_state(connector: Optional[str] = None) -> Optional[bool]:
+def get_monitor_hdr_state(
+    connector: Optional[str] = None, allow_probe: bool = False
+) -> Optional[bool]:
     """Tri-state: is the monitor (or any monitor) actually in HDR mode?
 
     True/False come from reading the output's image description through
@@ -57,9 +59,23 @@ def get_monitor_hdr_state(connector: Optional[str] = None) -> Optional[bool]:
     must not change their behaviour. Consulted by HdrController to keep
     auto mode on mpv tone mapping while monitor HDR is switched off, and by
     the diagnostics dialog.
+
+    allow_probe: If False (default for hot render path), only the cached state
+    is read without performing blocking Wayland roundtrips.
     """
     try:
-        return wayland_output_hdr.get_monitor_hdr_state(connector)
+        return wayland_output_hdr.get_monitor_hdr_state(connector, allow_probe=allow_probe)
+    except Exception:
+        return None
+
+
+def refresh_monitor_hdr_state() -> Optional[bool]:
+    """Force a refresh of the Wayland monitor HDR states cache."""
+    try:
+        states = wayland_output_hdr.refresh_output_hdr_states()
+        if states is None:
+            return None
+        return any(info.hdr for info in states.values())
     except Exception:
         return None
 
@@ -171,23 +187,18 @@ def is_hdr_content(params: dict) -> bool:
 # ──────────────────────────────────────────────────────────────
 #
 # Profiles whose picture cannot be rendered correctly through the libmpv render
-# API, i.e. for which HDR pass-through must be refused:
+# API without certified RPU reshaping, i.e. for which HDR pass-through must be refused:
 #
-#   * Profile 5 is single-layer IPT (IPTPQc2). Showing it correctly requires the
-#     RPU reshaping, which only libplacebo implements (mpv --vo=gpu-next).
-#     CineHDR renders through the libmpv render API (vo=libmpv), which uses
-#     mpv's legacy GPU renderer: that renderer explicitly reverts the Dolby
-#     Vision mapping (mp_image_params_restore_dovi_mapping(), video/out/gpu/
-#     video.c) and its YUV->RGB matrix treats DOLBYVISION as "not supported",
-#     falling back to BT.2020-NC (video/csputils.c). The resulting RGB is wrong,
-#     so tagging it Rec.2100 PQ would show broken colors *and* switch the
-#     monitor into HDR mode. mpv's SDR tone mapping is the lesser evil.
+#   * Profile 5 is single-layer IPT (IPTPQc2). Showing it correctly requires
+#     RPU reshaping, which libplacebo implements (mpv --vo=gpu-next / opengl-next).
+#     While CineHDR supports gpu-next with libplacebo, Profile 5 HDR tagging remains
+#     gated until Gate 3 (pixel/color validation) is formally certified to prevent
+#     unshaped IPT data from reaching the monitor as Rec.2100 PQ.
 #
 #   * Profile 7 and common Profile 8 variants carry a usable HDR base layer:
-#     after the same revert mpv can keep those cases in HDR while losing the
-#     dynamic metadata. Profile 8 alone does not prove HDR10 compatibility;
-#     that requires dv_bl_signal_compatibility_id, which mpv does not currently
-#     expose as a track property. Keep these profiles working as before, but do
+#     mpv can keep those cases in HDR while losing the dynamic metadata.
+#     Profile 8 alone does not prove HDR10 compatibility without checking
+#     dv_bl_signal_compatibility_id. Keep these profiles working as before, but do
 #     not label every Profile 8 stream as an HDR10 fallback in diagnostics.
 DOVI_UNSUPPORTED_PROFILES = (5,)
 

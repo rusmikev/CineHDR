@@ -691,21 +691,38 @@ def invalidate():
     _cache_valid = False
 
 
-def get_output_hdr_states() -> Optional[Dict[str, OutputHdrInfo]]:
-    """TTL-cached probe_outputs(). is_hdr_active is evaluated per rendered
-    frame, so the raw probe (3 round-trips per output) must never run there
-    more than once per CACHE_TTL_SECONDS."""
+def refresh_output_hdr_states() -> Optional[Dict[str, OutputHdrInfo]]:
+    """Explicitly perform probe_outputs() and update the cache.
+
+    Must be called from background timers or lifecycle event handlers,
+    never directly from the per-frame render path.
+    """
     global _cache_value, _cache_time, _cache_valid
-    now = time.monotonic()
-    if _cache_valid and (now - _cache_time) < CACHE_TTL_SECONDS:
-        return _cache_value
     _cache_value = probe_outputs()
-    _cache_time = now
+    _cache_time = time.monotonic()
     _cache_valid = True
     return _cache_value
 
 
-def get_monitor_hdr_state(connector: Optional[str] = None) -> Optional[bool]:
+def get_output_hdr_states(allow_probe: bool = False) -> Optional[Dict[str, OutputHdrInfo]]:
+    """Return output HDR states from the cache.
+
+    If allow_probe is True and the cache is expired/uninitialized, probe_outputs()
+    is executed. If allow_probe is False (default, for hot render paths), only the
+    existing cached value is returned without performing any blocking Wayland roundtrips.
+    """
+    global _cache_value, _cache_time, _cache_valid
+    now = time.monotonic()
+    if _cache_valid and (now - _cache_time) < CACHE_TTL_SECONDS:
+        return _cache_value
+    if allow_probe:
+        return refresh_output_hdr_states()
+    return _cache_value if _cache_valid else None
+
+
+def get_monitor_hdr_state(
+    connector: Optional[str] = None, allow_probe: bool = False
+) -> Optional[bool]:
     """Tri-state HDR answer for one connector (or the aggregate).
 
     * connector known in the probe result -> that output's state;
@@ -713,7 +730,7 @@ def get_monitor_hdr_state(connector: Optional[str] = None) -> Optional[bool]:
       that might be on the HDR screen), False only when every output is SDR;
     * probe unavailable -> None (callers change nothing).
     """
-    states = get_output_hdr_states()
+    states = get_output_hdr_states(allow_probe=allow_probe)
     if states is None:
         return None
     if connector and connector in states:

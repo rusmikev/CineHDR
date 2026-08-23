@@ -23,14 +23,17 @@ Play your videos with HDR support
 > Программное обеспечение предоставляется **"как есть" (as is)**, без каких-либо явных или подразумеваемых гарантий.
 
 **Changes in this fork / Изменения в этом форке:**
-* Replaced standard `GtkGLArea` with a custom high-precision float rendering pipeline (`GL_RGBA16F`).
-* Integrated Wayland HDR color state signaling (`rec2100-pq` / `srgb` textures) via GTK4 ColorState APIs to pass HDR signal to compatible compositors.
+* Replaced standard `GtkGLArea` with a high-precision float rendering pipeline (`GL_RGBA16F` / `Rec.2100 PQ`).
+* Integrated GTK4 `GdkColorState` tagging (`rec2100-pq` / `srgb` textures) and `GtkGraphicsOffload` pipeline.
+* Built-in dynamic Wayland protocol probing (`wp_color_manager_v1` / `xx_color_manager_v4`) to automatically verify compositor and monitor HDR state before enabling PQ signaling.
 * Added a dedicated **HDR Settings** control icon on the playback panel (visible when playing HDR content) for real-time SDR/HDR switching and peak brightness adjustment.
+* Added experimental support for `libmpv`'s `gpu-next` rendering backend (`libplacebo` / Dolby Vision RPU pipeline).
 * Provided system integration launcher (**CineHDR**).
 
 **Known limitations / Известные ограничения:**
-* CineHDR requires GTK's modern renderer (`ngl`/`vulkan`). Upstream Cine pins `GSK_RENDERER=gl` to work around frame drops on the Niri DE and video blackouts on some NVIDIA setups; that workaround is incompatible with HDR. On Niri the pin is now applied automatically (`NIRI_SOCKET` detected, nothing lost — Niri has no color management anyway). Elsewhere, launching with `GSK_RENDERER=gl` still works — CineHDR detects it and falls back to SDR rendering.
-* CineHDR now asks the compositor directly whether it speaks a color-management protocol (`wp_color_manager_v1`) and refuses HDR pass-through when it does not — on such systems (older wlroots, Weston, Niri) you automatically get mpv's proper tone mapping instead of a washed-out picture. The monitor state itself is checked too: when HDR is switched off in display settings, auto mode now keeps mpv's tone mapping instead of handing PQ to the compositor (Force HDR still overrides if you want the compositor's conversion). Check **HDR Diagnostics** in the same menu for the live pipeline state, including the new "Compositor Color Management" row.
+* **Wayland Color Management Pipeline**: CineHDR prepares a true 16-bit `Rec.2100 PQ` surface and communicates target color states to GTK4. End-to-end native HDR output to the screen depends on the ongoing Wayland color-management protocol implementation in GTK and the compositor. When color management is absent or monitor HDR is disabled, CineHDR's tri-state gate automatically keeps mpv's high-quality internal tone mapping active to prevent flat colorimetric clipping.
+* CineHDR requires GTK's modern renderer (`ngl`/`vulkan`). Upstream Cine pins `GSK_RENDERER=gl` to work around frame drops on the Niri DE and video blackouts on some NVIDIA setups; that workaround is incompatible with HDR. On Niri the pin is applied automatically (`NIRI_SOCKET` detected — Niri has no color management anyway). Elsewhere, launching with `GSK_RENDERER=gl` still works — CineHDR detects it and falls back to safe SDR rendering.
+* Check **HDR Diagnostics** in the playback menu for the live pipeline state, active renderer backend, and compositor capabilities.
 
 ---
 
@@ -40,7 +43,8 @@ CineHDR combines a clean interface with a high-performance engine to deliver a s
 
 ### Features
 
-- **HDR Support** — HDR content is rendered to a Rec.2100 PQ output surface and presented through GTK/Wayland color management (HDR10/HLG presentation with limited Dolby Vision fallback)
+- **HDR & Color Management** — HDR content is rendered into a high-precision Rec.2100 PQ target with dynamic monitor-aware tone mapping and tri-state capability validation.
+- **Renderer Selection** — Support for both stable legacy OpenGL and experimental `gpu-next` (`libplacebo`) backends with automatic safe creation fallback.
 - **Simple Design** — A refined, distraction-free interface
 - **MPV-Based** — Leverages the robust power of MPV for great playback and format support
 - **Audio and Subtitles** — Control track selection and synchronization for both

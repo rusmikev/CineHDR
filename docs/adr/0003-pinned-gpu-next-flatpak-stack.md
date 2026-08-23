@@ -192,6 +192,17 @@ evidence. The strict GPU Next part of the local package hardware checkpoint is
 closed; the result is not vendor coverage, color validation, or Dolby Vision
 certification. There is still no technical reason to repeat a 30-minute soak.
 
+## Security Policy and Pinned Dependency Lifecycle
+
+Pinning multimedia libraries (`FFmpeg`, `libplacebo`, `libdovi`) is essential for reproducible color pipeline validation, but requires proactive security maintenance:
+
+1. **Vulnerability Tracking:**
+   - CineHDR CI and maintainers monitor upstream FFmpeg security releases (`8.1.x` branch) and CVE advisories.
+   - Any high/critical security vulnerability in FFmpeg decoder or demuxer components triggers an immediate patch bump in the Flatpak manifest with an updated SHA-256 digest and test pass.
+2. **Scheduled Upstream Audits:**
+   - Pinned dependencies are reviewed on every major CineHDR release cycle to assess stability and upstream compatibility.
+   - When libmpv upstream PR #16818 (`MPV_RENDER_PARAM_BACKEND`) lands in a stable upstream release, CineHDR will transition from the pinned fork back to the upstream libmpv stack.
+
 ## Rollback
 
 For a renderer failure, select `legacy` and restart CineHDR. For a package-level

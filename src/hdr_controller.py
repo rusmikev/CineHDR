@@ -39,6 +39,7 @@ from .hdr_detection import (
     get_hdr_unsupported_reason,
     get_dovi_info,
     get_monitor_hdr_state,
+    refresh_monitor_hdr_state,
 )
 
 # Single source of truth for the HDR mode values and the peak-brightness
@@ -141,7 +142,7 @@ def load_hdr_mode() -> str:
 
 
 def save_hdr_mode(mode: str):
-    """Save string HDR mode to GSettings."""
+    """Save string HDR mode from GSettings."""
     try:
         if mode not in HDR_MODES:
             mode = "auto"
@@ -178,6 +179,7 @@ class HdrController(GObject.Object):
         self._dovi_info: Optional[dict] = None
         self._dovi_warned = False
         self._force_hdr_warned = False
+        self.supports_dovi_reshaping = False
 
         self._initial_mpv_props = {}
         # target-colorspace-hint is deliberately absent: it is a no-op under
@@ -227,7 +229,26 @@ class HdrController(GObject.Object):
                 idle_add_once(self.on_content_change_cb)
         self._mpv_observers.append(("video-params", _on_video_params))
 
+        # Initial background monitor state probe & periodic TTL refresh timer
+        refresh_monitor_hdr_state()
+        self._monitor_poll_timer_id: Optional[int] = GLib.timeout_add_seconds(
+            2, self._on_monitor_poll_timeout
+        )
+
         self.apply_hdr_settings()
+
+    def _on_monitor_poll_timeout(self) -> bool:
+        """Periodic background refresh of monitor HDR state without blocking render loop."""
+        if getattr(self, "_disconnected", False):
+            return GLib.SOURCE_REMOVE
+        old_state = get_monitor_hdr_state(self._output_hint, allow_probe=False)
+        refresh_monitor_hdr_state()
+        new_state = get_monitor_hdr_state(self._output_hint, allow_probe=False)
+        if old_state != new_state:
+            self.apply_hdr_settings()
+            if self.on_change_cb:
+                self.on_change_cb()
+        return GLib.SOURCE_CONTINUE
 
     def _on_gsettings_changed(self, settings: Gio.Settings, key: str):
         if key == "hdr-mode":
@@ -258,77 +279,54 @@ class HdrController(GObject.Object):
                 self._effective_peak_source = "auto"
                 monitor_peak = self._monitor_peak_nits()
                 stream_peak = self._stream_peak_nits()
-                if (
-                    monitor_peak is not None
-                    and stream_peak is not None
-                    and monitor_peak < stream_peak * 0.9
-                ):
-                    peak_val = int(monitor_peak)
-                    self._effective_peak_source = f"monitor ({peak_val} nits)"
+                if monitor_peak and stream_peak:
+                    # Threshold: 90% of the stream's peak. Below that, the
+                    # monitor clearly cannot hit the content's highlights and
+                    # mpv's tone curve produces a visibly better gradient than
+                    # leaving it to the display's / compositor's hard roll-off.
+                    if monitor_peak < stream_peak * 0.9:
+                        peak_val = int(round(monitor_peak))
+                        self._effective_peak_source = f"monitor ({peak_val} nits)"
+                try:
+                    self.mpv["target-peak"] = peak_val
+                except Exception as e:
+                    logging.warning(f"Failed to set mpv target-peak ({peak_val}): {e}")
             else:
                 peak_val = int(float(target_peak))
                 self._effective_peak_source = f"user preset ({peak_val} nits)"
-
-            # The published GL texture carries Gdk.ColorState Rec.2100 PQ, i.e.
-            # GTK/the compositor decode it as BT.2020 + PQ by contract. The
-            # encoding primaries therefore MUST be bt.2020 — anything else
-            # (dci-p3, bt.709) would be reinterpreted as BT.2020 and shift all
-            # colors (F7). This is why there is no user-facing gamut option.
-            target_prim = "bt.2020"
-
-            # hdr-compute-peak is intentionally left untouched: mpv's default
-            # ("auto") already enables per-frame peak detection when tone
-            # mapping is active (numeric target-peak) and skips the extra GPU
-            # pass in true pass-through (target-peak=auto).
-            props = [
-                ("target-trc", "pq"),
-                ("target-prim", target_prim),
-                ("target-peak", peak_val),
-            ]
-        else:
-            # Safe SDR fallback: restore initial mpv profile or defaults (P2-13)
-            self._effective_peak_source = "auto"
-            defaults = {
-                "target-prim": "auto",
-                "target-peak": "auto",
-                "target-trc": "auto",
-            }
-            props = []
-            for prop, default_val in defaults.items():
-                val = getattr(self, "_initial_mpv_props", {}).get(prop)
-                if val is None:
-                    val = default_val
-                props.append((prop, val))
-
-        for prop, val in props:
+                try:
+                    self.mpv["target-peak"] = peak_val
+                except Exception as e:
+                    logging.warning(f"Failed to set mpv target-peak ({peak_val}): {e}")
             try:
-                self.mpv[prop] = val
-            except mpv.ShutdownError:
-                # Property observers can deliver their final empty state after
-                # CineHDR has asked libmpv to quit. This is normal shutdown,
-                # not an HDR configuration failure.
-                return
+                self.mpv["target-trc"] = "pq"
+                self.mpv["target-prim"] = "bt.2020"
             except Exception as e:
-                logging.warning(f"Failed to set mpv property '{prop}' to '{val}': {e}")
-
-        # Runs on every (re)apply so the "HDR requested but unavailable"
-        # warning is actually reachable — previously it was only invoked from
-        # a code path that already required HDR support to be present.
-        self.check_unsupported_warning()
-        self.check_dovi_warning()
-        self.check_force_hdr_warning()
-
+                logging.warning(f"Failed to set mpv HDR target parameters: {e}")
+            self.check_force_hdr_warning()
+        else:
+            self._effective_peak_source = "auto"
+            try:
+                for prop, val in self._initial_mpv_props.items():
+                    if val is not None:
+                        self.mpv[prop] = val
+                    else:
+                        self.mpv[prop] = "auto"
+            except Exception as e:
+                logging.warning(f"Failed to reset mpv properties for SDR: {e}")
+            self.check_dovi_warning()
+            self.check_unsupported_warning()
         import json
         telemetry = {
             "source_hdr": self._is_hdr_content,
-            "target_trc": next((v for p, v in props if p == "target-trc"), "auto"),
-            "target_peak": next((v for p, v in props if p == "target-peak"), "auto"),
+            "target_trc": "pq" if hdr_output_active else "auto",
+            "target_peak": self._hdr_target_peak if hdr_output_active else "auto",
             "tone_mapping_active": is_tone_mapping_active(
                 self._is_hdr_content,
                 hdr_output_active,
-                next((v for p, v in props if p == "target-peak"), "auto"),
+                self._hdr_target_peak if hdr_output_active else "auto",
             ),
-            "display_hdr": get_monitor_hdr_state(self._output_hint),
+            "display_hdr": get_monitor_hdr_state(self._output_hint, allow_probe=False),
             "hdr_mode": self._hdr_mode,
             "dovi_profile": self.dovi_profile,
         }
@@ -336,6 +334,32 @@ class HdrController(GObject.Object):
 
         if self.on_change_cb:
             self.on_change_cb()
+
+    def set_hdr_mode(self, mode: str):
+        """Set HDR operating mode ('auto', 'force-hdr', 'force-sdr') and save to GSettings."""
+        if mode not in HDR_MODES:
+            return
+        if self._hdr_mode != mode:
+            self._hdr_mode = mode
+            self._force_hdr_warned = False
+            self._hdr_support_warned = False
+            save_hdr_mode(mode)
+            self.apply_hdr_settings()
+            if self.on_change_cb:
+                self.on_change_cb()
+
+    def set_target_peak(self, peak: str):
+        """Set target peak brightness preset and save to GSettings."""
+        if peak not in HDR_PEAK_PRESETS:
+            return
+        if self._hdr_target_peak != peak:
+            self._hdr_target_peak = peak
+            config = load_hdr_config()
+            config["hdr_target_peak"] = peak
+            save_hdr_config(config)
+            self.apply_hdr_settings()
+            if self.on_change_cb:
+                self.on_change_cb()
 
     @property
     def hdr_mode(self) -> str:
@@ -347,7 +371,12 @@ class HdrController(GObject.Object):
             value = "auto"
         if self._hdr_mode != value:
             self._hdr_mode = value
+            self._force_hdr_warned = False
+            self._hdr_support_warned = False
+            save_hdr_mode(value)
             self.apply_hdr_settings()
+            if self.on_change_cb:
+                self.on_change_cb()
 
     @property
     def hdr_enabled(self) -> bool:
@@ -396,6 +425,8 @@ class HdrController(GObject.Object):
     @property
     def dovi_unsupported(self) -> bool:
         """True when the stream's Dolby Vision profile cannot be rendered here."""
+        if getattr(self, "supports_dovi_reshaping", False):
+            return False
         return bool((self._dovi_info or {}).get("unsupported"))
 
     def _stream_peak_nits(self):
@@ -421,7 +452,7 @@ class HdrController(GObject.Object):
         None. Only HDR outputs count — in force-hdr-onto-SDR the compositor
         converts and its peak is meaningless here."""
         try:
-            states = wayland_output_hdr.get_output_hdr_states()
+            states = wayland_output_hdr.get_output_hdr_states(allow_probe=False)
         except Exception:
             return None
         if not states:
@@ -485,7 +516,7 @@ class HdrController(GObject.Object):
         # HDR switched *off* converts PQ -> SDR itself, which looks worse
         # than mpv's tone mapping. Only a definitive "monitor is SDR" blocks
         # HDR; an unknown state (None) preserves previous behaviour.
-        if get_monitor_hdr_state(self._output_hint) is False:
+        if get_monitor_hdr_state(self._output_hint, allow_probe=False) is False:
             return False
         return self._is_hdr_content
 
@@ -506,7 +537,7 @@ class HdrController(GObject.Object):
     def check_force_hdr_warning(self):
         """Log a warning if force-hdr is used and the monitor is SDR."""
         if self._hdr_mode == "force-hdr" and not self._force_hdr_warned:
-            if get_monitor_hdr_state(self._output_hint) is False:
+            if get_monitor_hdr_state(self._output_hint, allow_probe=False) is False:
                 self._force_hdr_warned = True
                 logging.warning(
                     "Force HDR mode is active, but the target monitor is reporting SDR. "
@@ -527,6 +558,13 @@ class HdrController(GObject.Object):
     def disconnect(self):
         """Disconnect GSettings and libmpv property observers."""
         self._disconnected = True
+        if hasattr(self, "_monitor_poll_timer_id") and self._monitor_poll_timer_id:
+            try:
+                GLib.source_remove(self._monitor_poll_timer_id)
+            except Exception:
+                pass
+            self._monitor_poll_timer_id = None
+
         if getattr(self, "_gsettings", None):
             try:
                 self._gsettings.disconnect_by_func(self._on_gsettings_changed)
