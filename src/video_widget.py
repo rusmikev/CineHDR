@@ -260,8 +260,10 @@ class MpvVideoWidget(Gtk.Widget):
         """Remember the active video selection before libmpv tears its VO down."""
         self._video_selection_for_context_restore = None
         try:
-            current_video = self.mpv._get_property("vid")
-            if isinstance(current_video, bool) or int(current_video) < 0:
+            current_video = self.mpv.get_property("vid")
+            if current_video in (False, None, "no", "auto") or (
+                isinstance(current_video, (int, str)) and str(current_video).isdigit() is False
+            ):
                 return
             try:
                 configured_video = str(
