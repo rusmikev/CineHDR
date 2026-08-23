@@ -70,6 +70,13 @@
   </requires>
 
   <releases>
+    <release version="1.8.5" date="2026-08-23">
+      <description translate="no">
+        <ul>
+          <li>Bump version to 1.8.5 and update yt-dlp to 2026.08.19</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.4.1.1" date="2026-08-17">
       <description translate="no">
         <ul>
