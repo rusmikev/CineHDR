@@ -445,7 +445,7 @@ class HdrController(GObject.Object):
 
     @property
     def supports_dovi_reshaping(self) -> bool:
-        """Version-qualified capability check: True when active renderer supports DoVi reshaping."""
+        """Capability flag: True when active renderer and version-qualified stack support DoVi reshaping."""
         return getattr(self, "_supports_dovi_reshaping", False)
 
     @supports_dovi_reshaping.setter

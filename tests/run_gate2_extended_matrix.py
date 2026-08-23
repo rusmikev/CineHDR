@@ -124,44 +124,125 @@ def parse_png_dimensions(png_bytes: bytes) -> tuple[int, int]:
 
 
 def test_w4_screenshot_matrix(binary: Path, cache_dir: Path, temp_dir: Path) -> dict[str, Any]:
-    logger.info("=== Executing W4: mpv Screenshot-to-File Matrix ===")
+    logger.info("=== Executing W4: mpv Screenshot-to-File Matrix (Multi-Mode / Subtitles / HWDEC / A/B) ===")
     results = {}
 
+    # 1. Base Modes on opengl-next
     for mode in ("sdr", "hdr", "hlg"):
         fix = generate_patterns.ensure_fixture(mode, cache_dir)
         fixture_path = Path(fix["path"])
-        shot_path = temp_dir / f"screenshot_{mode}.png"
+        shot_path = temp_dir / f"screenshot_{mode}_next.png"
         if shot_path.exists():
             shot_path.unlink()
 
-        # Run probe with CINEHDR_PROBE_SCREENSHOT_PATH set
         probe_res = run_probe_raw(
             binary, fixture_path, mode, "opengl-next", "no", "paused",
             {"CINEHDR_PROBE_SCREENSHOT_PATH": str(shot_path)}
         )
-
         if not shot_path.is_file():
-            results[mode] = {
-                "file_exists": False,
-                "size_bytes": 0,
-                "dimensions": (0, 0),
-                "verdict": "FAIL",
-            }
-            logger.error("Screenshot file %s was not created by mpv!", shot_path)
+            results[f"{mode}_next"] = {"file_exists": False, "verdict": "FAIL"}
             continue
-
         data = shot_path.read_bytes()
         width, height = parse_png_dimensions(data)
         passed = (len(data) > 1000) and (width == 320) and (height == 180)
-
-        results[mode] = {
+        results[f"{mode}_next"] = {
             "file_exists": True,
             "size_bytes": len(data),
             "dimensions": (width, height),
             "verdict": "PASS" if passed else "FAIL",
         }
-        logger.info("Mode %s: shot size=%d bytes, dims=%dx%d -> %s",
-                    mode, len(data), width, height, results[mode]["verdict"])
+        logger.info("Screenshot %s (opengl-next): size=%d, dims=%dx%d -> %s",
+                    mode, len(data), width, height, results[f"{mode}_next"]["verdict"])
+
+    # 2. Legacy A/B comparison on HDR
+    hdr_fix = generate_patterns.ensure_fixture("hdr", cache_dir)
+    hdr_fixture = Path(hdr_fix["path"])
+    shot_legacy = temp_dir / "screenshot_hdr_legacy.png"
+    if shot_legacy.exists():
+        shot_legacy.unlink()
+    run_probe_raw(
+        binary, hdr_fixture, "hdr", "opengl", "no", "paused",
+        {"CINEHDR_PROBE_SCREENSHOT_PATH": str(shot_legacy)}
+    )
+    if shot_legacy.is_file():
+        data_leg = shot_legacy.read_bytes()
+        w_leg, h_leg = parse_png_dimensions(data_leg)
+        passed_leg = (len(data_leg) > 1000) and (w_leg == 320) and (h_leg == 180)
+        results["hdr_legacy_ab"] = {
+            "file_exists": True,
+            "size_bytes": len(data_leg),
+            "dimensions": (w_leg, h_leg),
+            "verdict": "PASS" if passed_leg else "FAIL",
+        }
+        logger.info("Screenshot hdr (legacy A/B): size=%d, dims=%dx%d -> %s",
+                    len(data_leg), w_leg, h_leg, results["hdr_legacy_ab"]["verdict"])
+    else:
+        results["hdr_legacy_ab"] = {"file_exists": False, "verdict": "FAIL"}
+
+    # 3. Subtitle-inclusive screenshot on HDR
+    sub_path = temp_dir / "shot_sub.ass"
+    sub_path.write_text("""[Script Info]
+Title: CineHDR Screenshot Subtitle Test
+ScriptType: v4.00+
+PlayResX: 320
+PlayResY: 180
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,10,10,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:10.00,Default,,0,0,0,,■■■
+""", encoding="utf-8")
+    shot_sub = temp_dir / "screenshot_hdr_subtitles.png"
+    if shot_sub.exists():
+        shot_sub.unlink()
+    run_probe_raw(
+        binary, hdr_fixture, "hdr", "opengl-next", "no", "paused",
+        {
+            "CINEHDR_PROBE_SUB_FILE": str(sub_path),
+            "CINEHDR_PROBE_SCREENSHOT_PATH": str(shot_sub),
+            "CINEHDR_PROBE_SCREENSHOT_MODE": "subtitles",
+        }
+    )
+    if shot_sub.is_file():
+        data_sub = shot_sub.read_bytes()
+        w_sub, h_sub = parse_png_dimensions(data_sub)
+        passed_sub = (len(data_sub) > 1000) and (w_sub == 320) and (h_sub == 180)
+        results["hdr_with_subtitles"] = {
+            "file_exists": True,
+            "size_bytes": len(data_sub),
+            "dimensions": (w_sub, h_sub),
+            "verdict": "PASS" if passed_sub else "FAIL",
+        }
+        logger.info("Screenshot hdr (with subtitles): size=%d, dims=%dx%d -> %s",
+                    len(data_sub), w_sub, h_sub, results["hdr_with_subtitles"]["verdict"])
+    else:
+        results["hdr_with_subtitles"] = {"file_exists": False, "verdict": "FAIL"}
+
+    # 4. Hardware Decode Screenshot (auto / vaapi-copy)
+    shot_hw = temp_dir / "screenshot_hdr_hwdec.png"
+    if shot_hw.exists():
+        shot_hw.unlink()
+    run_probe_raw(
+        binary, hdr_fixture, "hdr", "opengl-next", "auto", "paused",
+        {"CINEHDR_PROBE_SCREENSHOT_PATH": str(shot_hw)}
+    )
+    if shot_hw.is_file():
+        data_hw = shot_hw.read_bytes()
+        w_hw, h_hw = parse_png_dimensions(data_hw)
+        passed_hw = (len(data_hw) > 1000) and (w_hw == 320) and (h_hw == 180)
+        results["hdr_hwdec_auto"] = {
+            "file_exists": True,
+            "size_bytes": len(data_hw),
+            "dimensions": (w_hw, h_hw),
+            "verdict": "PASS" if passed_hw else "FAIL",
+        }
+        logger.info("Screenshot hdr (hwdec auto): size=%d, dims=%dx%d -> %s",
+                    len(data_hw), w_hw, h_hw, results["hdr_hwdec_auto"]["verdict"])
+    else:
+        results["hdr_hwdec_auto"] = {"file_exists": False, "verdict": "FAIL"}
 
     overall = "PASS" if all(r["verdict"] == "PASS" for r in results.values()) else "FAIL"
     return {"results": results, "verdict": overall}

@@ -535,7 +535,8 @@ static int capture(const char *video_file, const char *mode, const char *api,
 
     const char *screenshot_path = getenv("CINEHDR_PROBE_SCREENSHOT_PATH");
     if (screenshot_path) {
-        const char *shot_cmd[] = {"screenshot-to-file", screenshot_path, "video", NULL};
+        const char *shot_mode = getenv("CINEHDR_PROBE_SCREENSHOT_MODE");
+        const char *shot_cmd[] = {"screenshot-to-file", screenshot_path, shot_mode ? shot_mode : "video", NULL};
         mpv_command(mpv, shot_cmd);
     }
 
@@ -711,10 +712,18 @@ static int capture(const char *video_file, const char *mode, const char *api,
         }
         free(timings);
         int64_t drops = 0;
-        if (mpv_get_property(mpv, "vo-drop-frame-count", MPV_FORMAT_INT64, &drops) >= 0 ||
+        int64_t dec_drops = 0;
+        int64_t vo_drops = 0;
+        if (mpv_get_property(mpv, "frame-drop-count", MPV_FORMAT_INT64, &drops) >= 0 ||
             mpv_get_property(mpv, "drop-frame-count", MPV_FORMAT_INT64, &drops) >= 0)
         {
-            result->dropped_frames = (int) drops;
+            result->dropped_frames += (int) drops;
+        }
+        if (mpv_get_property(mpv, "decoder-frame-drop-count", MPV_FORMAT_INT64, &dec_drops) >= 0) {
+            result->dropped_frames += (int) dec_drops;
+        }
+        if (mpv_get_property(mpv, "vo-drop-frame-count", MPV_FORMAT_INT64, &vo_drops) >= 0) {
+            result->dropped_frames += (int) vo_drops;
         }
     }
 

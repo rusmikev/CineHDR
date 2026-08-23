@@ -75,11 +75,12 @@ def main() -> int:
         logger.info("GPU Next: mean=%.2f ms, p50=%.2f ms, p95=%.2f ms, p99=%.2f ms, drops=%d",
                     gpu_next_perf["mean_ms"], gpu_next_perf["p50_ms"], gpu_next_perf["p95_ms"], gpu_next_perf["p99_ms"], gpu_next_perf["dropped_frames"])
 
-        # ADR-0001 Criteria:
-        # 1. No excessive dropped frames (drops <= legacy_drops + 3)
-        # 2. p95 render time is no more than 25% worse than legacy (or faster)
-        no_excess_drops = gpu_next_perf["dropped_frames"] <= legacy_perf["dropped_frames"] + 3
-        p95_within_budget = gpu_next_perf["p95_ms"] <= (legacy_perf["p95_ms"] * 1.25 + 0.5)
+        # Strict ADR-0001 Gate 2 Criteria:
+        # 1. No more output drops than max(3 frames, 0.1% of presented frames) above patched legacy
+        allowed_drop_delta = max(3, int(args.frames * 0.001))
+        no_excess_drops = gpu_next_perf["dropped_frames"] <= (legacy_perf["dropped_frames"] + allowed_drop_delta)
+        # 2. 95th percentile render time is no more than 10% worse than patched legacy (or faster)
+        p95_within_budget = gpu_next_perf["p95_ms"] <= (legacy_perf["p95_ms"] * 1.10)
 
         passed = no_excess_drops and p95_within_budget
         verdict = "PASS" if passed else "FAIL"
@@ -89,8 +90,10 @@ def main() -> int:
             "frames_tested": args.frames,
             "legacy": legacy_perf,
             "gpu_next": gpu_next_perf,
+            "allowed_drop_delta": allowed_drop_delta,
             "no_excess_drops": no_excess_drops,
             "p95_within_budget": p95_within_budget,
+            "p95_target_max_ms": round(legacy_perf["p95_ms"] * 1.10, 4),
             "verdict": verdict,
         }
         print(json.dumps(report, indent=2))
