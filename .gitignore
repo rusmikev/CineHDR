@@ -19,5 +19,6 @@ AUDIT_TASKS.md
 ANTIGRAVITY_HANDOVER.md
 GEMINI.md
 *.patch
+!build-aux/patches/**
 *.html
 /validation-reports/
