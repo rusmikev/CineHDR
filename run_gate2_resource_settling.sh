@@ -11,7 +11,11 @@ fixture_cache="$(mktemp -d /tmp/cinehdr-resource-settling-fixtures.XXXXXX)"
 report_root="${script_dir}/validation-reports"
 run_stamp="$(date +%Y%m%d-%H%M%S)"
 run_dir="${report_root}/resource-settling-${run_stamp}-$$"
-gpu_next_lib_dir="${script_dir}/../mpv-gpu-next-prefix/lib64"
+mpv_prefix="${CINEHDR_MPV_PREFIX:-${script_dir}/../mpv-gpu-next-prefix}"
+if [[ ! -d "${mpv_prefix}" && -d "/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix" ]]; then
+    mpv_prefix="/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix"
+fi
+gpu_next_lib_dir="${mpv_prefix}/lib64"
 gpu_next_lib="${gpu_next_lib_dir}/libmpv.so.2"
 
 fixture_profile="hevc-main10-yuv420p10-lossless"
