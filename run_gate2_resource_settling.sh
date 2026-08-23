@@ -64,9 +64,11 @@ if not isinstance(fixtures, list):
     raise SystemExit("generator output has no fixture list")
 by_mode = {}
 for fixture in fixtures:
-    if not isinstance(fixture, dict) or fixture.get("mode") not in {"hdr", "sdr"}:
+    if not isinstance(fixture, dict) or fixture.get("mode") not in {"hdr", "hlg", "sdr"}:
         raise SystemExit("generator output has an invalid fixture entry")
     mode = fixture["mode"]
+    if mode not in {"hdr", "sdr"}:
+        continue
     if mode in by_mode:
         raise SystemExit("generator output repeated a fixture mode")
     media = Path(str(fixture.get("path", "")))
