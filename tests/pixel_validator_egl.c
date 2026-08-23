@@ -38,6 +38,8 @@ enum {
     PATCH_COUNT = PATCH_COLUMNS * PATCH_ROWS,
 };
 
+#define GRADIENT_RAMP_SAMPLES 60
+
 struct probe_result {
     char *mpv_version;
     char *ffmpeg_version;
@@ -58,6 +60,10 @@ struct probe_result {
     char libmpv_path[4096];
     char libplacebo_path[4096];
     float samples[PATCH_COUNT][3];
+    float gradient_ramp[GRADIENT_RAMP_SAMPLES];
+    int gradient_ramp_count;
+    float subtitle_sample[3];
+    bool subtitle_sampled;
     int rendered_frames;
     GLenum gl_error;
 };
@@ -277,6 +283,10 @@ static int capture(const char *video_file, const char *mode, const char *api,
         fputs("mpv_create failed\n", stderr);
         goto done;
     }
+    const char *dither_opt = getenv("CINEHDR_PROBE_DITHER");
+    const char *dither_depth_opt = getenv("CINEHDR_PROBE_DITHER_DEPTH");
+    const char *sub_file_opt = getenv("CINEHDR_PROBE_SUB_FILE");
+
     // These are fixed for each invocation so only the requested render API varies.
     if (set_option(mpv, "config", "no") < 0 ||
         set_option(mpv, "terminal", "no") < 0 ||
@@ -288,13 +298,15 @@ static int capture(const char *video_file, const char *mode, const char *api,
         set_option(mpv, "hr-seek", "yes") < 0 ||
         set_option(mpv, "start", timestamp) < 0 ||
         set_option(mpv, "hwdec", decode_mode) < 0 ||
-        set_option(mpv, "dither", "no") < 0 ||
+        set_option(mpv, "dither", dither_opt ? dither_opt : "no") < 0 ||
         set_option(mpv, "target-prim", target_primaries) < 0 ||
         set_option(mpv, "target-trc", target_transfer) < 0 ||
         set_option(mpv, "target-peak", target_peak) < 0)
     {
         goto done;
     }
+    if (dither_depth_opt && set_option(mpv, "dither-depth", dither_depth_opt) < 0)
+        goto done;
     int error = mpv_initialize(mpv);
     if (error < 0) {
         fprintf(stderr, "mpv_initialize failed: %s\n", mpv_error_string(error));
@@ -343,6 +355,10 @@ static int capture(const char *video_file, const char *mode, const char *api,
     if (error < 0) {
         fprintf(stderr, "loadfile failed: %s\n", mpv_error_string(error));
         goto done;
+    }
+    if (sub_file_opt) {
+        const char *sub_cmd[] = {"sub-add", sub_file_opt, "select", NULL};
+        mpv_command(mpv, sub_cmd);
     }
     bool last_frame_nonempty = false;
     bool last_frame_nonuniform = false;
@@ -530,6 +546,26 @@ static int capture(const char *video_file, const char *mode, const char *api,
             for (int component = 0; component < 3; component++)
                 result->samples[index][component] = pixels[offset + component];
         }
+        const int grad_patch = 7;
+        const int grad_row = grad_patch / PATCH_COLUMNS;
+        const int grad_y = grad_row * (FRAME_HEIGHT / PATCH_ROWS) + (FRAME_HEIGHT / PATCH_ROWS) / 2;
+        const int grad_x0 = (grad_patch % PATCH_COLUMNS) * (FRAME_WIDTH / PATCH_COLUMNS) + 5;
+        const int grad_x1 = ((grad_patch % PATCH_COLUMNS) + 1) * (FRAME_WIDTH / PATCH_COLUMNS) - 5;
+        result->gradient_ramp_count = GRADIENT_RAMP_SAMPLES;
+        for (int i = 0; i < GRADIENT_RAMP_SAMPLES; i++) {
+            int x = grad_x0 + (int) ((grad_x1 - grad_x0) * (float) i / (float) (GRADIENT_RAMP_SAMPLES - 1));
+            size_t off = ((size_t) grad_y * FRAME_WIDTH + x) * 4;
+            result->gradient_ramp[i] = (pixels[off + 0] + pixels[off + 1] + pixels[off + 2]) / 3.0f;
+        }
+        if (sub_file_opt) {
+            const int sub_x = FRAME_WIDTH / 2;
+            const int sub_y = FRAME_HEIGHT / 6;
+            const size_t sub_off = ((size_t) sub_y * FRAME_WIDTH + sub_x) * 4;
+            result->subtitle_sample[0] = pixels[sub_off + 0];
+            result->subtitle_sample[1] = pixels[sub_off + 1];
+            result->subtitle_sample[2] = pixels[sub_off + 2];
+            result->subtitle_sampled = true;
+        }
         free(pixels);
     } else {
         unsigned char *pixels = calloc(component_count, sizeof(*pixels));
@@ -548,6 +584,26 @@ static int capture(const char *video_file, const char *mode, const char *api,
             const size_t offset = ((size_t) y * FRAME_WIDTH + x) * 4;
             for (int component = 0; component < 3; component++)
                 result->samples[index][component] = pixels[offset + component] / 255.0f;
+        }
+        const int grad_patch = 7;
+        const int grad_row = grad_patch / PATCH_COLUMNS;
+        const int grad_y = grad_row * (FRAME_HEIGHT / PATCH_ROWS) + (FRAME_HEIGHT / PATCH_ROWS) / 2;
+        const int grad_x0 = (grad_patch % PATCH_COLUMNS) * (FRAME_WIDTH / PATCH_COLUMNS) + 5;
+        const int grad_x1 = ((grad_patch % PATCH_COLUMNS) + 1) * (FRAME_WIDTH / PATCH_COLUMNS) - 5;
+        result->gradient_ramp_count = GRADIENT_RAMP_SAMPLES;
+        for (int i = 0; i < GRADIENT_RAMP_SAMPLES; i++) {
+            int x = grad_x0 + (int) ((grad_x1 - grad_x0) * (float) i / (float) (GRADIENT_RAMP_SAMPLES - 1));
+            size_t off = ((size_t) grad_y * FRAME_WIDTH + x) * 4;
+            result->gradient_ramp[i] = (pixels[off + 0] + pixels[off + 1] + pixels[off + 2]) / (3.0f * 255.0f);
+        }
+        if (sub_file_opt) {
+            const int sub_x = FRAME_WIDTH / 2;
+            const int sub_y = FRAME_HEIGHT / 6;
+            const size_t sub_off = ((size_t) sub_y * FRAME_WIDTH + sub_x) * 4;
+            result->subtitle_sample[0] = pixels[sub_off + 0] / 255.0f;
+            result->subtitle_sample[1] = pixels[sub_off + 1] / 255.0f;
+            result->subtitle_sample[2] = pixels[sub_off + 2] / 255.0f;
+            result->subtitle_sampled = true;
         }
         free(pixels);
     }
@@ -677,7 +733,16 @@ static void print_result(const char *mode, const char *api, const char *timestam
                result->samples[patch][0], result->samples[patch][1],
                result->samples[patch][2], patch + 1 == PATCH_COUNT ? "" : ",");
     }
-    fputs("  ]},\n  \"errors\": {\"mpv\": null, \"fbo\": null, \"gl\": null},\n", stdout);
+    fputs("  ],\n  \"gradient_ramp\": [", stdout);
+    for (int i = 0; i < result->gradient_ramp_count; i++) {
+        printf("%.9g%s", result->gradient_ramp[i], i + 1 == result->gradient_ramp_count ? "" : ", ");
+    }
+    fputs("]", stdout);
+    if (result->subtitle_sampled) {
+        printf(",\n  \"subtitle_sample\": [%.9g, %.9g, %.9g]",
+               result->subtitle_sample[0], result->subtitle_sample[1], result->subtitle_sample[2]);
+    }
+    fputs("},\n  \"errors\": {\"mpv\": null, \"fbo\": null, \"gl\": null},\n", stdout);
     printf("  \"rendered_frames\": %d\n}\n", result->rendered_frames);
 }
 
