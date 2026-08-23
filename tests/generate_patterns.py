@@ -110,6 +110,19 @@ def linear_to_pq(luminance_nits: float) -> float:
     return ((c1 + c2 * power) / (1.0 + c3 * power))**m2
 
 
+def linear_to_hlg(value: float) -> float:
+    """Encode relative scene light [0.0, 1.0] as ARIB STD-B67 (HLG)."""
+
+    value = min(max(value, 0.0), 1.0)
+    if value <= 1.0 / 12.0:
+        return (3.0 * value) ** 0.5
+    a = 0.17883277
+    b = 0.28466892
+    c = 0.55991073
+    import math
+    return a * math.log(12.0 * value - b) + c
+
+
 def linear_to_srgb(value: float) -> float:
     """Encode a full-range, relative linear-light SDR component as sRGB."""
 
@@ -157,6 +170,29 @@ def fixture_spec(mode: str) -> FixtureSpec:
                 ("neutral_gradient", (0.0, 0.0, 0.0), (1000.0, 1000.0, 1000.0)),
             )),
         )
+    if mode == "hlg":
+        return FixtureSpec(
+            mode="hlg",
+            pixel_format="gbrp10le",
+            color_range="pc",
+            color_space="gbr",
+            color_primaries="bt2020",
+            color_transfer="arib-std-b67",
+            target_primaries="bt.2020",
+            target_transfer="pq",
+            target_peak_nits=1000.0,
+            sample_bits=10,
+            patches=_patches((
+                ("black", (0.0, 0.0, 0.0), None),
+                ("near_black", (0.05, 0.05, 0.05), None),
+                ("reference_white", (0.75, 0.75, 0.75), None),
+                ("peak_white", (1.0, 1.0, 1.0), None),
+                ("red_primary", (1.0, 0.0, 0.0), None),
+                ("green_primary", (0.0, 1.0, 0.0), None),
+                ("blue_primary", (0.0, 0.0, 1.0), None),
+                ("neutral_gradient", (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+            )),
+        )
     if mode == "sdr":
         return FixtureSpec(
             mode="sdr",
@@ -183,7 +219,7 @@ def fixture_spec(mode: str) -> FixtureSpec:
                 ("neutral_gradient", (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
             )),
         )
-    raise FixtureError(f"unsupported fixture mode: {mode!r}; expected hdr or sdr")
+    raise FixtureError(f"unsupported fixture mode: {mode!r}; expected hdr, hlg, or sdr")
 
 
 def patch_centers(*, readback_origin: str = "top-left") -> dict[str, tuple[int, int]]:
@@ -211,7 +247,12 @@ def patch_centers(*, readback_origin: str = "top-left") -> dict[str, tuple[int, 
 
 
 def _encode_component(spec: FixtureSpec, value: float) -> int:
-    encoded = linear_to_pq(value) if spec.mode == "hdr" else linear_to_srgb(value)
+    if spec.mode == "hdr":
+        encoded = linear_to_pq(value)
+    elif spec.mode == "hlg":
+        encoded = linear_to_hlg(value)
+    else:
+        encoded = linear_to_srgb(value)
     maximum = (1 << spec.sample_bits) - 1
     return min(max(int(round(encoded * maximum)), 0), maximum)
 
@@ -260,7 +301,7 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def yuv_matrix(spec: FixtureSpec) -> str:
-    return "bt2020nc" if spec.mode == "hdr" else "bt709"
+    return "bt2020nc" if spec.mode in ("hdr", "hlg") else "bt709"
 
 
 def yuv_conversion_filter(spec: FixtureSpec) -> str:
@@ -941,12 +982,12 @@ def main() -> int:
         description="Create disposable CineHDR Gate 2 RGB/FFV1 or HEVC Main10 fixtures"
     )
     parser.add_argument("--cache-dir", type=Path, required=True)
-    parser.add_argument("--mode", choices=("hdr", "sdr", "all"), default="all")
+    parser.add_argument("--mode", choices=("hdr", "hlg", "sdr", "all"), default="all")
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     parser.add_argument("--fixture-profile", choices=FIXTURE_PROFILES, default=DEFAULT_FIXTURE_PROFILE)
     args = parser.parse_args()
-    modes = ("hdr", "sdr") if args.mode == "all" else (args.mode,)
+    modes = ("hdr", "hlg", "sdr") if args.mode == "all" else (args.mode,)
     try:
         generated = [
             ensure_fixture(

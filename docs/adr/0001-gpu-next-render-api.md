@@ -299,6 +299,14 @@ the session direct passthrough.
   settling.
 - Existing monitor/compositor auto/force behavior remains unchanged.
 
+### Gate 2W: Wayland compositor surface submission (Separate track)
+
+- End-to-end Wayland presentation depends on GTK's protocol implementation (`wp_color_management_v1`).
+- On GTK 4.22.4, GTK binds the protocol but does not invoke `get_surface` or `set_image_description` for the application window.
+- Gate 2 is scoped to the FBO/GDK texture publication boundary under CineHDR's control.
+- Full compositor passthrough is tracked separately under **Gate 2W**, contingent on upstream GTK color management fixes (tracked in GNOME/gtk issue).
+- Until Gate 2W is closed, user-facing documentation describes output as "Rec.2100 PQ target prepared & tagged; compositor passthrough pending upstream GTK support".
+
 ### Gate 3: Dolby Vision value
 
 - Profile 5 has no green/purple IPT appearance and passes neutral/primary

@@ -537,13 +537,23 @@ def validate_probe_result(
         raise PipelineError("probe did not record exactly one requested frame")
 
 
-def diagnostic_invariants(result: dict[str, Any]) -> dict[str, Any]:
-    """Report catastrophic-signature evidence without inventing a color tolerance.
+# ADR-0005 Gate 2 Thresholds
+THRESHOLD_BLACK_MAX = 0.002
+THRESHOLD_REF_WHITE_DELTA_MAX = 0.015
+THRESHOLD_NEUTRAL_AXIS_MAX_DELTA = 0.005
+THRESHOLD_MAX_ABSOLUTE_DELTA = 0.025
 
-    A release threshold needs separate recorded transform/error justification,
-    per ADR-0004.  These values remain measurable diagnostics in this first
-    slice; missing evidence has already failed validation above.
-    """
+
+def expected_reference_white_luminance(fixture_mode: str) -> float:
+    """Return nominal expected reference white luminance in target space."""
+    if fixture_mode in ("hdr", "hlg"):
+        # 203 nits in nominal ST 2084 PQ space
+        return generate_patterns.linear_to_pq(203.0)
+    return 1.0
+
+
+def diagnostic_invariants(result: dict[str, Any]) -> dict[str, Any]:
+    """Report evidence and evaluate against ADR-0005 Gate 2 thresholds."""
 
     patches = {patch["name"]: patch for patch in result["readback"]["patches"]}
     triples = {name: tuple(float(patch[channel]) for channel in ("r", "g", "b")) for name, patch in patches.items()}
@@ -551,30 +561,54 @@ def diagnostic_invariants(result: dict[str, Any]) -> dict[str, Any]:
     neutral_names = ("black", "near_black", "reference_white", "peak_white")
     neutral_axis_delta = max(max(rgb) - min(rgb) for name, rgb in triples.items() if name in neutral_names)
     gradient = triples["neutral_gradient"]
-    return {
+    expected_ref_white = expected_reference_white_luminance(result.get("fixture_mode", "hdr"))
+    ref_white_delta = abs(luminance["reference_white"] - expected_ref_white)
+
+    checks = {
         "finite": all(math.isfinite(component) for rgb in triples.values() for component in rgb),
         "unit_interval": all(0.0 <= component <= 1.0 for rgb in triples.values() for component in rgb),
-        "black_luminance": luminance["black"],
-        "near_black_luminance": luminance["near_black"],
+        "black_floor_pass": luminance["black"] <= THRESHOLD_BLACK_MAX,
         "black_distinction_observed": luminance["near_black"] > luminance["black"],
-        "neutral_luminance": {name: luminance[name] for name in neutral_names},
         "neutral_monotonic_observed": all(
             luminance[left] <= luminance[right]
             for left, right in zip(neutral_names, neutral_names[1:])
         ),
-        "neutral_axis_max_channel_delta": neutral_axis_delta,
-        "primary_channel_values": {
-            "red_primary": triples["red_primary"],
-            "green_primary": triples["green_primary"],
-            "blue_primary": triples["blue_primary"],
-        },
+        "neutral_axis_pass": neutral_axis_delta <= THRESHOLD_NEUTRAL_AXIS_MAX_DELTA,
+        "ref_white_pass": ref_white_delta <= THRESHOLD_REF_WHITE_DELTA_MAX,
         "primary_dominance_observed": (
             triples["red_primary"][0] > max(triples["red_primary"][1:]) and
             triples["green_primary"][1] > max(triples["green_primary"][0], triples["green_primary"][2]) and
             triples["blue_primary"][2] > max(triples["blue_primary"][:2])
         ),
+    }
+    passed = all(checks.values())
+    verdict = "PASS" if passed else "FAIL"
+
+    return {
+        "verdict": verdict,
+        "passed": passed,
+        "finite": checks["finite"],
+        "unit_interval": checks["unit_interval"],
+        "black_luminance": luminance["black"],
+        "black_floor_pass": checks["black_floor_pass"],
+        "near_black_luminance": luminance["near_black"],
+        "black_distinction_observed": checks["black_distinction_observed"],
+        "neutral_luminance": {name: luminance[name] for name in neutral_names},
+        "neutral_monotonic_observed": checks["neutral_monotonic_observed"],
+        "neutral_axis_max_channel_delta": neutral_axis_delta,
+        "neutral_axis_pass": checks["neutral_axis_pass"],
+        "reference_white_luminance": luminance["reference_white"],
+        "reference_white_expected": expected_ref_white,
+        "reference_white_delta": ref_white_delta,
+        "reference_white_pass": checks["ref_white_pass"],
+        "primary_channel_values": {
+            "red_primary": triples["red_primary"],
+            "green_primary": triples["green_primary"],
+            "blue_primary": triples["blue_primary"],
+        },
+        "primary_dominance_observed": checks["primary_dominance_observed"],
         "neutral_gradient_center": gradient,
-        "threshold_policy": "diagnostic-only; no release color tolerance is defined by ADR-0004",
+        "threshold_policy": "ADR-0005 frozen numerical tolerances",
     }
 
 
@@ -640,12 +674,22 @@ def comparison_report(left: dict[str, Any], right: dict[str, Any]) -> dict[str, 
         ]
         deltas[name] = channel_deltas
         all_deltas.extend(channel_deltas)
+    max_delta = max(all_deltas)
+    consistency_passed = max_delta <= THRESHOLD_MAX_ABSOLUTE_DELTA
+    left_passed = left.get("diagnostics", {}).get("passed", True)
+    right_passed = right.get("diagnostics", {}).get("passed", True)
+    verdict = "PASS" if (consistency_passed and left_passed and right_passed) else "FAIL"
+
     return {
+        "verdict": verdict,
+        "consistency_passed": consistency_passed,
         "reference_white_absolute_delta": deltas["reference_white"],
         "patch_absolute_deltas": deltas,
         "mean_absolute_channel_delta": sum(all_deltas) / len(all_deltas),
-        "maximum_absolute_channel_delta": max(all_deltas),
+        "maximum_absolute_channel_delta": max_delta,
+        "max_delta_threshold": THRESHOLD_MAX_ABSOLUTE_DELTA,
         "pixel_identity_required": False,
+        "threshold_policy": "ADR-0005 frozen numerical tolerances",
     }
 
 

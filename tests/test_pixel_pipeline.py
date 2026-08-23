@@ -125,14 +125,15 @@ def probe_result(
     fixture_profile: str = generate_patterns.RGB_FFV1_PROFILE,
 ) -> dict:
     spec = generate_patterns.fixture_spec(mode)
+    ref_white = 0.5807 if mode in ("hdr", "hlg") else 1.0
     values = {
-        "black": (0.0, 0.0, 0.0),
+        "black": (0.0001, 0.0001, 0.0001) if mode in ("hdr", "hlg") else (0.0, 0.0, 0.0),
         "near_black": (0.01, 0.01, 0.01),
-        "reference_white": (0.5, 0.5, 0.5),
-        "peak_white": (0.9, 0.9, 0.9),
-        "red_primary": (0.9, 0.02, 0.01),
-        "green_primary": (0.01, 0.9, 0.02),
-        "blue_primary": (0.02, 0.01, 0.9),
+        "reference_white": (ref_white, ref_white, ref_white),
+        "peak_white": (0.95, 0.95, 0.95) if mode in ("hdr", "hlg") else (1.0, 1.0, 1.0),
+        "red_primary": (0.9, 0.005, 0.005),
+        "green_primary": (0.005, 0.9, 0.005),
+        "blue_primary": (0.005, 0.005, 0.9),
         "neutral_gradient": (0.4, 0.4, 0.4),
     }
     input_metadata = {
@@ -220,6 +221,7 @@ class TestFixtureMathAndLayout(unittest.TestCase):
         self.assertAlmostEqual(generate_patterns.linear_to_srgb(0.18), 0.4613561295, places=9)
         for mode, pixel_format, transfer in (
             ("hdr", "gbrp10le", "smpte2084"),
+            ("hlg", "gbrp10le", "arib-std-b67"),
             ("sdr", "gbrp10le", "iec61966-2-1"),
         ):
             spec = generate_patterns.fixture_spec(mode)
@@ -452,7 +454,26 @@ class TestProbeContract(unittest.TestCase):
         diagnostics = run_pixel_pipeline.diagnostic_invariants(result)
         self.assertTrue(diagnostics["finite"])
         self.assertTrue(diagnostics["black_distinction_observed"])
-        self.assertIn("diagnostic-only", diagnostics["threshold_policy"])
+        self.assertTrue(diagnostics["black_floor_pass"])
+        self.assertTrue(diagnostics["neutral_axis_pass"])
+        self.assertTrue(diagnostics["reference_white_pass"])
+        self.assertEqual(diagnostics["verdict"], "PASS")
+        self.assertIn("ADR-0005", diagnostics["threshold_policy"])
+
+    def test_synthetic_threshold_violations_fail_verdict(self) -> None:
+        result = probe_result("hdr", "opengl")
+        # Exceed black threshold
+        result["readback"]["patches"][0]["r"] = 0.01
+        diagnostics = run_pixel_pipeline.diagnostic_invariants(result)
+        self.assertFalse(diagnostics["black_floor_pass"])
+        self.assertEqual(diagnostics["verdict"], "FAIL")
+
+        # Exceed neutral axis divergence threshold
+        result = probe_result("hdr", "opengl")
+        result["readback"]["patches"][2]["r"] = result["readback"]["patches"][2]["g"] + 0.02
+        diagnostics = run_pixel_pipeline.diagnostic_invariants(result)
+        self.assertFalse(diagnostics["neutral_axis_pass"])
+        self.assertEqual(diagnostics["verdict"], "FAIL")
 
     def test_yuv_fixture_provenance_and_semantic_input_layout_are_strict(self) -> None:
         fixture = yuv_fixture_provenance("hdr")
