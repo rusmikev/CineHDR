@@ -4,6 +4,10 @@ import sys
 import subprocess
 import gi
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
 # Insert the script directory at the beginning of the python path
 root_dir = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, root_dir)
@@ -16,11 +20,16 @@ gresource_path = os.path.join(build_dir, "src", "cinehdr.gresource")
 data_dir = os.path.join(root_dir, "data")
 schema_build_dir = os.path.join(build_dir, "data")
 
-try:
-    if not os.path.exists(os.path.join(build_dir, "build.ninja")):
-        subprocess.run(["meson", "setup", "build"], cwd=root_dir, check=True)
-    subprocess.run(["meson", "compile", "-C", "build"], cwd=root_dir, check=True)
-except (FileNotFoundError, subprocess.CalledProcessError):
+import shutil
+
+if shutil.which("meson"):
+    try:
+        if not os.path.exists(os.path.join(build_dir, "build.ninja")):
+            subprocess.run(["meson", "setup", "build"], cwd=root_dir, check=True)
+        subprocess.run(["meson", "compile", "-C", "build"], cwd=root_dir, check=True)
+    except Exception:
+        pass
+else:
     # Fallback when meson is not available in Flatpak runtime
     os.makedirs(os.path.join(build_dir, "src"), exist_ok=True)
     for blp in ["src/hdr_diagnostics.blp", "src/hdr_menu.blp", "src/history.blp", "src/options.blp", "src/playlist.blp", "src/preferences.blp", "src/shortcuts-dialog.blp", "src/window.blp"]:
