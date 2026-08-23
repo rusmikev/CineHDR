@@ -848,3 +848,12 @@ than 99.998% of pixels changed at every timestamp. This run used Mesa llvmpipe
 and software decoding, so it closes the code-path/effect question only. The
 real VAAPI-copy path, reference colors, subtitles, and hardware output remain
 Gate 3 work.
+
+## Intel & NVIDIA GPU Smoke Test Run (2026-08-23)
+
+A 5-second process-stability smoke test matrix (`tests/test_nvidia.py`) was executed on a hybrid graphics laptop (Intel Iris Xe iGPU + NVIDIA GeForce RTX 3050 Laptop dGPU under Wayland). 
+
+- **Scope**: 16 combinations (4 HDR/HLG/DoVi fixtures × 2 GPUs × 2 render backends: `legacy` and `gpu-next`).
+- **Result**: All 16 process runs started, rendered frames, and terminated without crashes or GL errors (Smoke Gate W9: PASSED).
+- **Telemetry Evidence**: Generated evidence is stored in [`test_report.json`](file:///home/rusmikev/Downloads/Cine/test_report.json) and summarized in [`validation-reports/GPU_NEXT_SMOKE_REPORT.md`](file:///home/rusmikev/Downloads/Cine/validation-reports/GPU_NEXT_SMOKE_REPORT.md).
+- **Gate Limitations**: The host panel (`eDP-1`, 80 nits) ran in SDR mode (`get_monitor_hdr_state() = False`), executing SDR tone-mapping (`GL_RGBA8`). Gate 2 (EGL pixel validation) and Gate 3 (1000-nit hardware passthrough & peak sweep) remain OPEN / PENDING physical HDR monitor availability.

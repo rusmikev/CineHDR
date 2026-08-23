@@ -41,3 +41,13 @@ For each environment, test the following:
 | 2        |      |      |      |      |
 | 3        |      |      |      |      |
 | 4        |      |      |      |      |
+
+## Automated Smoke Validation (W9)
+
+| GPU Hardware | Driver / Session | Render Backends Tested | Smoke Status | Evidence |
+| :--- | :--- | :--- | :---: | :--- |
+| **Intel Raptor Lake Iris Xe** | Mesa Wayland | `legacy` & `gpu-next` | ✅ **PASS** | [`test_report.json`](file:///home/rusmikev/Downloads/Cine/test_report.json) |
+| **NVIDIA RTX 3050 Laptop** | NV 595.80 Wayland | `legacy` & `gpu-next` | ✅ **PASS** | [`test_report.json`](file:///home/rusmikev/Downloads/Cine/test_report.json) |
+
+*Note: W9 Smoke validation confirms 5-second process stability, GL context creation, and clean shutdown on SDR display `eDP-1`. Scenarios 1–4 above remain PENDING physical HDR display testing.*
+
