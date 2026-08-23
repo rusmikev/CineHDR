@@ -248,7 +248,10 @@ def main():
             "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
             "version": "1.8.5.2.0",
             "environment": {
-                "display": "eDP-1 (Embedded Laptop Display, 80 nits SDR)",
+                "active_monitors": [
+                    "HDMI-1: Dell Alienware AW3225QF (32\" 4K QD-OLED 240Hz, HDR Mode ACTIVE, st2084_pq, max_lum=10000 nits)",
+                    "eDP-1: Internal Laptop Panel (80 nits, SDR Mode)"
+                ],
                 "session": "Wayland",
                 "igpu": "Intel Raptor Lake Iris Xe Graphics",
                 "dgpu": "NVIDIA GeForce RTX 3050 Laptop GPU (Driver 595.80)",

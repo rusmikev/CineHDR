@@ -5,8 +5,10 @@
 - **Test Scope**: Smoke Validation (5-second process stability, GL context creation, clean shutdown)
 - **Environment**:
   - **Host Hardware**: Hybrid Graphics Laptop (Intel Raptor Lake Iris Xe iGPU + NVIDIA GeForce RTX 3050 Laptop dGPU, Driver 595.80)
-  - **Active Display**: `eDP-1` Internal Panel (80 nits peak, SDR Mode, `get_monitor_hdr_state() = False`)
-  - **Windowing / Compositor**: Wayland Session
+  - **Connected Displays**:
+    - **`HDMI-1`**: Dell Alienware AW3225QF 32" 4K QD-OLED 240Hz (HDR Mode **ACTIVE**, Transfer Function: `st2084_pq`, Gamut: `BT.2020`, Peak Luminance: `10000.0 nits`)
+    - **`eDP-1`**: Internal Panel (80 nits peak, SDR Mode)
+  - **Windowing / Compositor**: Wayland Session (`wp_color_manager_v1` protocol enabled)
   - **Container Runtime**: Flatpak (`io.github.rusmikev.CineHDR`)
 - **Evidence Artifact**: [`test_report.json`](file:///home/rusmikev/Downloads/Cine/test_report.json)
 
