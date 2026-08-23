@@ -73,7 +73,10 @@
     <release version="1.8.5" date="2026-08-23">
       <description translate="no">
         <ul>
-          <li>Bump version to 1.8.5 and update yt-dlp to 2026.08.19</li>
+          <li>Merged upstream v1.8.5 and updated yt-dlp to 2026.08.19</li>
+          <li>Integrated experimental libmpv gpu-next backend selection and validation harness</li>
+          <li>Fixed GTK4 paused window resize redraws and buffer sizing lifecycle</li>
+          <li>Enhanced GL synchronization and error reporting</li>
         </ul>
       </description>
     </release>
