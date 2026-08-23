@@ -54,9 +54,15 @@ else:
         blp_path = os.path.join(root_dir, blp)
         if os.path.exists(blp_path):
             ui_out = os.path.join(build_dir, "src", os.path.basename(blp).replace(".blp", ".ui"))
-            subprocess.run(["blueprint-compiler", "compile", blp_path, "--output", ui_out], check=False)
+            try:
+                subprocess.run(["blueprint-compiler", "compile", blp_path, "--output", ui_out], check=False)
+            except Exception:
+                pass
     if os.path.exists(os.path.join(root_dir, "src", "cinehdr.gresource.xml")):
-        subprocess.run(["glib-compile-resources", "src/cinehdr.gresource.xml", "--sourcedir=build/src", "--sourcedir=src", f"--target={gresource_path}"], cwd=root_dir, check=False)
+        try:
+            subprocess.run(["glib-compile-resources", "src/cinehdr.gresource.xml", "--sourcedir=build/src", "--sourcedir=src", f"--target={gresource_path}"], cwd=root_dir, check=False)
+        except Exception:
+            pass
 
 # Compile the development GSettings schema into the build tree.  Pointing
 # GSETTINGS_SCHEMA_DIR at the source XML is not enough: Gio only reads the

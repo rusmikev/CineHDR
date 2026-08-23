@@ -47,11 +47,10 @@ For each environment, test the following:
 | GPU Hardware | Driver / Session | Render Backends Tested | Smoke Status | Evidence |
 | :--- | :--- | :--- | :---: | :--- |
 | **Intel Raptor Lake Iris Xe** | Mesa Wayland | `legacy` & `gpu-next` | ✅ **PASS** | [`test_report.json`](file:///home/rusmikev/Downloads/Cine/test_report.json) |
-| **Intel Raptor Lake Iris Xe** | Mesa Wayland | `legacy` & `gpu-next` | ✅ **PASS** | [`test_report.json`](test_report.json) |
-| **NVIDIA RTX 3050 Laptop** | NV 595.80 Wayland | `legacy` & `gpu-next` | ✅ **PASS** | [`test_report.json`](test_report.json) |
+| **Intel Raptor Lake Iris Xe** | Mesa Wayland (Flatpak) | `legacy` (`opengl`) | ✅ **PASS** | [`test_report.json`](test_report.json) |
+| **NVIDIA RTX 3050 Laptop** | NV 610.57.04 / 595.80 (Native PRIME) | `legacy` (`opengl`) | ✅ **PASS** | [`test_report.json`](test_report.json) |
 
-*W9 Smoke Gate (2026-08-23): process stability validated (8s run, log-file capture via CINEHDR_LOG_FILE).
-Telemetry evidence pending re-run with updated runner — see GPU_NEXT_SMOKE_REPORT.md.*
+*W9 Smoke Gate (2026-08-23): 8/8 Legacy PASS with hardware evidence — Intel Iris Xe iGPU (Flatpak) and native NVIDIA GeForce RTX 3050 dGPU (`OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2`). 8/8 GPU-Next configs report STUB_UNSUPPORTED (unpatched libmpv). Display: Dell Alienware AW3225QF (HDMI-1, 4K QD-OLED, HDR ACTIVE).*
 
 ## Gate 2 & Gate 3 — EGL Harness Status
 

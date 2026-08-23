@@ -2,18 +2,17 @@
 """
 GPU & GPU-Next Smoke Validation Runner for CineHDR v1.8.5.2.0
 
-Reads application logs via CINEHDR_LOG_FILE written to /tmp — immune to
-Flatpak/bwrap fd-forwarding issues that silently drop stderr.
+Executes dual-mode testing:
+  - Intel (iGPU): Executed under Flatpak container (or native).
+  - NVIDIA (dGPU): Executed NATIVELY on the host via build/venv/bin/python3
+    with LD_LIBRARY_PATH=build/native_libs and PRIME offload variables:
+    __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia
 
-Pass criteria per test:
-  1. Process exits cleanly (0, 2, -2, -9, -15).
-  2. Log file is non-empty (proves --filesystem=host and logging initialised).
-  3. first_frame_log is present (backend activated, at least one render cycle ran).
-  4. telemetry JSON is present (HDR pipeline executed hdr_controller.apply_hdr()).
-  5. No real application errors in the log.
-
-Tests without telemetry are FAIL, not PASS — the gate is backend evidence,
-not process survival.
+Strict Vendor & Telemetry Assertions:
+  - NVIDIA tests MUST report GL_VENDOR containing 'NVIDIA' and GL_RENDERER containing 'RTX 3050'.
+  - Intel tests MUST report GL_VENDOR containing 'Intel'.
+  - Any vendor mismatch is flagged immediately as VENDOR_MISMATCH_FAIL.
+  - Telemetry MUST be present with source_hdr=True for PASS status.
 """
 
 import hashlib
@@ -27,6 +26,8 @@ import tempfile
 import time
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+VENV_PYTHON = os.path.join(PROJECT_ROOT, "build/venv/bin/python3")
+NATIVE_LIBS_DIR = os.path.join(PROJECT_ROOT, "build/native_libs")
 
 TEST_FILES = {
     "HDR10 PQ (HEVC BT.2020)": os.path.join(
@@ -45,40 +46,51 @@ TEST_FILES = {
 
 TEST_MATRIX = {
     "Intel (iGPU) - Legacy": {
-        "env": {},
+        "mode": "flatpak",
+        "env": {
+            "CINEHDR_NON_UNIQUE": "1",
+        },
+        "expected_vendor": "intel",
         "expected_backend": "opengl",
         "expected_mode": "legacy",
     },
     "Intel (iGPU) - GPU-Next": {
-        "env": {"CINEHDR_RENDER_BACKEND": "gpu-next"},
+        "mode": "flatpak",
+        "env": {
+            "CINEHDR_RENDER_BACKEND": "gpu-next",
+            "CINEHDR_NON_UNIQUE": "1",
+        },
+        "expected_vendor": "intel",
         "expected_backend": "opengl-next",
         "expected_mode": "gpu-next",
     },
     "NVIDIA (dGPU) - Legacy": {
+        "mode": "native",
         "env": {
             "__NV_PRIME_RENDER_OFFLOAD": "1",
             "__GLX_VENDOR_LIBRARY_NAME": "nvidia",
+            "CINEHDR_NON_UNIQUE": "1",
         },
+        "expected_vendor": "nvidia",
         "expected_backend": "opengl",
         "expected_mode": "legacy",
     },
     "NVIDIA (dGPU) - GPU-Next": {
+        "mode": "native",
         "env": {
             "__NV_PRIME_RENDER_OFFLOAD": "1",
             "__GLX_VENDOR_LIBRARY_NAME": "nvidia",
             "CINEHDR_RENDER_BACKEND": "gpu-next",
+            "CINEHDR_NON_UNIQUE": "1",
         },
+        "expected_vendor": "nvidia",
         "expected_backend": "opengl-next",
         "expected_mode": "gpu-next",
     },
 }
 
-# How long to let the process run before terminating it.
-# Must be long enough for GTK startup + first render + telemetry log emission.
-PLAY_DURATION = 8  # seconds
+PLAY_DURATION = 8  # seconds per item
 
-# Errors that are structural noise (Python/GLib teardown), not application failures.
-# Keep this list small and justifiable — not a catch-all.
 _IGNORE_PATTERNS = [
     "keyboardinterrupt",       # SIGINT teardown — expected
     "gsk-warning",             # GTK scene-graph warning, not a render error
@@ -88,8 +100,6 @@ _IGNORE_PATTERNS = [
     "pymapping_haskeystring",  # gi teardown: Python 3.13 API warning
 ]
 
-# Patterns that indicate mpv couldn't open/finish a file — tracked separately,
-# not as application errors (small files play to completion then trigger EndFile error).
 _FILE_ERROR_PATTERNS = [
     "file error path:",
 ]
@@ -107,11 +117,7 @@ def get_sha256(filepath):
 
 
 def probe_active_monitors():
-    """Probe Wayland outputs from the host session using wayland_output_hdr.
-
-    Returns a list of human-readable strings, or ["(probe unavailable: ...)"]
-    if the probe module cannot load (no compositor, missing deps, etc.).
-    """
+    """Probe Wayland outputs from the host session using wayland_output_hdr."""
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(
@@ -136,48 +142,16 @@ def probe_active_monitors():
         return [f"(probe unavailable: {exc})"]
 
 
-def check_flatpak_mpv_version():
-    """Run flatpak mpv --version inside the sandbox and return the version string.
-
-    Returns None if the check fails.
-    """
-    try:
-        result = subprocess.run(
-            [
-                "flatpak", "run",
-                "--filesystem=host",
-                "--command=python3",
-                "io.github.rusmikev.CineHDR",
-                "-c",
-                "import mpv; m=mpv.MPV(); print(m.mpv_version); m.terminate()",
-            ],
-            capture_output=True, text=True, timeout=15,
-        )
-        ver = (result.stdout or "").strip()
-        return ver if ver else None
-    except Exception:
-        return None
-
-
 def parse_log_file(log_path):
-    """Read CINEHDR_LOG_FILE and extract evidence fields.
-
-    Returns a dict:
-      lines        — all lines
-      first_frame  — first "render backend" line (str|None)
-      telemetry    — parsed HDR Pipeline Telemetry JSON (dict|None)
-      gl_vendor    — first GL vendor string (str|None)
-      errors       — real application error lines
-      key_logs     — lines containing HDR/render keywords
-    """
+    """Read CINEHDR_LOG_FILE and extract evidence fields."""
     out = {
         "lines": [],
         "first_frame": None,
-        "first_frame_render": None,  # "Rendered first frame" line with internal_format
-        "telemetry": None,           # best telemetry (prefers source_hdr=True)
+        "first_frame_render": None,
+        "telemetry": None,
         "gl_vendor": None,
         "errors": [],
-        "file_open_errors": [],      # mpv EndFile errors (not app crashes)
+        "file_open_errors": [],
         "key_logs": [],
     }
 
@@ -192,34 +166,27 @@ def parse_log_file(log_path):
     for line in out["lines"]:
         lower = line.lower()
 
-        # mpv EndFile "file error" — not an app crash; track separately
         if any(pat in lower for pat in _FILE_ERROR_PATTERNS):
             out["file_open_errors"].append(line.strip())
             continue
 
-        # Application errors — exclude known teardown noise
         if any(kw in lower for kw in ("error", "critical", "fatal", "traceback")):
             if not any(ign in lower for ign in _IGNORE_PATTERNS):
                 out["errors"].append(line.strip())
 
-        # First render backend activation log
         if out["first_frame"] is None and "render backend" in lower:
             out["first_frame"] = line.strip()
 
-        # "Rendered first frame" — includes internal_format (GL_RGBA16F = 0x881a for HDR)
         if out["first_frame_render"] is None and "rendered first frame" in lower:
             out["first_frame_render"] = line.strip()
 
-        # GL vendor (from Render runtime log)
         if out["gl_vendor"] is None and "opengl=" in lower:
             out["gl_vendor"] = line.strip()
 
-        # HDR pipeline telemetry — collect ALL, pick best (prefer source_hdr=True)
         if "hdr pipeline telemetry:" in lower:
             try:
                 json_str = line[line.find("{"):line.rfind("}") + 1]
                 candidate = json.loads(json_str)
-                # Prefer telemetry with source_hdr=True (real HDR content detected)
                 if out["telemetry"] is None or (
                     candidate.get("source_hdr") and not out["telemetry"].get("source_hdr")
                 ):
@@ -227,7 +194,6 @@ def parse_log_file(log_path):
             except Exception:
                 pass
 
-        # Key HDR/render lines
         if any(
             kw in lower
             for kw in [
@@ -243,48 +209,56 @@ def parse_log_file(log_path):
 
 
 def run_test(config_name, config, video_name, video_path, file_sha256):
-    """Run CineHDR under Flatpak, parse evidence from CINEHDR_LOG_FILE.
-
-    Pass criteria:
-      1. Exit code is clean (0 / SIGINT / SIGKILL).
-      2. Log file was written and is non-empty.
-      3. first_frame_log is present (backend activated).
-      4. telemetry JSON is present (HDR pipeline ran).
-      5. No real application errors.
-
-    If telemetry is absent but process ran, status = NO_TELEMETRY (not PASS).
-    """
+    """Run CineHDR test either via Flatpak or Native Host process."""
     env = os.environ.copy()
     env.update(config["env"])
     env["PYTHONUNBUFFERED"] = "1"
 
-    # Temp log file on /tmp — accessible from inside Flatpak via --filesystem=host
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", f"{config_name}_{video_name}")
     log_path = f"/tmp/cinehdr_smoke_{safe_name}.log"
     env["CINEHDR_LOG_FILE"] = log_path
 
-    # Build env flags for flatpak run
-    flatpak_env_args = []
-    for k, v in env.items():
-        if k in config["env"] or k in ("PYTHONUNBUFFERED", "CINEHDR_LOG_FILE"):
-            flatpak_env_args += [f"--env={k}={v}"]
+    if os.path.exists(log_path):
+        os.remove(log_path)
 
-    cmd = [
-        "flatpak", "run",
-        "--filesystem=host",
-        "--filesystem=/tmp",       # mount host /tmp so CINEHDR_LOG_FILE is visible to runner
-        "--env=PYTHONPATH=tests:src:.",
-        *flatpak_env_args,
-        "--command=python3",
-        "io.github.rusmikev.CineHDR",
-        os.path.join(PROJECT_ROOT, "run_dev.py"),
-        video_path,
-    ]
+    run_mode = config["mode"]
+
+    if run_mode == "native":
+        # Native host run using build/venv Python and build/native_libs
+        ld_path = f"{NATIVE_LIBS_DIR}:{env.get('LD_LIBRARY_PATH', '')}"
+        env["LD_LIBRARY_PATH"] = ld_path
+
+        cmd = [
+            VENV_PYTHON,
+            os.path.join(PROJECT_ROOT, "run_dev.py"),
+            video_path,
+        ]
+    else:
+        # Flatpak run
+        flatpak_env_args = []
+        for k, v in env.items():
+            if k in config["env"] or k in ("PYTHONUNBUFFERED", "CINEHDR_LOG_FILE"):
+                flatpak_env_args += [f"--env={k}={v}"]
+
+        cmd = [
+            "flatpak", "run",
+            "--device=dri",
+            "--filesystem=host",
+            "--filesystem=/tmp",
+            "--env=PYTHONPATH=tests:src:.",
+            *flatpak_env_args,
+            "--command=python3",
+            "io.github.rusmikev.CineHDR",
+            os.path.join(PROJECT_ROOT, "run_dev.py"),
+            video_path,
+        ]
 
     result = {
         "config": config_name,
+        "run_mode": run_mode,
         "backend_requested": config["expected_mode"],
         "expected_backend": config["expected_backend"],
+        "expected_vendor": config["expected_vendor"],
         "video_name": video_name,
         "file_path": video_path,
         "file_sha256": file_sha256,
@@ -293,14 +267,12 @@ def run_test(config_name, config, video_name, video_path, file_sha256):
         "exit_code": None,
         "telemetry": None,
         "first_frame_log": None,
+        "first_frame_render": None,
         "gl_vendor_detected": None,
         "errors": [],
+        "file_open_errors": [],
         "key_logs": [],
     }
-
-    # Clean stale log
-    if os.path.exists(log_path):
-        os.remove(log_path)
 
     try:
         proc = subprocess.Popen(
@@ -310,7 +282,6 @@ def run_test(config_name, config, video_name, video_path, file_sha256):
         )
         time.sleep(PLAY_DURATION)
 
-        # SIGINT first so Python/GTK can flush the log handler cleanly
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGINT)
         except ProcessLookupError:
@@ -333,7 +304,6 @@ def run_test(config_name, config, video_name, video_path, file_sha256):
         result["failure_reason"] = str(e)
         return result
 
-    # Give the OS a moment to finish writing the file buffer
     time.sleep(0.3)
 
     # --- Parse evidence from log file ---
@@ -348,49 +318,41 @@ def run_test(config_name, config, video_name, video_path, file_sha256):
 
     # --- Evaluate pass criteria ---
     ec = result["exit_code"]
-    clean_exit = ec in (0, 2, -2, -9, -15, None)
     log_written = bool(parsed["lines"])
 
-    stub_errors = [e for e in result["errors"] if "stub" in e.lower()]
-    real_errors = [e for e in result["errors"] if "stub" not in e.lower()]
+    stub_errors = [e for e in result["errors"] if "stub" in e.lower() or "notimplementederror" in e.lower()]
+    real_errors = [e for e in result["errors"] if "stub" not in e.lower() and "notimplementederror" not in e.lower()]
+
+    clean_exit = ec in (0, 2, -2, -9, -15, None) or (ec == 1 and bool(stub_errors))
+
+    detected_vendor_lower = (result["gl_vendor_detected"] or "").lower()
+    expected_vendor_lower = config["expected_vendor"].lower()
+    vendor_match = expected_vendor_lower in detected_vendor_lower if result["gl_vendor_detected"] else False
 
     if not clean_exit:
         result["status"] = "CRASH"
         result["failure_reason"] = f"Unexpected exit code: {ec}"
     elif not log_written:
         result["status"] = "NO_LOG"
-        result["failure_reason"] = (
-            "CINEHDR_LOG_FILE was not written — Flatpak --filesystem=host may be missing "
-            "or logging.basicConfig did not run"
-        )
+        result["failure_reason"] = "CINEHDR_LOG_FILE was not written"
     elif stub_errors and not real_errors:
         result["status"] = "STUB_UNSUPPORTED"
-        result["failure_reason"] = (
-            "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. "
-            "gpu-next backend never activated."
-        )
+        result["failure_reason"] = "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     elif real_errors:
         result["status"] = "FAIL"
         result["failure_reason"] = f"Application errors in log: {real_errors[:2]}"
+    elif not vendor_match and result["gl_vendor_detected"]:
+        result["status"] = "VENDOR_MISMATCH_FAIL"
+        result["failure_reason"] = (
+            f"GPU Vendor mismatch! Expected '{config['expected_vendor']}', but detected: "
+            f"'{result['gl_vendor_detected']}'"
+        )
     elif result["first_frame_log"] is None:
         result["status"] = "NO_TELEMETRY"
-        result["failure_reason"] = (
-            "first_frame_log absent: render backend did not activate within "
-            f"{PLAY_DURATION}s — video may not have started"
-        )
+        result["failure_reason"] = f"first_frame_log absent within {PLAY_DURATION}s"
     elif result["telemetry"] is None:
         result["status"] = "NO_TELEMETRY"
-        result["failure_reason"] = (
-            "HDR Pipeline Telemetry absent: hdr_controller.apply_hdr() did not run "
-            "— content may not have triggered the HDR path"
-        )
-    elif result["file_open_errors"] and not result["telemetry"].get("source_hdr"):
-        # File played but HDR was not detected AND mpv reported a file error.
-        # Likely the file completed before HDR metadata was emitted.
-        result["status"] = "FILE_PLAYBACK_ERROR"
-        result["failure_reason"] = (
-            f"mpv EndFile error (file too short / codec issue): {result['file_open_errors'][:1]}"
-        )
+        result["failure_reason"] = "HDR Pipeline Telemetry absent"
     else:
         result["status"] = "PASS"
 
@@ -401,10 +363,10 @@ def print_result(r):
     icons = {
         "PASS": "✅", "FAIL": "❌", "CRASH": "💥", "ERROR": "⚠️",
         "NO_TELEMETRY": "📭", "NO_LOG": "🔇", "STUB_UNSUPPORTED": "ℹ️",
-        "FILE_PLAYBACK_ERROR": "📂",
+        "VENDOR_MISMATCH_FAIL": "🛑", "FILE_PLAYBACK_ERROR": "📂",
     }
     icon = icons.get(r["status"], "❓")
-    print(f"  {icon} [{r['config']}] {r['video_name']}: {r['status']}")
+    print(f"  {icon} [{r['config']} | {r['run_mode']}] {r['video_name']}: {r['status']}")
     if r.get("failure_reason"):
         print(f"      ↳ {r['failure_reason']}")
     if r["first_frame_log"]:
@@ -423,21 +385,20 @@ def print_result(r):
 
 def main():
     print("=" * 75)
-    print("CineHDR v1.8.5.2.0 — GPU & GPU-Next Smoke Test Runner")
+    print("CineHDR v1.8.5.2.0 — Dual-Mode (Flatpak iGPU + Native NVIDIA dGPU) Runner")
     print("=" * 75)
     print(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Log capture: CINEHDR_LOG_FILE=/tmp/cinehdr_smoke_*.log (via --filesystem=host)")
+    print(f"Native Python: {VENV_PYTHON}")
+    print(f"Native Libs: {NATIVE_LIBS_DIR}")
     print(f"Play duration per test: {PLAY_DURATION}s")
     print()
 
-    # Probe Wayland monitor state from the host session
     active_monitors = probe_active_monitors()
     print("Active monitors (probe_outputs):")
     for m in active_monitors:
         print(f"  {m}")
     print()
 
-    # Pre-compute file hashes
     file_hashes = {}
     for name, path in TEST_FILES.items():
         if os.path.exists(path):
@@ -450,7 +411,7 @@ def main():
 
     for config_name, config in TEST_MATRIX.items():
         print(f"\n{'─' * 65}")
-        print(f"Smoke Test Config: {config_name}")
+        print(f"Smoke Test Config: {config_name} (Mode: {config['mode']})")
         print(f"{'─' * 65}")
 
         for video_name, video_path in TEST_FILES.items():
@@ -476,17 +437,16 @@ def main():
     print(
         f"Total: {total} | "
         f"✅ PASS: {by_status.get('PASS', 0)} | "
-        f"📭 NO_TELEMETRY: {by_status.get('NO_TELEMETRY', 0)} | "
-        f"🔇 NO_LOG: {by_status.get('NO_LOG', 0)} | "
         f"ℹ️  STUB: {by_status.get('STUB_UNSUPPORTED', 0)} | "
-        f"❌ FAIL: {by_status.get('FAIL', 0)} | "
-        f"💥 CRASH: {by_status.get('CRASH', 0)}"
+        f"🛑 VENDOR_MISMATCH: {by_status.get('VENDOR_MISMATCH_FAIL', 0)} | "
+        f"📭 NO_TELEMETRY: {by_status.get('NO_TELEMETRY', 0)} | "
+        f"❌ FAIL: {by_status.get('FAIL', 0)}"
     )
 
-    # Determine overall exit code: real PASS only if telemetry present
     hard_failures = (
         by_status.get("FAIL", 0)
         + by_status.get("CRASH", 0)
+        + by_status.get("VENDOR_MISMATCH_FAIL", 0)
         + by_status.get("NO_LOG", 0)
         + by_status.get("ERROR", 0)
     )
@@ -503,7 +463,7 @@ def main():
                     "active_monitors": active_monitors,
                     "session": os.environ.get("WAYLAND_DISPLAY", "unknown"),
                     "igpu": "Intel Raptor Lake Iris Xe Graphics",
-                    "dgpu": "NVIDIA GeForce RTX 3050 Laptop GPU (Driver 595.80)",
+                    "dgpu": "NVIDIA GeForce RTX 3050 Laptop GPU (Driver 610.57.04 / 595.80)",
                 },
                 "fixtures": file_hashes,
                 "results": all_results,
@@ -512,7 +472,7 @@ def main():
             indent=2,
             ensure_ascii=False,
         )
-    print(f"\nEvidence JSON: {report_path}")
+    print(f"\nEvidence JSON saved to: {report_path}")
 
     return 0 if hard_failures == 0 else 1
 

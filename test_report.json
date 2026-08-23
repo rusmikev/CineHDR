@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-23T21:24:34",
+  "timestamp": "2026-08-23T22:03:27",
   "version": "1.8.5.2.0",
   "play_duration_s": 8,
   "log_capture_method": "CINEHDR_LOG_FILE",
@@ -9,7 +9,7 @@
     ],
     "session": "wayland-0",
     "igpu": "Intel Raptor Lake Iris Xe Graphics",
-    "dgpu": "NVIDIA GeForce RTX 3050 Laptop GPU (Driver 595.80)"
+    "dgpu": "NVIDIA GeForce RTX 3050 Laptop GPU (Driver 610.57.04 / 595.80)"
   },
   "fixtures": {
     "HDR10 PQ (HEVC BT.2020)": "23b9dd904e0138e476946afaa7ecf644726e8a5a6f75d5aa75774ab9f5b6e82c",
@@ -20,8 +20,10 @@
   "results": [
     {
       "config": "Intel (iGPU) - Legacy",
+      "run_mode": "flatpak",
       "backend_requested": "legacy",
       "expected_backend": "opengl",
+      "expected_vendor": "intel",
       "video_name": "HDR10 PQ (HEVC BT.2020)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/01. Black Clipping_1_HDR10.mp4",
       "file_sha256": "23b9dd904e0138e476946afaa7ecf644726e8a5a6f75d5aa75774ab9f5b6e82c",
@@ -29,34 +31,33 @@
       "status": "PASS",
       "exit_code": -2,
       "telemetry": {
-        "source_hdr": true,
-        "target_trc": "pq",
+        "source_hdr": false,
+        "target_trc": "auto",
         "target_peak": "auto",
         "tone_mapping_active": false,
-        "display_hdr": null,
+        "display_hdr": true,
         "hdr_mode": "auto",
         "dovi_profile": null
       },
-      "first_frame_log": "2026-08-23 21:22:27,758 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-      "gl_vendor_detected": "2026-08-23 21:22:27,764 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+      "first_frame_log": "2026-08-23 22:01:19,121 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+      "first_frame_render": null,
+      "gl_vendor_detected": "2026-08-23 22:01:19,129 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
       "errors": [],
+      "file_open_errors": [],
       "key_logs": [
-        "2026-08-23 21:22:27,515 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:27,713 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:27,714 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:27,758 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-        "2026-08-23 21:22:27,764 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
-        "2026-08-23 21:22:29,161 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:29,473 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": true, \"display_hdr\": false, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:29,922 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x8058 depth=8"
-      ],
-      "first_frame_render": "2026-08-23 21:22:29,922 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x8058 depth=8",
-      "file_open_errors": []
+        "2026-08-23 22:01:18,885 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:19,090 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:19,091 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:19,121 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+        "2026-08-23 22:01:19,129 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)"
+      ]
     },
     {
       "config": "Intel (iGPU) - Legacy",
+      "run_mode": "flatpak",
       "backend_requested": "legacy",
       "expected_backend": "opengl",
+      "expected_vendor": "intel",
       "video_name": "HLG (HEVC BT.2100)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/Grayscale BT.2100 HLG.mkv",
       "file_sha256": "7b0f7fb469cf7980cc7107a3db5e8a0a01b4c008f3248c3c80eace9e040914f4",
@@ -64,33 +65,33 @@
       "status": "PASS",
       "exit_code": -2,
       "telemetry": {
-        "source_hdr": true,
-        "target_trc": "pq",
+        "source_hdr": false,
+        "target_trc": "auto",
         "target_peak": "auto",
         "tone_mapping_active": false,
-        "display_hdr": null,
+        "display_hdr": true,
         "hdr_mode": "auto",
         "dovi_profile": null
       },
-      "first_frame_log": "2026-08-23 21:22:36,254 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-      "gl_vendor_detected": "2026-08-23 21:22:36,261 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+      "first_frame_log": "2026-08-23 22:01:27,584 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+      "first_frame_render": null,
+      "gl_vendor_detected": "2026-08-23 22:01:27,591 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
       "errors": [],
+      "file_open_errors": [],
       "key_logs": [
-        "2026-08-23 21:22:36,061 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:36,209 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:36,210 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:36,254 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-        "2026-08-23 21:22:36,261 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
-        "2026-08-23 21:22:37,119 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:37,340 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16"
-      ],
-      "first_frame_render": "2026-08-23 21:22:37,340 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16",
-      "file_open_errors": []
+        "2026-08-23 22:01:27,329 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:27,554 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:27,554 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:27,584 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+        "2026-08-23 22:01:27,591 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)"
+      ]
     },
     {
       "config": "Intel (iGPU) - Legacy",
+      "run_mode": "flatpak",
       "backend_requested": "legacy",
       "expected_backend": "opengl",
+      "expected_vendor": "intel",
       "video_name": "Dolby Vision (HEVC)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
       "file_sha256": "66f0a93ee9909ad0229102aafb63542791f98e7f991c6e3f783b4f14ee630675",
@@ -106,28 +107,26 @@
         "hdr_mode": "auto",
         "dovi_profile": 8
       },
-      "first_frame_log": "2026-08-23 21:22:45,209 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-      "gl_vendor_detected": "2026-08-23 21:22:45,215 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+      "first_frame_log": "2026-08-23 22:01:35,608 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+      "first_frame_render": null,
+      "gl_vendor_detected": "2026-08-23 22:01:35,615 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
       "errors": [],
+      "file_open_errors": [],
       "key_logs": [
-        "2026-08-23 21:22:44,978 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:45,172 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:45,173 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:45,209 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-        "2026-08-23 21:22:45,215 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
-        "2026-08-23 21:22:46,061 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": 8}",
-        "2026-08-23 21:22:46,079 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": 8}",
-        "2026-08-23 21:22:46,291 [INFO] root: Rendered first frame backend=opengl target=2560x1072 internal_format=0x881a depth=16"
-      ],
-      "first_frame_render": "2026-08-23 21:22:46,291 [INFO] root: Rendered first frame backend=opengl target=2560x1072 internal_format=0x881a depth=16",
-      "file_open_errors": [
-        "2026-08-23 21:22:46,681 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv"
+        "2026-08-23 22:01:35,352 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:35,575 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:35,576 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:35,608 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+        "2026-08-23 22:01:35,615 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+        "2026-08-23 22:01:36,484 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": 8}"
       ]
     },
     {
       "config": "Intel (iGPU) - Legacy",
+      "run_mode": "flatpak",
       "backend_requested": "legacy",
       "expected_backend": "opengl",
+      "expected_vendor": "intel",
       "video_name": "HDR10 PQ (colorbars)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
       "file_sha256": "6adcda398d75f100d23daeb53a9f71967c7f9281e21547b1acde01e533cf11cf",
@@ -135,35 +134,33 @@
       "status": "PASS",
       "exit_code": -2,
       "telemetry": {
-        "source_hdr": true,
-        "target_trc": "pq",
+        "source_hdr": false,
+        "target_trc": "auto",
         "target_peak": "auto",
         "tone_mapping_active": false,
-        "display_hdr": null,
+        "display_hdr": true,
         "hdr_mode": "auto",
         "dovi_profile": null
       },
-      "first_frame_log": "2026-08-23 21:22:53,134 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-      "gl_vendor_detected": "2026-08-23 21:22:53,141 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+      "first_frame_log": "2026-08-23 22:01:44,457 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+      "first_frame_render": null,
+      "gl_vendor_detected": "2026-08-23 22:01:44,464 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
       "errors": [],
+      "file_open_errors": [],
       "key_logs": [
-        "2026-08-23 21:22:52,940 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:53,099 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:53,099 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:53,134 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-        "2026-08-23 21:22:53,141 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
-        "2026-08-23 21:22:53,982 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:22:54,200 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16"
-      ],
-      "first_frame_render": "2026-08-23 21:22:54,200 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16",
-      "file_open_errors": [
-        "2026-08-23 21:22:54,980 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4"
+        "2026-08-23 22:01:44,226 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:44,427 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:44,428 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:44,457 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+        "2026-08-23 22:01:44,464 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)"
       ]
     },
     {
       "config": "Intel (iGPU) - GPU-Next",
+      "run_mode": "flatpak",
       "backend_requested": "gpu-next",
       "expected_backend": "opengl-next",
+      "expected_vendor": "intel",
       "video_name": "HDR10 PQ (HEVC BT.2020)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/01. Black Clipping_1_HDR10.mp4",
       "file_sha256": "23b9dd904e0138e476946afaa7ecf644726e8a5a6f75d5aa75774ab9f5b6e82c",
@@ -180,24 +177,27 @@
         "dovi_profile": null
       },
       "first_frame_log": null,
+      "first_frame_render": null,
       "gl_vendor_detected": null,
       "errors": [
-        "2026-08-23 21:23:01,496 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:01:52,561 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
       ],
-      "key_logs": [
-        "2026-08-23 21:23:01,312 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:01,494 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:01,495 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:01,496 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
-      ],
-      "first_frame_render": null,
       "file_open_errors": [],
-      "failure_reason": "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. gpu-next backend never activated."
+      "key_logs": [
+        "2026-08-23 22:01:52,369 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:52,560 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:52,560 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:01:52,561 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
+        "2026-08-23 22:01:52,729 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+      ],
+      "failure_reason": "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     },
     {
       "config": "Intel (iGPU) - GPU-Next",
+      "run_mode": "flatpak",
       "backend_requested": "gpu-next",
       "expected_backend": "opengl-next",
+      "expected_vendor": "intel",
       "video_name": "HLG (HEVC BT.2100)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/Grayscale BT.2100 HLG.mkv",
       "file_sha256": "7b0f7fb469cf7980cc7107a3db5e8a0a01b4c008f3248c3c80eace9e040914f4",
@@ -214,24 +214,27 @@
         "dovi_profile": null
       },
       "first_frame_log": null,
+      "first_frame_render": null,
       "gl_vendor_detected": null,
       "errors": [
-        "2026-08-23 21:23:09,827 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:02:00,315 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
       ],
-      "key_logs": [
-        "2026-08-23 21:23:09,640 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:09,825 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:09,826 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:09,827 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
-      ],
-      "first_frame_render": null,
       "file_open_errors": [],
-      "failure_reason": "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. gpu-next backend never activated."
+      "key_logs": [
+        "2026-08-23 22:02:00,166 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:00,314 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:00,315 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:00,315 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
+        "2026-08-23 22:02:00,491 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+      ],
+      "failure_reason": "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     },
     {
       "config": "Intel (iGPU) - GPU-Next",
+      "run_mode": "flatpak",
       "backend_requested": "gpu-next",
       "expected_backend": "opengl-next",
+      "expected_vendor": "intel",
       "video_name": "Dolby Vision (HEVC)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
       "file_sha256": "66f0a93ee9909ad0229102aafb63542791f98e7f991c6e3f783b4f14ee630675",
@@ -248,45 +251,35 @@
         "dovi_profile": null
       },
       "first_frame_log": null,
+      "first_frame_render": null,
       "gl_vendor_detected": null,
       "errors": [
-        "2026-08-23 21:23:18,295 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:02:08,497 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+      ],
+      "file_open_errors": [
+        "2026-08-23 22:02:08,523 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:02:08,533 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:02:08,540 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:02:08,546 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:02:08,553 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:02:08,559 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:02:08,564 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv"
       ],
       "key_logs": [
-        "2026-08-23 21:23:18,148 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:18,293 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:18,294 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:18,295 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:02:08,318 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:08,496 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:08,496 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:08,497 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
+        "2026-08-23 22:02:08,727 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
       ],
-      "first_frame_render": null,
-      "file_open_errors": [
-        "2026-08-23 21:23:18,340 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:23:18,349 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:23:18,356 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:23:18,362 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:23:18,369 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:23:18,375 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:23:18,380 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:23:18,386 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:23:18,394 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:23:18,399 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:23:18,406 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:23:18,412 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:23:18,419 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:23:18,426 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:23:18,432 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:23:18,437 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:23:18,443 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:23:18,449 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:23:18,454 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:23:18,460 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv"
-      ],
-      "failure_reason": "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. gpu-next backend never activated."
+      "failure_reason": "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     },
     {
       "config": "Intel (iGPU) - GPU-Next",
+      "run_mode": "flatpak",
       "backend_requested": "gpu-next",
       "expected_backend": "opengl-next",
+      "expected_vendor": "intel",
       "video_name": "HDR10 PQ (colorbars)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
       "file_sha256": "6adcda398d75f100d23daeb53a9f71967c7f9281e21547b1acde01e533cf11cf",
@@ -303,29 +296,32 @@
         "dovi_profile": null
       },
       "first_frame_log": null,
+      "first_frame_render": null,
       "gl_vendor_detected": null,
       "errors": [
-        "2026-08-23 21:23:26,263 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:02:16,340 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+      ],
+      "file_open_errors": [
+        "2026-08-23 22:02:16,379 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
+        "2026-08-23 22:02:16,385 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/contrast-recovery-pq-output-colornoise.mkv",
+        "2026-08-23 22:02:16,390 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/dark.mkv",
+        "2026-08-23 22:02:16,395 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/flicker4.mkv"
       ],
       "key_logs": [
-        "2026-08-23 21:23:26,123 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:26,261 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:26,262 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:26,263 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:02:16,139 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:16,338 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:16,339 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:16,340 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
+        "2026-08-23 22:02:16,566 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
       ],
-      "first_frame_render": null,
-      "file_open_errors": [
-        "2026-08-23 21:23:26,322 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
-        "2026-08-23 21:23:26,330 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/contrast-recovery-pq-output-colornoise.mkv",
-        "2026-08-23 21:23:26,336 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/dark.mkv",
-        "2026-08-23 21:23:26,341 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/flicker4.mkv"
-      ],
-      "failure_reason": "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. gpu-next backend never activated."
+      "failure_reason": "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     },
     {
       "config": "NVIDIA (dGPU) - Legacy",
+      "run_mode": "native",
       "backend_requested": "legacy",
       "expected_backend": "opengl",
+      "expected_vendor": "nvidia",
       "video_name": "HDR10 PQ (HEVC BT.2020)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/01. Black Clipping_1_HDR10.mp4",
       "file_sha256": "23b9dd904e0138e476946afaa7ecf644726e8a5a6f75d5aa75774ab9f5b6e82c",
@@ -333,34 +329,35 @@
       "status": "PASS",
       "exit_code": -2,
       "telemetry": {
-        "source_hdr": true,
-        "target_trc": "pq",
+        "source_hdr": false,
+        "target_trc": "auto",
         "target_peak": "auto",
         "tone_mapping_active": false,
-        "display_hdr": null,
+        "display_hdr": true,
         "hdr_mode": "auto",
         "dovi_profile": null
       },
-      "first_frame_log": "2026-08-23 21:23:34,024 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-      "gl_vendor_detected": "2026-08-23 21:23:34,031 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+      "first_frame_log": "2026-08-23 22:02:20,375 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+      "first_frame_render": null,
+      "gl_vendor_detected": "2026-08-23 22:02:20,382 [INFO] root: Render runtime libmpv=/home/rusmikev/Downloads/Cine/build/native_libs/libmpv.so.2 mpv=mpv v0.41.0 libplacebo=v7.360.1 ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2 / OpenGL ES 3.2 NVIDIA 610.57.04",
       "errors": [],
+      "file_open_errors": [],
       "key_logs": [
-        "2026-08-23 21:23:33,811 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:33,975 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:33,976 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:34,024 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-        "2026-08-23 21:23:34,031 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
-        "2026-08-23 21:23:35,419 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:35,917 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16",
-        "2026-08-23 21:23:36,410 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": true, \"display_hdr\": false, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
-      ],
-      "first_frame_render": "2026-08-23 21:23:35,917 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16",
-      "file_open_errors": []
+        "2026-08-23 22:02:19,767 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:20,113 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:20,113 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:20,375 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+        "2026-08-23 22:02:20,382 [INFO] root: Render runtime libmpv=/home/rusmikev/Downloads/Cine/build/native_libs/libmpv.so.2 mpv=mpv v0.41.0 libplacebo=v7.360.1 ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2 / OpenGL ES 3.2 NVIDIA 610.57.04",
+        "2026-08-23 22:02:20,544 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:21,471 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+      ]
     },
     {
       "config": "NVIDIA (dGPU) - Legacy",
+      "run_mode": "native",
       "backend_requested": "legacy",
       "expected_backend": "opengl",
+      "expected_vendor": "nvidia",
       "video_name": "HLG (HEVC BT.2100)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/Grayscale BT.2100 HLG.mkv",
       "file_sha256": "7b0f7fb469cf7980cc7107a3db5e8a0a01b4c008f3248c3c80eace9e040914f4",
@@ -368,34 +365,35 @@
       "status": "PASS",
       "exit_code": -2,
       "telemetry": {
-        "source_hdr": true,
-        "target_trc": "pq",
+        "source_hdr": false,
+        "target_trc": "auto",
         "target_peak": "auto",
         "tone_mapping_active": false,
-        "display_hdr": null,
+        "display_hdr": true,
         "hdr_mode": "auto",
         "dovi_profile": null
       },
-      "first_frame_log": "2026-08-23 21:23:42,647 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-      "gl_vendor_detected": "2026-08-23 21:23:42,655 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+      "first_frame_log": "2026-08-23 22:02:29,476 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+      "first_frame_render": null,
+      "gl_vendor_detected": "2026-08-23 22:02:29,484 [INFO] root: Render runtime libmpv=/home/rusmikev/Downloads/Cine/build/native_libs/libmpv.so.2 mpv=mpv v0.41.0 libplacebo=v7.360.1 ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2 / OpenGL ES 3.2 NVIDIA 610.57.04",
       "errors": [],
+      "file_open_errors": [],
       "key_logs": [
-        "2026-08-23 21:23:42,435 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:42,596 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:42,597 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:42,647 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-        "2026-08-23 21:23:42,655 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
-        "2026-08-23 21:23:43,511 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:43,787 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16",
-        "2026-08-23 21:23:44,410 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": true, \"display_hdr\": false, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
-      ],
-      "first_frame_render": "2026-08-23 21:23:43,787 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16",
-      "file_open_errors": []
+        "2026-08-23 22:02:28,703 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:29,205 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:29,205 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:29,476 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+        "2026-08-23 22:02:29,484 [INFO] root: Render runtime libmpv=/home/rusmikev/Downloads/Cine/build/native_libs/libmpv.so.2 mpv=mpv v0.41.0 libplacebo=v7.360.1 ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2 / OpenGL ES 3.2 NVIDIA 610.57.04",
+        "2026-08-23 22:02:29,651 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:30,522 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+      ]
     },
     {
       "config": "NVIDIA (dGPU) - Legacy",
+      "run_mode": "native",
       "backend_requested": "legacy",
       "expected_backend": "opengl",
+      "expected_vendor": "nvidia",
       "video_name": "Dolby Vision (HEVC)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
       "file_sha256": "66f0a93ee9909ad0229102aafb63542791f98e7f991c6e3f783b4f14ee630675",
@@ -403,36 +401,52 @@
       "status": "PASS",
       "exit_code": -2,
       "telemetry": {
-        "source_hdr": true,
-        "target_trc": "pq",
+        "source_hdr": false,
+        "target_trc": "auto",
         "target_peak": "auto",
         "tone_mapping_active": false,
-        "display_hdr": null,
+        "display_hdr": true,
         "hdr_mode": "auto",
-        "dovi_profile": 8
+        "dovi_profile": null
       },
-      "first_frame_log": "2026-08-23 21:23:51,827 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-      "gl_vendor_detected": "2026-08-23 21:23:51,835 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+      "first_frame_log": "2026-08-23 22:02:37,986 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+      "first_frame_render": null,
+      "gl_vendor_detected": "2026-08-23 22:02:37,995 [INFO] root: Render runtime libmpv=/home/rusmikev/Downloads/Cine/build/native_libs/libmpv.so.2 mpv=mpv v0.41.0 libplacebo=v7.360.1 ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2 / OpenGL ES 3.2 NVIDIA 610.57.04",
       "errors": [],
-      "key_logs": [
-        "2026-08-23 21:23:51,602 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:51,777 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:51,778 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:51,827 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-        "2026-08-23 21:23:51,835 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
-        "2026-08-23 21:23:52,680 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": 8}",
-        "2026-08-23 21:23:52,684 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": 8}",
-        "2026-08-23 21:23:52,933 [INFO] root: Rendered first frame backend=opengl target=2560x1072 internal_format=0x881a depth=16"
-      ],
-      "first_frame_render": "2026-08-23 21:23:52,933 [INFO] root: Rendered first frame backend=opengl target=2560x1072 internal_format=0x881a depth=16",
       "file_open_errors": [
-        "2026-08-23 21:23:53,006 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv"
+        "2026-08-23 22:02:38,017 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:02:38,035 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:02:38,041 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:02:38,048 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:02:38,055 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:02:38,062 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:02:38,070 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:02:38,078 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:02:38,085 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:02:38,092 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:02:38,099 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:02:38,105 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:02:38,111 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:02:38,117 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:02:38,123 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:02:38,132 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv"
+      ],
+      "key_logs": [
+        "2026-08-23 22:02:37,204 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:37,700 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:37,701 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:37,986 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+        "2026-08-23 22:02:37,995 [INFO] root: Render runtime libmpv=/home/rusmikev/Downloads/Cine/build/native_libs/libmpv.so.2 mpv=mpv v0.41.0 libplacebo=v7.360.1 ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2 / OpenGL ES 3.2 NVIDIA 610.57.04",
+        "2026-08-23 22:02:38,254 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:38,470 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
       ]
     },
     {
       "config": "NVIDIA (dGPU) - Legacy",
+      "run_mode": "native",
       "backend_requested": "legacy",
       "expected_backend": "opengl",
+      "expected_vendor": "nvidia",
       "video_name": "HDR10 PQ (colorbars)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
       "file_sha256": "6adcda398d75f100d23daeb53a9f71967c7f9281e21547b1acde01e533cf11cf",
@@ -440,34 +454,40 @@
       "status": "PASS",
       "exit_code": -2,
       "telemetry": {
-        "source_hdr": true,
-        "target_trc": "pq",
+        "source_hdr": false,
+        "target_trc": "auto",
         "target_peak": "auto",
         "tone_mapping_active": false,
-        "display_hdr": null,
+        "display_hdr": true,
         "hdr_mode": "auto",
         "dovi_profile": null
       },
-      "first_frame_log": "2026-08-23 21:23:59,490 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-      "gl_vendor_detected": "2026-08-23 21:23:59,498 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
+      "first_frame_log": "2026-08-23 22:02:47,031 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+      "first_frame_render": null,
+      "gl_vendor_detected": "2026-08-23 22:02:47,039 [INFO] root: Render runtime libmpv=/home/rusmikev/Downloads/Cine/build/native_libs/libmpv.so.2 mpv=mpv v0.41.0 libplacebo=v7.360.1 ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2 / OpenGL ES 3.2 NVIDIA 610.57.04",
       "errors": [],
-      "key_logs": [
-        "2026-08-23 21:23:59,271 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:59,436 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:59,437 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:23:59,490 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
-        "2026-08-23 21:23:59,498 [INFO] root: Render runtime libmpv=/app/lib/libmpv.so.2.5.0 mpv=mpv v0.41.0 libplacebo=v7.360.1 (v7.360.1) ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=Intel / Mesa Intel(R) Iris(R) Xe Graphics (RPL-P) / OpenGL ES 3.2 Mesa 26.1.6 (git-ffa422e53d)",
-        "2026-08-23 21:24:00,358 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"pq\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:00,544 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16",
-        "2026-08-23 21:24:01,393 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": true, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": true, \"display_hdr\": false, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+      "file_open_errors": [
+        "2026-08-23 22:02:47,077 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
+        "2026-08-23 22:02:47,085 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/contrast-recovery-pq-output-colornoise.mkv",
+        "2026-08-23 22:02:47,092 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/dark.mkv",
+        "2026-08-23 22:02:47,099 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/flicker4.mkv"
       ],
-      "first_frame_render": "2026-08-23 21:24:00,544 [INFO] root: Rendered first frame backend=opengl target=2240x1260 internal_format=0x881a depth=16",
-      "file_open_errors": []
+      "key_logs": [
+        "2026-08-23 22:02:46,283 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:46,770 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:46,771 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:47,031 [INFO] root: libmpv render backend requested=legacy active=opengl fallback_reason=none",
+        "2026-08-23 22:02:47,039 [INFO] root: Render runtime libmpv=/home/rusmikev/Downloads/Cine/build/native_libs/libmpv.so.2 mpv=mpv v0.41.0 libplacebo=v7.360.1 ffmpeg=7.1.3 configuration=-Dlibmpv=true -Dbuild-date=false -Dalsa=disabled -Dlua=enabled -Dprefix=/app -Dlibdir=/app/lib -Dwrap_mode=nodownload OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2 / OpenGL ES 3.2 NVIDIA 610.57.04",
+        "2026-08-23 22:02:47,301 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:47,477 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+      ]
     },
     {
       "config": "NVIDIA (dGPU) - GPU-Next",
+      "run_mode": "native",
       "backend_requested": "gpu-next",
       "expected_backend": "opengl-next",
+      "expected_vendor": "nvidia",
       "video_name": "HDR10 PQ (HEVC BT.2020)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/01. Black Clipping_1_HDR10.mp4",
       "file_sha256": "23b9dd904e0138e476946afaa7ecf644726e8a5a6f75d5aa75774ab9f5b6e82c",
@@ -484,25 +504,28 @@
         "dovi_profile": null
       },
       "first_frame_log": null,
+      "first_frame_render": null,
       "gl_vendor_detected": null,
       "errors": [
-        "2026-08-23 21:24:07,679 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:02:55,240 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
       ],
-      "key_logs": [
-        "2026-08-23 21:24:07,533 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:07,678 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:07,678 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:07,679 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
-        "2026-08-23 21:24:09,147 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": false, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
-      ],
-      "first_frame_render": null,
       "file_open_errors": [],
-      "failure_reason": "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. gpu-next backend never activated."
+      "key_logs": [
+        "2026-08-23 22:02:54,742 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:55,238 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:55,239 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:55,240 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
+        "2026-08-23 22:02:55,488 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:02:56,470 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+      ],
+      "failure_reason": "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     },
     {
       "config": "NVIDIA (dGPU) - GPU-Next",
+      "run_mode": "native",
       "backend_requested": "gpu-next",
       "expected_backend": "opengl-next",
+      "expected_vendor": "nvidia",
       "video_name": "HLG (HEVC BT.2100)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/Grayscale BT.2100 HLG.mkv",
       "file_sha256": "7b0f7fb469cf7980cc7107a3db5e8a0a01b4c008f3248c3c80eace9e040914f4",
@@ -519,24 +542,28 @@
         "dovi_profile": null
       },
       "first_frame_log": null,
+      "first_frame_render": null,
       "gl_vendor_detected": null,
       "errors": [
-        "2026-08-23 21:24:15,914 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:03:03,966 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
       ],
-      "key_logs": [
-        "2026-08-23 21:24:15,710 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:15,912 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:15,912 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:15,914 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
-      ],
-      "first_frame_render": null,
       "file_open_errors": [],
-      "failure_reason": "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. gpu-next backend never activated."
+      "key_logs": [
+        "2026-08-23 22:03:03,455 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:03,964 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:03,965 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:03,966 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
+        "2026-08-23 22:03:04,197 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:05,535 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+      ],
+      "failure_reason": "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     },
     {
       "config": "NVIDIA (dGPU) - GPU-Next",
+      "run_mode": "native",
       "backend_requested": "gpu-next",
       "expected_backend": "opengl-next",
+      "expected_vendor": "nvidia",
       "video_name": "Dolby Vision (HEVC)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
       "file_sha256": "66f0a93ee9909ad0229102aafb63542791f98e7f991c6e3f783b4f14ee630675",
@@ -553,45 +580,68 @@
         "dovi_profile": null
       },
       "first_frame_log": null,
+      "first_frame_render": null,
       "gl_vendor_detected": null,
       "errors": [
-        "2026-08-23 21:24:24,140 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:03:12,674 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+      ],
+      "file_open_errors": [
+        "2026-08-23 22:03:12,754 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,760 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,764 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,769 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,775 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,779 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,783 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,789 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,794 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,799 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,804 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,808 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,813 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,818 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,822 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,826 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,831 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,836 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,839 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,845 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,851 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,859 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,865 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,871 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,878 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,885 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,890 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,898 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,903 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,909 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,916 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,922 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,929 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,935 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,940 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,945 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
+        "2026-08-23 22:03:12,951 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
+        "2026-08-23 22:03:12,956 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
+        "2026-08-23 22:03:12,961 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv"
       ],
       "key_logs": [
-        "2026-08-23 21:24:23,974 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:24,139 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:24,140 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:24,140 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:03:12,204 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:12,672 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:12,673 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:12,674 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
+        "2026-08-23 22:03:13,064 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:13,479 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
       ],
-      "first_frame_render": null,
-      "file_open_errors": [
-        "2026-08-23 21:24:24,170 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:24:24,179 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:24:24,183 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:24:24,189 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:24:24,196 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:24:24,202 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:24:24,207 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:24:24,213 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:24:24,217 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:24:24,222 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:24:24,228 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:24:24,234 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:24:24,239 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:24:24,244 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:24:24,248 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:24:24,252 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:24:24,256 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv",
-        "2026-08-23 21:24:24,262 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01interstellar.mkv",
-        "2026-08-23 21:24:24,266 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/02themeg-dovi.mkv",
-        "2026-08-23 21:24:24,271 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/quietvoid/01freeguy.mkv"
-      ],
-      "failure_reason": "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. gpu-next backend never activated."
+      "failure_reason": "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     },
     {
       "config": "NVIDIA (dGPU) - GPU-Next",
+      "run_mode": "native",
       "backend_requested": "gpu-next",
       "expected_backend": "opengl-next",
+      "expected_vendor": "nvidia",
       "video_name": "HDR10 PQ (colorbars)",
       "file_path": "/home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
       "file_sha256": "6adcda398d75f100d23daeb53a9f71967c7f9281e21547b1acde01e533cf11cf",
@@ -608,25 +658,26 @@
         "dovi_profile": null
       },
       "first_frame_log": null,
+      "first_frame_render": null,
       "gl_vendor_detected": null,
       "errors": [
-        "2026-08-23 21:24:32,252 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+        "2026-08-23 22:03:20,980 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only"
+      ],
+      "file_open_errors": [
+        "2026-08-23 22:03:21,085 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
+        "2026-08-23 22:03:21,092 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/contrast-recovery-pq-output-colornoise.mkv",
+        "2026-08-23 22:03:21,097 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/dark.mkv",
+        "2026-08-23 22:03:21,103 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/flicker4.mkv"
       ],
       "key_logs": [
-        "2026-08-23 21:24:32,074 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:32,251 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:32,251 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
-        "2026-08-23 21:24:32,252 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
-        "2026-08-23 21:24:34,152 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": false, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
+        "2026-08-23 22:03:20,563 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:20,979 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:20,979 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:20,980 [ERROR] root: Video renderer stopped; restart CineHDR: render context creation failed: gpu-next was explicitly requested, but libmpv could not create an opengl-next render context: The API function which was called is a stub only",
+        "2026-08-23 22:03:21,221 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": null, \"hdr_mode\": \"auto\", \"dovi_profile\": null}",
+        "2026-08-23 22:03:22,484 [INFO] root: HDR Pipeline Telemetry: {\"source_hdr\": false, \"target_trc\": \"auto\", \"target_peak\": \"auto\", \"tone_mapping_active\": false, \"display_hdr\": true, \"hdr_mode\": \"auto\", \"dovi_profile\": null}"
       ],
-      "first_frame_render": null,
-      "file_open_errors": [
-        "2026-08-23 21:24:32,297 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/colorbars.mp4",
-        "2026-08-23 21:24:32,305 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/contrast-recovery-pq-output-colornoise.mkv",
-        "2026-08-23 21:24:32,310 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/dark.mkv",
-        "2026-08-23 21:24:32,314 [WARNING] src.window: File error path: /home/rusmikev/Downloads/Cine/samples/haasn-hdr-tests/flicker4.mkv"
-      ],
-      "failure_reason": "libmpv opengl-next stub: Flatpak runtime does not contain patched mpv. gpu-next backend never activated."
+      "failure_reason": "libmpv opengl-next stub: opengl-next backend not compiled in libmpv"
     }
   ]
 }

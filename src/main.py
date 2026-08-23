@@ -64,6 +64,8 @@ class CineApplication(Adw.Application):
     def __init__(self):
         self.gpu_validation_config = None
         application_flags = Gio.ApplicationFlags.HANDLES_OPEN
+        if os.environ.get("CINEHDR_NON_UNIQUE", "").strip():
+            application_flags |= Gio.ApplicationFlags.NON_UNIQUE
         if os.environ.get("CINEHDR_GPU_VALIDATION", "").strip():
             from .gpu_validation import validation_config_from_env
 
