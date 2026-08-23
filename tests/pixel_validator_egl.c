@@ -683,12 +683,12 @@ static void print_result(const char *mode, const char *api, const char *timestam
 
 int main(int argc, char **argv)
 {
-    if (argc != 7 || (strcmp(argv[2], "hdr") && strcmp(argv[2], "sdr")) ||
+    if (argc != 7 || (strcmp(argv[2], "hdr") && strcmp(argv[2], "hlg") && strcmp(argv[2], "sdr")) ||
         (strcmp(argv[3], "opengl") && strcmp(argv[3], "opengl-next")) ||
-        (strcmp(argv[5], "no") && strcmp(argv[5], "vaapi-copy")) ||
+        (strcmp(argv[5], "no") && strcmp(argv[5], "vaapi-copy") && strcmp(argv[5], "auto") && strcmp(argv[5], "vaapi")) ||
         (strcmp(argv[6], "paused") && strcmp(argv[6], "continuous-identical")))
     {
-        fprintf(stderr, "Usage: %s <fixture> <hdr|sdr> <opengl|opengl-next> <timestamp-seconds> <no|vaapi-copy> <paused|continuous-identical>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <fixture> <hdr|hlg|sdr> <opengl|opengl-next> <timestamp-seconds> <no|vaapi-copy|auto|vaapi> <paused|continuous-identical>\n", argv[0]);
         return 2;
     }
     EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);

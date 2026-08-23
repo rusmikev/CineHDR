@@ -613,7 +613,7 @@ class TestProbeContract(unittest.TestCase):
                 result, fixture, "opengl", expected_decode="no"
             )
         with self.assertRaises(run_pixel_pipeline.PipelineError):
-            run_pixel_pipeline.validate_decode_mode("auto")
+            run_pixel_pipeline.validate_decode_mode("unsupported")
 
     def test_capture_delivery_follows_profile_and_records_live_state(self) -> None:
         rgb_fixture = fixture_provenance("hdr")
@@ -715,7 +715,7 @@ class TestProbeContract(unittest.TestCase):
         )
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
-                run_pixel_pipeline.main(["--hwdec", "auto"])
+                run_pixel_pipeline.main(["--hwdec", "invalid-mode"])
 
         hdr_fixture = fixture_provenance("hdr")
         sdr_fixture = fixture_provenance("sdr")
@@ -846,7 +846,7 @@ class TestProbeContract(unittest.TestCase):
         self.assertNotIn('set_option(mpv, "correct-pts", "no")', body)
         self.assertNotIn('set_option(mpv, "container-fps-override", "24")', body)
         self.assertIn("argc != 7", body)
-        self.assertIn("<no|vaapi-copy>", body)
+        self.assertIn("<no|vaapi-copy|auto|vaapi>", body)
         self.assertIn("<paused|continuous-identical>", body)
         self.assertIn('set_option(mpv, "pause", pause_mode)', body)
         self.assertIn("delivery_mode", body)
@@ -862,7 +862,7 @@ class TestProbeContract(unittest.TestCase):
         self.assertIn("mpv-gpu-next-prefix", runner_body)
         self.assertIn("-Wl,-rpath", runner_body)
         self.assertIn("--hwdec", runner_body)
-        self.assertIn('DECODE_MODES = ("no", "vaapi-copy")', runner_body)
+        self.assertIn('DECODE_MODES = ("no", "vaapi-copy", "auto", "vaapi")', runner_body)
         self.assertIn('"decode_mode": hwdec', runner_body)
         self.assertIn("DELIVERY_BY_PROFILE", runner_body)
         self.assertIn('"delivery_mode": delivery_mode', runner_body)

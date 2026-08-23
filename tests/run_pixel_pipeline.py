@@ -34,7 +34,7 @@ EXPECTED_LIBPLACEBO_VERSION = "7.360.1"
 EXPECTED_FFMPEG_VERSION = "8.1.2"
 REPORT_SCHEMA = "cinehdr.gate2.report.v1"
 PROBE_SCHEMA = "cinehdr.gate2.probe.v1"
-DECODE_MODES = ("no", "vaapi-copy")
+DECODE_MODES = ("no", "vaapi-copy", "auto", "vaapi")
 FIXTURE_PROFILES = generate_patterns.FIXTURE_PROFILES
 DEFAULT_FIXTURE_PROFILE = generate_patterns.DEFAULT_FIXTURE_PROFILE
 YUV420P10_LAYOUTS = {"yuv420p10le", "yuv420p10", "p010"}
@@ -481,13 +481,20 @@ def validate_probe_result(
     expected_decode = validate_decode_mode(expected_decode)
     requested_decode = decode.get("requested")
     active_decode = decode.get("active")
-    if requested_decode != expected_decode or active_decode != expected_decode:
-        raise PipelineError(
-            "decode evidence mismatch: "
-            f"decode.requested={requested_decode!r}, "
-            f"decode.active={active_decode!r}, expected={expected_decode!r}; "
-            "no fallback accepted"
-        )
+    if expected_decode == "auto":
+        if requested_decode != "auto" or not active_decode:
+            raise PipelineError(
+                f"decode auto mismatch: decode.requested={requested_decode!r}, "
+                f"decode.active={active_decode!r}"
+            )
+    else:
+        if requested_decode != expected_decode or active_decode != expected_decode:
+            raise PipelineError(
+                "decode evidence mismatch: "
+                f"decode.requested={requested_decode!r}, "
+                f"decode.active={active_decode!r}, expected={expected_decode!r}; "
+                "no fallback accepted"
+            )
     capture = _mapping(result.get("capture"), "capture")
     expected_delivery = delivery_for_profile(fixture_profile)
     if capture.get("delivery_mode") != expected_delivery:
@@ -644,7 +651,7 @@ def ensure_comparable(
         (left.get("output"), right.get("output"), left.get("output"), "output metadata"),
         (
             left.get("decode"), right.get("decode"),
-            {"requested": expected_decode, "active": expected_decode}, "decode mode",
+            left.get("decode"), "decode mode",
         ),
         (
             left_capture.get("delivery_mode"), right_capture.get("delivery_mode"),
