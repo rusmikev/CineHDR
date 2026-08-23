@@ -158,6 +158,7 @@ class GLFramebufferPool:
         self.size = size
         self.slots = [FramebufferSlot(i) for i in range(size)]
         self.dropped_frames = 0
+        self.allocation_failures = 0
 
     def acquire(self, w: int, h: int, is_float: bool = True) -> FramebufferSlot | None:
         """Acquire an available buffer slot from the ring pool."""
@@ -173,6 +174,7 @@ class GLFramebufferPool:
                     slot.fence = None
                 slot.resource.ensure(w, h, is_float=is_float)
                 if not slot.resource._initialized or slot.resource.fbo_id.value == 0:
+                    self.allocation_failures += 1
                     slot.in_use = False
                     return None
                 return slot
@@ -197,5 +199,4 @@ class GLFramebufferPool:
                 slot.fence = None
             slot.resource.release()
             slot.in_use = False
-
 

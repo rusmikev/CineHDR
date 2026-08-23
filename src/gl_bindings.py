@@ -7,6 +7,7 @@ import ctypes
 import logging
 
 logger = logging.getLogger(__name__)
+_gl_error_count = 0
 
 # Load OpenGL libraries and helper
 libgl = None
@@ -69,6 +70,10 @@ GL_RGBA16F = 0x881A
 GL_RGBA8 = 0x8058
 GL_UNSIGNED_BYTE = 0x1401
 GL_FRAMEBUFFER_COMPLETE = 0x8CD5
+GL_VENDOR = 0x1F00
+GL_RENDERER = 0x1F01
+GL_VERSION = 0x1F02
+GL_SHADING_LANGUAGE_VERSION = 0x8B8C
 
 # OpenGL Bindings
 glGenFramebuffers = get_gl_func(
@@ -118,6 +123,9 @@ glCheckFramebufferStatus = get_gl_func(
 glGetError = get_gl_func(
     "glGetError", ctypes.c_uint, []
 )
+glGetString = get_gl_func(
+    "glGetString", ctypes.c_char_p, [ctypes.c_uint]
+)
 glFenceSync = get_gl_func(
     "glFenceSync", ctypes.c_void_p, [ctypes.c_uint, ctypes.c_uint]
 )
@@ -142,8 +150,31 @@ GL_WAIT_FAILED = 0x911D
 
 
 def check_gl_error(step=""):
+    global _gl_error_count
     if not glGetError:
         return
     err = glGetError()
     if err != GL_NO_ERROR:
+        _gl_error_count += 1
         logger.error(f"OpenGL error at {step}: 0x{err:04x}")
+
+
+def get_gl_error_count():
+    """Return errors observed by CineHDR's explicit OpenGL checks."""
+    return _gl_error_count
+
+
+def get_gl_string(name):
+    """Read one string from the current OpenGL context."""
+    if not glGetString:
+        return "unavailable"
+    try:
+        value = glGetString(name)
+    except Exception:
+        logger.exception("Could not read OpenGL string 0x%04x", name)
+        return "unavailable"
+    if not value:
+        return "unavailable"
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)

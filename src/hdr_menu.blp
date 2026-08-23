@@ -11,8 +11,8 @@ template $HdrMenuButton: MenuButton {
   direction: up;
   halign: center;
   icon-name: "cine-hdr-symbolic";
-  tooltip-text: _("HDR Settings");
-  visible: false;
+  tooltip-text: _("HDR & Video Output");
+  visible: true;
 
   popover: Popover {
     styles [
@@ -26,6 +26,14 @@ template $HdrMenuButton: MenuButton {
       Box {
         orientation: vertical;
         spacing: 8;
+
+        Label {
+          label: _("HDR & Video Output");
+          halign: start;
+          styles [
+            "title-4",
+          ]
+        }
 
         Box {
           Box {
@@ -127,8 +135,76 @@ template $HdrMenuButton: MenuButton {
           margin-bottom: 4;
         }
 
+        Label {
+          label: _("Video Renderer");
+          halign: start;
+          styles [
+            "heading",
+          ]
+        }
+
+        Label renderer_session_label {
+          label: _("Current session: Not initialized");
+          halign: start;
+          xalign: 0;
+          wrap: true;
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
+
+        Box {
+          spacing: 16;
+
+          Box {
+            orientation: vertical;
+            hexpand: true;
+
+            Label {
+              label: _("GPU Next (Experimental)");
+              halign: start;
+              xalign: 0;
+              wrap: true;
+            }
+
+            Label {
+              label: _("Applies to HDR and SDR video. Restart CineHDR to apply.");
+              halign: start;
+              xalign: 0;
+              wrap: true;
+              styles [
+                "dim-label",
+                "caption",
+              ]
+            }
+          }
+
+          Switch gpu_next_switch {
+            valign: center;
+            notify::active => $_on_gpu_next_changed();
+          }
+        }
+
+        Label renderer_restart_label {
+          label: _("Restart required to use this renderer selection.");
+          halign: start;
+          xalign: 0;
+          wrap: true;
+          visible: false;
+          styles [
+            "warning",
+            "caption",
+          ]
+        }
+
+        Separator {
+          margin-top: 4;
+          margin-bottom: 4;
+        }
+
         Button diag_btn {
-          label: _("HDR Diagnostics…");
+          label: _("Video Output Diagnostics…");
           halign: center;
           styles [
             "pill",

@@ -77,6 +77,15 @@ template $Preferences: Adw.Dialog {
 			title: _("Preferences");
 
 			Adw.PreferencesGroup {
+				title: _("Video");
+
+				Adw.SwitchRow renderer_row {
+					title: _("GPU Next (Experimental)");
+					subtitle: _("Applies to HDR and SDR video. Restart CineHDR to apply.");
+				}
+			}
+
+			Adw.PreferencesGroup {
 				Adw.SwitchRow open_new_row {
 					title: _("Open New Window for New Files");
 				}

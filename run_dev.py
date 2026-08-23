@@ -8,19 +8,30 @@ import gi
 root_dir = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, root_dir)
 
-# Ensure build directory and gresource are compiled
+# Keep the development build current before loading its resources. Meson is
+# incremental, so this is cheap when nothing changed and prevents a running
+# test build from silently using stale Blueprint-generated UI files.
 build_dir = os.path.join(root_dir, "build")
 gresource_path = os.path.join(build_dir, "src", "cinehdr.gresource")
 data_dir = os.path.join(root_dir, "data")
+schema_build_dir = os.path.join(build_dir, "data")
 
-if not os.path.exists(gresource_path):
-    print("Compiling resources with Meson...")
-    if not os.path.exists(build_dir):
-        subprocess.run(["meson", "setup", "build"], cwd=root_dir, check=True)
-    subprocess.run(["meson", "compile", "-C", "build"], cwd=root_dir, check=True)
+if not os.path.exists(os.path.join(build_dir, "build.ninja")):
+    subprocess.run(["meson", "setup", "build"], cwd=root_dir, check=True)
+subprocess.run(["meson", "compile", "-C", "build"], cwd=root_dir, check=True)
 
-# Point GSettings and XDG_DATA_DIRS to local data directory
-os.environ['GSETTINGS_SCHEMA_DIR'] = data_dir
+# Compile the development GSettings schema into the build tree.  Pointing
+# GSETTINGS_SCHEMA_DIR at the source XML is not enough: Gio only reads the
+# compiled gschemas.compiled file.
+os.makedirs(schema_build_dir, exist_ok=True)
+subprocess.run(
+    ["glib-compile-schemas", "--targetdir", schema_build_dir, data_dir],
+    cwd=root_dir,
+    check=True,
+)
+
+# Point GSettings and XDG_DATA_DIRS to local project data.
+os.environ['GSETTINGS_SCHEMA_DIR'] = schema_build_dir
 xdg_data = os.environ.get('XDG_DATA_DIRS', '/usr/local/share:/usr/share')
 os.environ['XDG_DATA_DIRS'] = f"{data_dir}:{xdg_data}"
 

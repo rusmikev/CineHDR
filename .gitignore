@@ -13,9 +13,11 @@ repo
 *.gresource
 *.compiled
 io.github.rusmikev.CineHDR.flatpak
+io.github.rusmikev.CineHDR-gpu-next.flatpak
 PROJECT_RULES.md
 AUDIT_TASKS.md
 ANTIGRAVITY_HANDOVER.md
 GEMINI.md
 *.patch
 *.html
+/validation-reports/

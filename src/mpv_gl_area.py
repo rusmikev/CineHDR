@@ -201,4 +201,5 @@ class VideoGLArea(MpvVideoWidget):
     """HDR-capable GTK4 video widget replacing upstream's VideoGLArea."""
 
     def __init__(self, mpv_instance: mpv.MPV, **kwargs):
-        super().__init__(mpv_instance)
+        render_backend_selection = kwargs.pop("render_backend_selection", None)
+        super().__init__(mpv_instance, render_backend_selection)
