@@ -25,8 +25,8 @@ import generate_patterns
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORK_ROOT = PROJECT_ROOT.parent
-DEFAULT_MPV_SOURCE = WORK_ROOT / "mpv-gpu-next"
-DEFAULT_MPV_PREFIX = WORK_ROOT / "mpv-gpu-next-prefix"
+DEFAULT_MPV_SOURCE = Path(os.environ.get("CINEHDR_MPV_SOURCE", WORK_ROOT / "mpv-gpu-next"))
+DEFAULT_MPV_PREFIX = Path(os.environ.get("CINEHDR_MPV_PREFIX", WORK_ROOT / "mpv-gpu-next-prefix"))
 DEFAULT_CACHE_DIR = Path(tempfile.gettempdir()) / "cinehdr-gate2-fixtures"
 EXPECTED_MPV_COMMIT = "97179bce7ed980c53647d6344916f632fe689e9e"
 EXPECTED_MPV_VERSION = "mpv v0.41.0-dev-g97179bce7"

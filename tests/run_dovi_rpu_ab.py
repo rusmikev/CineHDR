@@ -14,12 +14,8 @@ import tempfile
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORK_ROOT = PROJECT_ROOT.parent
-DEFAULT_MPV_SOURCE = WORK_ROOT / "mpv-gpu-next"
-DEFAULT_MPV_PREFIX = WORK_ROOT / "mpv-gpu-next-prefix"
-if not DEFAULT_MPV_PREFIX.is_dir() and Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix").is_dir():
-    DEFAULT_MPV_PREFIX = Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix")
-if not DEFAULT_MPV_SOURCE.is_dir() and Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next").is_dir():
-    DEFAULT_MPV_SOURCE = Path("/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next")
+DEFAULT_MPV_SOURCE = Path(os.environ.get("CINEHDR_MPV_SOURCE", WORK_ROOT / "mpv-gpu-next"))
+DEFAULT_MPV_PREFIX = Path(os.environ.get("CINEHDR_MPV_PREFIX", WORK_ROOT / "mpv-gpu-next-prefix"))
 
 
 def main() -> int:

@@ -3,9 +3,6 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 mpv_prefix="${CINEHDR_MPV_PREFIX:-${script_dir}/../mpv-gpu-next-prefix}"
-if [[ ! -d "${mpv_prefix}" && -d "/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix" ]]; then
-    mpv_prefix="/home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/mpv-gpu-next-prefix"
-fi
 gpu_next_lib_dir="${mpv_prefix}/lib64"
 gpu_next_lib="${gpu_next_lib_dir}/libmpv.so.2"
 
