@@ -6,7 +6,25 @@ import gi
 
 import logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+_log_file = os.environ.get("CINEHDR_LOG_FILE")
+if _log_file:
+    # Write to file when the test runner requests it.
+    # --filesystem=host gives Flatpak write access to /tmp.
+    # This bypasses Flatpak fd-forwarding so the runner always gets the logs.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(_log_file, mode="w", encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+        force=True,
+    )
+else:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 # Insert the script directory at the beginning of the python path
 root_dir = os.path.abspath(os.path.dirname(__file__))

@@ -50,7 +50,8 @@ For each environment, test the following:
 | **Intel Raptor Lake Iris Xe** | Mesa Wayland | `legacy` & `gpu-next` | ✅ **PASS** | [`test_report.json`](test_report.json) |
 | **NVIDIA RTX 3050 Laptop** | NV 595.80 Wayland | `legacy` & `gpu-next` | ✅ **PASS** | [`test_report.json`](test_report.json) |
 
-*W9 Smoke Gate (2026-08-23): 16/16 PASS — 6-second process stability, GL context creation, clean shutdown confirmed on Intel iGPU and NVIDIA dGPU for both `opengl` and `opengl-next` backends. Connected display: Dell Alienware AW3225QF (HDMI-1, 4K QD-OLED, HDR10/Dolby Vision, `st2084_pq`, BT.2020, 10000 nit peak — HDR ACTIVE).*
+*W9 Smoke Gate (2026-08-23): process stability validated (8s run, log-file capture via CINEHDR_LOG_FILE).
+Telemetry evidence pending re-run with updated runner — see GPU_NEXT_SMOKE_REPORT.md.*
 
 ## Gate 2 & Gate 3 — EGL Harness Status
 
