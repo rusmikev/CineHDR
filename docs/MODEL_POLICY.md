@@ -39,6 +39,7 @@ decision and continue only work that does not depend on it.
 | Architect | `gpt-5.6-sol`, `high` reasoning | Renderer boundaries, ownership and lifetime, concurrency and synchronization, color-pipeline invariants, libmpv/libplacebo API strategy, dependency strategy, ADR review, milestone failure analysis | Reformatting, repetitive edits, routine test runs, bulk documentation cleanup |
 | Engineer | `gpt-5.6-terra`, `medium` reasoning | Bounded feature implementation, normal debugging, test design, refactoring inside an accepted architecture, integration work, code review | Introducing a new backend contract or changing an HDR invariant without an ADR |
 | Operator | `gpt-5.6-luna`, `low` reasoning | Renames, manifest checksum updates, generated-file maintenance, translations, formatting, executing prescribed test matrices, small isolated test fixtures | Ambiguous debugging, FFI, GPU synchronization, color science, dependency upgrades with behavioral impact |
+| External test Operator | User-designated target-hardware agent (currently Antigravity / Gemini Flash 7 on Intel/NVIDIA) | Execute one immutable validation hand-off, capture raw artifacts and environment facts | Edit code, improvise retries, change dependencies or criteria, interpret color correctness, or accept a row/gate |
 
 `gpt-5.6-sol` with `max` reasoning is exceptional. Use it only when a hard
 problem has resisted a normal `high` pass, when contradictory evidence must be
@@ -91,6 +92,12 @@ Escalate from Terra to Sol when any of these becomes true:
 Escalation is not failure. It is the mechanism that keeps cheaper attempts from
 turning into expensive rework.
 
+Two unsuccessful real-hardware executions in one attempt family exhaust its
+default execution budget even if their surface-level error messages differ.
+Put the evidence row on `HOLD`; do not send a third command until the conditions
+in ADR-0006 are met. The failure signature is diagnostic information, not a way
+to reset the budget.
+
 ## Task hand-off contract
 
 A task sent to Terra or Luna must be bounded and include:
@@ -104,6 +111,48 @@ A task sent to Terra or Luna must be bounded and include:
 Give lower-tier models the smallest sufficient context packet. Do not spend
 tokens sending the full repository history when a decision summary, relevant
 files, and tests are sufficient.
+
+## External hardware test hand-off
+
+External test agents are execution capacity, not delegated engineering. The
+primary session owns the hypothesis, command, stop condition, and evidence
+interpretation. The external Operator receives a copy/paste-ready brief with:
+
+- exact commit, clean-checkout requirement, runtime/dependency identity, target
+  GPU selector, fixture identity, and prerequisites;
+- one command, one allowed execution, an expected duration, a hard timeout, and
+  a stop-on-failure rule;
+- required stdout/stderr, exit code, JSON/log paths, hashes, and environment
+  facts;
+- explicit prohibitions on edits, argument changes, automatic retries,
+  dependency installation, threshold changes, and gate sign-off.
+
+The Operator returns artifacts even on failure and does not repair the test in
+place. An unexpected prerequisite failure consumes no hardware attempt only
+when the renderer/application never starts and the report records that
+preflight boundary. Otherwise it is retained as an attempt. The Architect, not
+the executor, classifies the result under ADR-0006.
+
+## Validation execution controls
+
+- Split aggregate gates into independently decidable evidence rows. Preserve
+  accepted rows when another row fails or is unavailable.
+- Gate 2W is the external Wayland/compositor submission track. It cannot be
+  inferred from FBO/GDK evidence and cannot force retries of those rows.
+- Use at most an initial hardware run and one evidence-driven corrective run in
+  an attempt family. A third requires Architect review, a new ADR row revision,
+  the strongest feasible local regression check, a falsifiable brief, and
+  explicit user approval.
+- A rerun is justified only by one named material change and one expected
+  discriminating observation. Changed logging, timeout, report wording, or a
+  new error string alone does not start a new family.
+- Use unit/static, compile, and software/offscreen evidence before target
+  hardware. Use a soak only when duration is the unique variable; never use it
+  to debug startup or integration.
+- A PASS claim must be backed by an oracle that measures that claim. File shape,
+  context creation, a mock, or a microbenchmark must be labelled narrowly.
+- Only sanitized machine-readable reports with exact provenance can close a
+  hardware row. Prose may summarize but cannot replace them.
 
 ## Review and verification
 
@@ -128,6 +177,8 @@ files, and tests are sufficient.
   every intermediate edit.
 - Stop repeated retries after the escalation threshold instead of increasing
   prompt length indefinitely.
+- Move to an independent evidence row when a hardware row reaches `HOLD` or
+  `UNAVAILABLE`; do not spend the remaining session rephrasing the same test.
 - Parallelize only independent workstreams with non-overlapping ownership.
 - Preserve concise ADRs and test evidence so later sessions do not have to
   rediscover settled reasoning.

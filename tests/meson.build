@@ -55,3 +55,18 @@ test('pixel_pipeline_tests', python3,
     'PYTHONPATH=' + meson.project_source_root()
   ]
 )
+
+test('validation_governance_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_validation_governance.py'
+  ]
+)
+
+test('vendor_smoke_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_vendor_smoke.py'
+  ],
+  env: [
+    'PYTHONPATH=' + meson.project_source_root()
+  ]
+)

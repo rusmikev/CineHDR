@@ -245,6 +245,12 @@ the session direct passthrough.
 
 ## Phases and acceptance gates
 
+Execution and evidence roll-up for these gates follow
+[ADR-0006](0006-bounded-validation-governance.md). Each bullet belongs to an
+independently tracked evidence row; an unavailable external row does not erase
+accepted rows or authorize repeated hardware attempts. A prose summary cannot
+close an aggregate gate without retained row reports.
+
 ### Gate 0: stable baseline
 
 - The stable backend remains launchable.
@@ -301,11 +307,18 @@ the session direct passthrough.
 
 ### Gate 2W: Wayland compositor surface submission (Separate track)
 
-- End-to-end Wayland presentation depends on GTK's protocol implementation (`wp_color_management_v1`).
-- On GTK 4.22.4, GTK binds the protocol but does not invoke `get_surface` or `set_image_description` for the application window.
-- Gate 2 is scoped to the FBO/GDK texture publication boundary under CineHDR's control.
-- Full compositor passthrough is tracked separately under **Gate 2W**, contingent on upstream GTK color management fixes (tracked in GNOME/gtk issue).
-- Until Gate 2W is closed, user-facing documentation describes output as "Rec.2100 PQ target prepared & tagged; compositor passthrough pending upstream GTK support".
+- End-to-end Wayland presentation depends on GTK's protocol implementation
+  (`wp_color_management_v1`).
+- On GTK 4.22.4, GTK binds the protocol but does not invoke `get_surface` or
+  `set_image_description` for the application window.
+- Gate 2 is scoped to the FBO/GDK texture publication boundary under CineHDR's
+  control.
+- Full compositor passthrough is tracked separately under **Gate 2W**,
+  contingent on a changed GTK/compositor capability. The retained KWin result
+  is `UNAVAILABLE`; it must not trigger another renderer run on the same stack.
+- Until Gate 2W is closed, user-facing documentation describes output as
+  "Rec.2100 PQ target prepared and tagged; compositor passthrough pending
+  upstream GTK support".
 
 ### Gate 3: Dolby Vision value
 

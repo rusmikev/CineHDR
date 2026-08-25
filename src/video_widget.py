@@ -66,6 +66,7 @@ from .render_backend import (
     RenderSelectionSource,
     create_render_context,
     install_python_mpv_depth_compat,
+    media_frame_evidence,
     render_target_spec,
     render_runtime_diagnostics,
     should_render_frame,
@@ -130,6 +131,7 @@ class MpvVideoWidget(Gtk.Widget):
         self._render_failed = False
         self._render_terminal_failure = False
         self._first_frame_logged = False
+        self._first_media_frame_logged = False
         self._cached_hdr_support = False
         self._cached_hdr_support_valid = False
         self._monitor_signal_id: Optional[int] = None
@@ -344,6 +346,7 @@ class MpvVideoWidget(Gtk.Widget):
         self._shutting_down = False
         self._render_failed = False
         self._first_frame_logged = False
+        self._first_media_frame_logged = False
         self._update_cached_hdr_support()
 
         display = self.get_display()
@@ -555,6 +558,19 @@ class MpvVideoWidget(Gtk.Widget):
                     target_spec.depth,
                 )
                 self._first_frame_logged = True
+            if not self._first_media_frame_logged:
+                media_frame = media_frame_evidence(self.mpv)
+                if media_frame is not None:
+                    logging.info(
+                        "Rendered first media frame backend=%s source=%dx%d "
+                        "time_pos=%.6f path_token=%s",
+                        self.render_backend_active,
+                        media_frame.source_width,
+                        media_frame.source_height,
+                        media_frame.time_pos,
+                        media_frame.path_token,
+                    )
+                    self._first_media_frame_logged = True
         except Exception as e:
             render_error = e
         finally:

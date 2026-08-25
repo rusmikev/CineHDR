@@ -5,6 +5,8 @@
 - **Scope:** Local correctness comparison of legacy and GPU Next
 - **Builds on:** [ADR-0001](0001-gpu-next-render-api.md) and
   [ADR-0003](0003-pinned-gpu-next-flatpak-stack.md)
+- **Execution governance:**
+  [ADR-0006](0006-bounded-validation-governance.md)
 
 ## Context
 
@@ -440,15 +442,16 @@ that GTK 4.22.4 did not emit those property notifications for this allocation
 path. It did not challenge the render-redraw decision or provide renderer/
 resource evidence; it rejected the selected GTK integration hook.
 
-The accepted v3 correction overrides Gtk.Widget's `do_size_allocate` vfunc,
-chains the base allocation, and compares logical width, height and scale factor.
+The v3 correction overrides Gtk.Widget's `do_size_allocate` vfunc, explicitly
+allocates its sole `Gtk.GLArea` child, and compares logical width, height and
+scale factor.
 It coalesces a forced redraw only after a texture exists, uses the existing
 context and FBO publication path, and does not synthesize media or renderer
 updates. The pure render-decision invariant is: render when libmpv reports an
 update **or** when GTK changed the target configuration. Shutdown clears both
 pending states. This also fixes normal paused-video resizing instead of
 manufacturing validator-only evidence. Unit tests execute the decision helper
-and the allocation callback, including its parent chain and redraw request.
+and the allocation callback, including child allocation and redraw request.
 The settling contract revision becomes `bounded-resource-settling-v3`;
 rollback removes the resize redraw while retaining both earlier FAIL reports.
 One bounded repeat is permitted because the measured GTK callback changed; no

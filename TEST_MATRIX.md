@@ -46,11 +46,23 @@ For each environment, test the following:
 
 | GPU Hardware | Driver / Session | Render Backends Tested | Smoke Status | Evidence |
 | :--- | :--- | :--- | :---: | :--- |
-| **Intel Raptor Lake Iris Xe** | Mesa Wayland | `legacy` & `gpu-next` | ✅ **PASS** | [`test_report.json`](file:///home/rusmikev/Downloads/Cine/test_report.json) |
-| **Intel Raptor Lake Iris Xe** | Mesa Wayland (Flatpak) | `legacy` (`opengl`) | ✅ **PASS** | [`test_report.json`](test_report.json) |
-| **NVIDIA RTX 3050 Laptop** | NV 610.57.04 / 595.80 (Native PRIME) | `legacy` (`opengl`) | ✅ **PASS** | [`test_report.json`](test_report.json) |
+| **Intel Raptor Lake Iris Xe** | Mesa Wayland (Flatpak) | `legacy` (`opengl`) | ⚠️ **PROVISIONAL** | [`test_report.json`](test_report.json) |
+| **NVIDIA RTX 3050 Laptop** | NV 610.57.04 / 595.80 (Native PRIME) | `legacy` (`opengl`) | ⚠️ **PROVISIONAL** | [`test_report.json`](test_report.json) |
+| **Intel + NVIDIA** | Flatpak / Native PRIME | `gpu-next` (`opengl-next`) | ℹ️ **STUB_UNSUPPORTED** | [`test_report.json`](test_report.json) |
 
-*W9 Smoke Gate (2026-08-23): 8/8 Legacy PASS with hardware evidence — Intel Iris Xe iGPU (Flatpak) and native NVIDIA GeForce RTX 3050 dGPU (`OpenGL=NVIDIA Corporation / NVIDIA GeForce RTX 3050 6GB Laptop GPU/PCIe/SSE2`). 8/8 GPU-Next configs report STUB_UNSUPPORTED (unpatched libmpv). Display: Dell Alienware AW3225QF (HDMI-1, 4K QD-OLED, HDR ACTIVE).*
+*Evidence correction (2026-08-25): the JSON proves legacy process startup and
+the expected GL vendor, but its historical PASS predicate did not require a
+rendered first frame, expected HDR telemetry, or absence of file-open warnings.
+Those eight labels are provisional until the runner is corrected. All eight
+GPU Next configurations are `STUB_UNSUPPORTED` on the unpatched libmpv and are
+not GPU Next coverage.*
+
+The corrected `cinehdr-vendor-smoke-v2` oracle is implemented and locally
+unit-tested, but has not been executed on the laptop. It requires the exact
+pinned Flatpak, a loaded timed media-frame marker, strict API/GPU/runtime/HDR
+evidence, clean file loading, and pinned fixture hashes. Until new reports are
+adjudicated, the historical rows above remain `PROVISIONAL`/`STUB_UNSUPPORTED`.
+See [`docs/GPU_VENDOR_SMOKE_VALIDATION.md`](docs/GPU_VENDOR_SMOKE_VALIDATION.md).
 
 ## Gate 2 & Gate 3 — EGL Harness Status
 

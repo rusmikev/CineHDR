@@ -23,6 +23,7 @@ from src.render_backend import (
     dolby_vision_render_capability,
     install_python_mpv_depth_compat,
     mapped_library_path,
+    media_frame_evidence,
     render_target_spec,
     render_runtime_diagnostics,
     renderer_preference_requires_restart,
@@ -34,6 +35,42 @@ from src.render_backend import (
 
 
 class TestRenderBackendSelector(unittest.TestCase):
+    def test_media_frame_evidence_requires_loaded_timed_video(self):
+        class Player:
+            def __init__(self, properties):
+                self.properties = properties
+
+            def _get_property(self, name):
+                return self.properties.get(name)
+
+        self.assertIsNone(media_frame_evidence(Player({})))
+        self.assertIsNone(
+            media_frame_evidence(
+                Player(
+                    {
+                        "path": "/media/HDR.mkv",
+                        "video-params": {"w": 3840, "h": 2160},
+                        "time-pos": None,
+                    }
+                )
+            )
+        )
+
+        evidence = media_frame_evidence(
+            Player(
+                {
+                    "path": "/media/../media/HDR.mkv",
+                    "video-params": {"w": 3840, "h": 2160},
+                    "time-pos": 0.125,
+                }
+            )
+        )
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence.source_width, 3840)
+        self.assertEqual(evidence.source_height, 2160)
+        self.assertEqual(evidence.time_pos, 0.125)
+        self.assertEqual(len(evidence.path_token), 64)
+
     def test_default_is_legacy(self):
         self.assertIs(requested_backend({}), RenderBackend.LEGACY)
 
@@ -455,6 +492,18 @@ class TestRenderTargetSpec(unittest.TestCase):
         self.assertIn("self._schedule_render(force_redraw=True)", source)
         self.assertIn("update_flags = self.mpv_ctx.update()", source)
         self.assertIn("force_redraw=force_redraw", source)
+
+    def test_video_widget_logs_path_safe_loaded_media_frame_evidence(self):
+        source_path = os.path.join(
+            os.path.dirname(__file__), "..", "src", "video_widget.py"
+        )
+        with open(source_path, encoding="utf-8") as source_file:
+            source = source_file.read()
+
+        self.assertIn("media_frame_evidence(self.mpv)", source)
+        self.assertIn("Rendered first media frame", source)
+        self.assertIn("path_token=%s", source)
+        self.assertNotIn("media_frame.path,", source)
 
     def test_size_allocate_executes_parent_chain_and_forced_redraw(self):
         from src.video_widget import MpvVideoWidget

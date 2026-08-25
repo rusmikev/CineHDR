@@ -20,6 +20,7 @@ import ctypes
 import ctypes.util
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
 import os
 from typing import TypeVar
 
@@ -69,6 +70,16 @@ class RenderTargetSpec:
 
     internal_format: int
     depth: int
+
+
+@dataclass(frozen=True)
+class MediaFrameEvidence:
+    """Path-safe evidence that a loaded video frame reached the render call."""
+
+    path_token: str
+    source_width: int
+    source_height: int
+    time_pos: float
 
 
 @dataclass(frozen=True)
@@ -238,6 +249,51 @@ def should_render_frame(update_flags: object, *, force_redraw: bool) -> bool:
     reconfigured for the new target.
     """
     return bool(update_flags) or force_redraw
+
+
+def media_frame_evidence(player: object) -> MediaFrameEvidence | None:
+    """Return evidence only while mpv exposes a loaded, timed video stream.
+
+    A successful Render API call can draw an initial empty frame before media
+    decoding starts.  The smoke validator therefore needs a second marker that
+    is emitted only when the active mpv path, video dimensions, and time
+    position are all available.  The path itself is never logged; its canonical
+    string is represented by a SHA-256 token for comparison by the launcher.
+    """
+
+    getter = getattr(player, "_get_property", None)
+    if not callable(getter):
+        getter = getattr(player, "get_property", None)
+    if not callable(getter):
+        return None
+
+    try:
+        path = getter("path")
+        video_params = getter("video-params")
+        time_pos = getter("time-pos")
+    except Exception:
+        return None
+
+    if not isinstance(path, str) or not path.strip():
+        return None
+    if not isinstance(video_params, Mapping):
+        return None
+    try:
+        width = int(video_params.get("w", video_params.get("dw", 0)))
+        height = int(video_params.get("h", video_params.get("dh", 0)))
+        position = float(time_pos)
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0 or position < 0:
+        return None
+
+    canonical_path = os.path.realpath(os.path.abspath(path))
+    return MediaFrameEvidence(
+        path_token=hashlib.sha256(os.fsencode(canonical_path)).hexdigest(),
+        source_width=width,
+        source_height=height,
+        time_pos=position,
+    )
 
 
 def target_configuration_requires_redraw(

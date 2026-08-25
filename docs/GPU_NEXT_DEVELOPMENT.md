@@ -705,12 +705,12 @@ It adds no resource or renderer-failure evidence, and GPU Next again correctly
 did not start.
 
 The corrected implementation now uses Gtk.Widget's actual `do_size_allocate`
-vfunc, chains the base allocation, tracks logical width, height and scale
-factor, and coalesces an explicit Render API redraw only after a texture
-exists. The decision helper and the allocation callback are executed in unit
-tests, including the parent chain and forced-redraw request. A paused resize
-can therefore redraw the previous frame into a newly sized FBO without changing
-media, context, or renderer. The settling evidence revision is
+vfunc, explicitly allocates its sole `Gtk.GLArea` child, tracks logical width,
+height and scale factor, and coalesces an explicit Render API redraw only after
+a texture exists. The decision helper and the allocation callback are executed
+in unit tests, including child allocation and the forced-redraw request. A
+paused resize can therefore redraw the previous frame into a newly sized FBO
+without changing media, context, or renderer. The settling evidence revision is
 `bounded-resource-settling-v3`; neither failed earlier report can be mistaken
 for evidence from the corrected path. One final bounded repeat is technically
 justified by this different GTK integration point. No soak repeat is justified.
@@ -846,37 +846,60 @@ FFmpeg `8.1.2` stack passed at 60, 300, and 900 seconds. The enabled render
 reported `dolbyvision`, the negative control reported `bt.2020-ncl`, and more
 than 99.998% of pixels changed at every timestamp.
 
-## Intel & NVIDIA GPU Smoke Test Run (2026-08-23)
+## Intel/NVIDIA smoke and Gate 2/3 status correction (2026-08-25)
 
-A 5-second process-stability smoke test matrix (`tests/test_nvidia.py`) was executed on a hybrid graphics laptop (Intel Iris Xe iGPU + NVIDIA GeForce RTX 3050 Laptop dGPU under Wayland). 
+The public 2026-08-23 supplemental summaries overclaimed their retained
+evidence and are withdrawn as gate sign-off. The linked smoke JSON contains
+eight legacy process/vendor observations and eight `STUB_UNSUPPORTED` GPU Next
+runs. Its PASS predicate did not require `first_frame_render`, expected HDR
+telemetry, or absence of file-open warnings, so those eight labels are
+provisional smoke observations rather than proof that every fixture rendered.
 
-- **Scope**: 16 combinations (4 HDR/HLG/DoVi fixtures × 2 GPUs × 2 render backends: `legacy` and `gpu-next`).
-- **Result**: All 16 process runs started, rendered frames, and terminated without crashes or GL errors (Smoke Gate W9: PASSED).
-- **Telemetry Evidence**: Generated evidence is stored in `test_report.json` and summarized in `validation-reports/GPU_NEXT_SMOKE_REPORT.md`.
-- **Gate Limitations**: The host panel (`eDP-1`, 80 nits) ran in SDR mode (`get_monitor_hdr_state() = False`), executing SDR tone-mapping (`GL_RGBA8`).
+The AMD measurements quoted by the removed summary have no committed
+machine-readable Gate 2/3 reports and do not satisfy the complete ADR-0001
+criteria. In particular, the short offscreen performance microbenchmark is not
+the required ten-minute presented-frame comparison, file existence is not a
+screenshot pixel oracle, the Profile 5 policy check is a mock rather than real
+media evidence, and no accepted post-fix resource-settling report exists.
 
-## Gate 2 & Gate 3 Hardware Validation Sign-Off (AMD Radeon RX 9060 XT)
+Current aggregate status:
 
-The Gate 2 and Gate 3 validation matrix was executed and measured on the physical GPU test machine:
-- **CPU**: AMD Ryzen 7 7700 (8-Core, 16 Threads)
-- **GPU**: AMD Radeon RX 9060 XT (radeonsi, ACO, Mesa 26.1.7, Linux 7.1.8-200.fc44)
-- **Stack**: pinned mpv `v0.41.0-dev-g97179bce7` / libplacebo `v7.360.1` / FFmpeg `8.1.2`
-- **Compositor**: Wayland Session (GNOME / Mutter 47)
+- Gate 1 remains conditionally accepted with its recorded WARN; it is not color
+  or Dolby Vision certification.
+- Gate 2 is `OPEN`. Accepted FBO, VAAPI-copy, and GDK-publication rows remain
+  useful independent evidence. Thresholds, dithering/workflow oracles,
+  comparable performance, and resource settling require correction or evidence.
+- Gate 2W is `BLOCKED_EXTERNAL`/`UNAVAILABLE` on the recorded GTK 4.22.4 and
+  KWin 6.7.4 stack. It is not a renderer failure and must not be retried without
+  changed toolkit/compositor capability.
+- Gate 3 is `OPEN`; Profile 5 remains disabled and Dolby Vision wording stays
+  conservative.
 
-### Gate 2 Measurement Summary
+All future hardware work follows
+`docs/adr/0006-bounded-validation-governance.md`. The Intel/NVIDIA laptop agent
+may execute an immutable test hand-off as an Operator, but the primary
+Architect retains evidence interpretation and gate acceptance.
 
-| Workstream | Check | Measured GPU Value | ADR Criteria | Verdict |
-|---|---|---|---|:---:|
-| **W1 (Thresholds)** | Black level (HDR10/HLG)<br>Diffuse reference white (203 nits)<br>Neutral axis chromaticity | $7.15 \times 10^{-7}$<br>$0.580078$ ($\Delta = 0.00061$)<br>$\|R-G\| < 10^{-4}$ | $\le 0.002$<br>$\|L - 0.5807\| \le 0.015$<br>$\Delta < 0.001$ | **PASS** |
-| **W2 (Decode)** | `sw`, `auto` (`vaapi-copy`), `vaapi` | $p010$ format active, 0 drops | Active hwdec matches requested | **PASS** |
-| **W3 (Dither)** | Monotonicity (`dither=no`)<br>FBO quantization ($\Delta_{\min}$) | Strictly monotonic (`True`)<br>$\Delta_{\min} = 0.000488$ | Monotonic<br>$\Delta_{\min} < \frac{1}{255} \approx 0.00392$ | **PASS** |
-| **W4 (Screenshots)** | SDR, HDR, HLG, Legacy A/B, Subtitles, HWDEC | Valid PNG $320\times 180$, tone-mapped to SDR | Generated by mpv, non-empty | **PASS** |
-| **W5 (Subtitles)** | ASS Subtitles in PQ FBO target | $(0.5801, 0.5801, 0.5801)$ | Diffuse white range $[0.50, 0.65]$ | **PASS** |
-| **W6 (Performance)** | Frame latency (p50 / p95)<br>Dropped frames | GPU Next: p95 $0.107\text{ ms}$ (vs Legacy $0.181\text{ ms}$)<br>0 drops | $p95 \le \text{Legacy} \times 1.10$<br>$\le \text{Legacy drops} + 3$ | **PASS** |
-| **W7 (Settling)** | 3-cycle dynamic resize & HDR $\leftrightarrow$ SDR soak | DRM VRAM & RSS stabilized | Zero continuing leak | **PASS** |
+### Replacement Intel/NVIDIA smoke oracle
 
-### Gate 3 Measurement Summary
+The local `cinehdr-vendor-smoke-v2` implementation replaces the historical
+process-start predicate without reusing its results. A new path-safe
+`Rendered first media frame` marker is emitted only when mpv exposes the loaded
+path, positive video dimensions, and a non-negative media time during a Render
+API call. The runner additionally requires the exact requested/active API with
+no fallback, the pinned mpv/libplacebo/FFmpeg identities, the selected GL GPU,
+pinned fixture content, matching HDR/Profile 8 telemetry, the full observation
+window, and no file-open/application error.
 
-- **Target Peak Sweep**: Verified across $[100, 203, 400, 600, 1000]$ nits with monotonic scaling ($0.4050 < 0.4583 < 0.5098 < 0.5410 < 0.5801$) and zero neutral-axis chromatic distortion.
-- **DoVi Profile Policy**: Profile 8.1 base layer allowed; Profile 5 blocked on Legacy (protecting from false green/magenta SDR tint) and permitted when `supports_dovi_reshaping` capability is active on GPU Next.
-- **RPU Negative Control**: Verified `dolbyvision` $\leftrightarrow$ `bt.2020-ncl` matrix transition with $>99.9\%$ pixel modulation under active dynamic metadata.
+Preflight now fails instead of silently skipping missing media. Reports omit
+absolute media paths, retain raw-log hashes, and state their non-claims. One
+command is restricted to a single GPU family, no more than two renderer
+processes and no more than two fixture rows. Intel and NVIDIA both use the same
+installed custom Flatpak; NVIDIA adds explicit PRIME selection rather than a
+different native dependency stack.
+
+Unit and source-contract tests pass locally. Real Intel/NVIDIA execution is
+`NOT_RUN`: the current changes must first receive an exact source commit and a
+matching rebuilt Flatpak commit. The later external hand-off will start with
+the single HDR10 fixture, not recreate the old 16-process matrix. See
+`docs/GPU_VENDOR_SMOKE_VALIDATION.md`.
