@@ -86,7 +86,10 @@ arguments, diagnose, or close the row.
 
 ## Current hold point
 
-Do not execute either command from this document yet. The v2 source changes are
-currently local, so no clean source commit or matching rebuilt Flatpak commit
-exists for an immutable hand-off. Creating those exact identities is a
-packaging/preflight step, not a hardware attempt.
+The v2 implementation has passed local source tests and can be packaged as a
+clean source commit plus a matching custom Flatpak. Real Intel/NVIDIA hardware
+status remains `NOT_RUN`. A hardware command is authorized only through a
+separate immutable hand-off in which the Architect has filled the exact source
+commit, installed Flatpak commit, fixture path and hash, attempt identity, and
+timeout. Installing or updating that candidate remains a separate
+user-authorized setup action and is not delegated implicitly to the Operator.

@@ -175,13 +175,14 @@ class VendorSmokeOracleTests(unittest.TestCase):
         self.assertIn("validate_fixture_hashes(fixture_paths)", source)
         self.assertIn("OBSERVATIONS_FAILED", source)
 
-    def test_handoff_document_keeps_hardware_not_run_until_rebuilt(self):
+    def test_handoff_document_keeps_hardware_not_run_until_authorized(self):
         document = (ROOT / "docs" / "GPU_VENDOR_SMOKE_VALIDATION.md").read_text(
             encoding="utf-8"
         )
         self.assertIn("real hardware `NOT_RUN`", document)
         self.assertIn("Both Intel and NVIDIA use the same installed pinned Flatpak", document)
-        self.assertIn("Do not execute either command", document)
+        self.assertIn("separate immutable hand-off", document)
+        self.assertIn("user-authorized setup action", document)
         self.assertIn("select only `hdr10`", document)
 
 
