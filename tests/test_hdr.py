@@ -471,21 +471,34 @@ class TestApplyHDRSettings(unittest.TestCase):
 
         # Scenario 4: Display is Wayland
         mock_display.__class__.__name__ = "GdkWaylandDisplay"
+        from src.gtk_cm_policy import CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, PRIM_BT2020, TF_SRGB, TF_PQ
+        valid_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC]),
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
         invalidate_hdr_support_cache()
-        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertTrue(check_hdr_support())
 
         # Scenario 5: Display is Wayland but not composited
         mock_display.is_composited.return_value = False
         invalidate_hdr_support_cache()
-        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
         mock_display.is_composited.return_value = True
 
         # Scenario 6: Display is Wayland but no RGBA
         mock_display.is_rgba.return_value = False
         invalidate_hdr_support_cache()
-        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
         mock_display.is_rgba.return_value = True
 
@@ -493,7 +506,9 @@ class TestApplyHDRSettings(unittest.TestCase):
         mock_dmabuf = MagicMock()
         mock_dmabuf.get_n_formats.return_value = 0
         mock_display.get_dmabuf_formats.return_value = mock_dmabuf
-        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
         mock_dmabuf.get_n_formats.return_value = 10
 

@@ -143,16 +143,18 @@ def _check_hdr_support_uncached() -> bool:
         if wayland_cm_probe.probe_color_management() is False:
             return False
 
-        # If compositor capabilities have been probed, apply GTK 4's strict
-        # color management policy. GTK requires GDK_DEBUG=color-mgmt, perceptual
-        # intent, parametric feature, and sRGB transfer function (which KWin omits).
+        # Apply GTK 4's strict color management policy:
+        # 1. GDK_DEBUG=color-mgmt is required for GTK to use wp_color_manager_v1.
+        # 2. Compositor must advertise required caps (perceptual, parametric, sRGB TF).
+        from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
+        if not gtk_cm_opted_in():
+            return False
+
         from . import wayland_output_hdr
-        from .gtk_cm_policy import gtk_color_managed, gtk_can_tag_hdr, TF_PQ
-        caps = wayland_output_hdr.get_cm_caps()
-        if caps is not None:
-            ok, _reason = gtk_color_managed(caps)
-            if not ok or not gtk_can_tag_hdr(caps, TF_PQ):
-                return False
+        caps = wayland_output_hdr.get_cm_caps(allow_probe=True)
+        ok, _reason = gtk_color_managed(caps)
+        if not ok or not gtk_can_tag_hdr(caps, TF_PQ):
+            return False
 
         return True
     except Exception:
@@ -335,13 +337,14 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
             "Wayland compositor does not advertise a color management protocol "
             "(wp_color_manager_v1) — HDR pass-through is impossible, using mpv tone mapping"
         )
+    from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
+    if not gtk_cm_opted_in():
+        return "GTK: цветоуправление выключено без GDK_DEBUG=color-mgmt"
     from . import wayland_output_hdr
-    from .gtk_cm_policy import gtk_color_managed, gtk_can_tag_hdr, TF_PQ
-    caps = wayland_output_hdr.get_cm_caps()
-    if caps is not None:
-        ok, reason = gtk_color_managed(caps)
-        if not ok:
-            return reason
-        if not gtk_can_tag_hdr(caps, TF_PQ):
-            return "Wayland compositor missing BT.2020 or PQ transfer function"
+    caps = wayland_output_hdr.get_cm_caps(allow_probe=True)
+    ok, reason = gtk_color_managed(caps)
+    if not ok:
+        return reason
+    if not gtk_can_tag_hdr(caps, TF_PQ):
+        return "Wayland compositor missing BT.2020 or PQ transfer function"
     return "Wayland compositor does not support HDR/color management"

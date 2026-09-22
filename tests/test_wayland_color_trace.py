@@ -319,6 +319,47 @@ class TestGtkCmPolicy(unittest.TestCase):
         )
         self.assertFalse(gtk_can_tag_hdr(sdr_caps, TF_PQ))
 
+    def test_regression_kwin_caps_after_invalidate_blocks_hdr_with_or_without_opt_in(self):
+        """Simulate real KWin 6.7.4 behavior on widget realize.
+        On realize, MpvVideoWidget calls invalidate_hdr_support_cache(), which drops caps.
+        Subsequent check_hdr_support() must query caps and return False both with and without
+        GDK_DEBUG=color-mgmt, preventing washed-out PQ fallback."""
+        import os
+        from unittest.mock import MagicMock, patch
+        from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
+        from src import wayland_output_hdr
+        from src.gtk_cm_policy import (
+            CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, FEAT_SET_PRIMARIES,
+            PRIM_SRGB, PRIM_BT2020, TF_PQ, TF_COMPOUND_POWER_2_4
+        )
+        kwin_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_PQ, TF_COMPOUND_POWER_2_4]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        mock_display = MagicMock()
+        mock_display.__class__.__name__ = "GdkWaylandDisplay"
+        mock_dmabuf = MagicMock()
+        mock_dmabuf.get_n_formats.return_value = 10
+        mock_display.get_dmabuf_formats.return_value = mock_dmabuf
+
+        # Case 1: Without GDK_DEBUG=color-mgmt
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
+             patch.object(wayland_output_hdr, "get_cm_caps", side_effect=lambda allow_probe=False: kwin_caps):
+            wayland_output_hdr._cache_cm_caps = kwin_caps
+            invalidate_hdr_support_cache()
+            self.assertFalse(check_hdr_support())
+
+        # Case 2: With GDK_DEBUG=color-mgmt (still blocked because KWin lacks TF_SRGB)
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
+             patch.object(wayland_output_hdr, "get_cm_caps", side_effect=lambda allow_probe=False: kwin_caps):
+            wayland_output_hdr._cache_cm_caps = kwin_caps
+            invalidate_hdr_support_cache()
+            self.assertFalse(check_hdr_support())
+
 
 if __name__ == "__main__":
     unittest.main()

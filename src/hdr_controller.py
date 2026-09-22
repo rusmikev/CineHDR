@@ -256,12 +256,6 @@ class HdrController(GObject.Object):
             logging.info("Monitor HDR state changed: %s -> %s, updating playback settings", old_state, new_state)
             self.apply_hdr_settings()
 
-    def set_output_hint(self, connector: Optional[str]):
-        """Pass the active GdkMonitor connector name (e.g. 'DP-1') to the controller."""
-        if connector != self._output_hint:
-            self._output_hint = connector
-            self.apply_hdr_settings()
-
     def _on_gsettings_changed(self, settings, key):
         if key == "hdr-mode":
             self.hdr_mode = settings.get_string("hdr-mode")

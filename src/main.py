@@ -98,6 +98,14 @@ class CineApplication(Adw.Application):
             "Open a new window",
             None,
         )
+        self.add_main_option(
+            "experimental-color-mgmt",
+            0,
+            GLib.OptionFlags.NONE,
+            GLib.OptionArg.NONE,
+            _("Enable experimental GTK color management (sets GDK_DEBUG=color-mgmt)"),
+            None,
+        )
 
         self.render_backend_selection = select_process_backend(
             settings.get_string("render-backend"), os.environ
