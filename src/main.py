@@ -33,6 +33,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gio, GLib, Gtk, Gdk
 
+from .gtk_cm_policy import OPT_IN_NOT_REQUESTED, OPT_IN_TOO_LATE, apply_color_mgmt_opt_in
 from .mpris import MPRIS
 from .preferences import Preferences, settings
 from .render_backend import select_process_backend
@@ -55,14 +56,20 @@ if "GSK_RENDERER" not in os.environ and os.environ.get("NIRI_SOCKET"):
     )
 
 # Opt-in for GTK 4 experimental Wayland color management (GDK_DEBUG=color-mgmt).
-# Without this flag, GTK 4 (4.18-4.24) skips wp_color_manager_v1 and defaults to SDR.
-if os.environ.get("CINEHDR_EXPERIMENTAL_COLOR_MGMT") == "1" or "--experimental-color-mgmt" in sys.argv:
-    gdk_debug = os.environ.get("GDK_DEBUG", "")
-    flags = [f.strip() for f in gdk_debug.split(":") if f.strip()]
-    if "color-mgmt" not in flags and "all" not in flags:
-        flags.append("color-mgmt")
-        os.environ["GDK_DEBUG"] = ":".join(flags)
-        logging.info("Enabled experimental GTK color management (GDK_DEBUG=%s)", os.environ["GDK_DEBUG"])
+# Without it GTK does not bind wp_color_manager_v1 and maps surfaces to sRGB.
+# The launchers (cinehdr.in, run_dev.py) apply the opt-in before Gtk is
+# imported: PyGObject initializes GTK on import and GDK reads GDK_DEBUG once.
+# By the time this module runs GTK is already initialized, so here the opt-in
+# is only verified; the environment is never changed after the fact.
+_cm_opt_in = apply_color_mgmt_opt_in(os.environ, sys.argv, gtk_initialized=Gtk.is_initialized())
+if _cm_opt_in == OPT_IN_TOO_LATE:
+    logging.warning(
+        "Experimental GTK color management was requested, but GTK was initialized "
+        "before GDK_DEBUG=color-mgmt could be set; HDR pass-through stays disabled. "
+        "Launch via the cinehdr launcher or export GDK_DEBUG=color-mgmt."
+    )
+elif _cm_opt_in != OPT_IN_NOT_REQUESTED:
+    logging.info("Experimental GTK color management active (GDK_DEBUG=%s)", os.environ.get("GDK_DEBUG", ""))
 
 # Set the icon shown in gnome sound settings
 os.environ["PIPEWIRE_PROPS"] = '{application.icon-name="io.github.rusmikev.CineHDR"}'

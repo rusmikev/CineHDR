@@ -319,47 +319,76 @@ class TestGtkCmPolicy(unittest.TestCase):
         )
         self.assertFalse(gtk_can_tag_hdr(sdr_caps, TF_PQ))
 
-    def test_regression_kwin_caps_after_invalidate_blocks_hdr_with_or_without_opt_in(self):
-        """Simulate real KWin 6.7.4 behavior on widget realize.
-        On realize, MpvVideoWidget calls invalidate_hdr_support_cache(), which drops caps.
-        Subsequent check_hdr_support() must query caps and return False both with and without
-        GDK_DEBUG=color-mgmt, preventing washed-out PQ fallback."""
+    def _check_after_realize_invalidate(self, caps, env):
+        """Run check_hdr_support() the way MpvVideoWidget does on realize.
+
+        get_cm_caps() is NOT mocked: after invalidate_hdr_support_cache() the
+        caps cache is empty and caps can only arrive through probe_outputs(),
+        which is exactly the path ee2d333's predecessor skipped.  Gdk is
+        mocked wholesale so the GTK version of the test host cannot short-cut
+        detection before the color-management gate.
+        """
         import os
         from unittest.mock import MagicMock, patch
-        from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
-        from src import wayland_output_hdr
+        from src import hdr_detection, wayland_cm_probe, wayland_output_hdr
+
+        def fake_probe_outputs():
+            wayland_output_hdr._cache_cm_caps = caps  # what the real probe stores
+            return {}
+
+        display = MagicMock()
+        display.__class__.__name__ = "GdkWaylandDisplay"
+        display.get_dmabuf_formats.return_value.get_n_formats.return_value = 10
+
+        self.addCleanup(hdr_detection.invalidate_hdr_support_cache)
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(hdr_detection, "Gdk") as gdk, \
+             patch.object(wayland_cm_probe, "probe_color_management", return_value=True), \
+             patch.object(wayland_output_hdr, "probe_outputs", side_effect=fake_probe_outputs) as probe:
+            gdk.Display.get_default.return_value = display
+            hdr_detection.invalidate_hdr_support_cache()  # realize
+            self.assertIsNone(wayland_output_hdr._cache_cm_caps)
+            return hdr_detection.check_hdr_support(), probe
+
+    def _caps(self, tfs):
         from src.gtk_cm_policy import (
             CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, FEAT_SET_PRIMARIES,
-            PRIM_SRGB, PRIM_BT2020, TF_PQ, TF_COMPOUND_POWER_2_4
+            PRIM_SRGB, PRIM_BT2020,
         )
-        kwin_caps = CmCaps(
+        return CmCaps(
             intents=frozenset([INTENT_PERCEPTUAL]),
             features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
-            tfs=frozenset([TF_PQ, TF_COMPOUND_POWER_2_4]),
+            tfs=frozenset(tfs),
             primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
         )
-        mock_display = MagicMock()
-        mock_display.__class__.__name__ = "GdkWaylandDisplay"
-        mock_dmabuf = MagicMock()
-        mock_dmabuf.get_n_formats.return_value = 10
-        mock_display.get_dmabuf_formats.return_value = mock_dmabuf
 
-        # Case 1: Without GDK_DEBUG=color-mgmt
-        with patch.dict(os.environ, {}, clear=True), \
-             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
-             patch.object(wayland_output_hdr, "get_cm_caps", side_effect=lambda allow_probe=False: kwin_caps):
-            wayland_output_hdr._cache_cm_caps = kwin_caps
-            invalidate_hdr_support_cache()
-            self.assertFalse(check_hdr_support())
+    def test_realize_control_mutter_caps_allow_hdr(self):
+        """Positive control: proves the harness reaches the CM gate, so the
+        KWin assertions below cannot pass through an early return/exception."""
+        from src.gtk_cm_policy import TF_SRGB, TF_PQ
+        supported, probe = self._check_after_realize_invalidate(
+            self._caps([TF_SRGB, TF_PQ]), {"GDK_DEBUG": "color-mgmt"}
+        )
+        self.assertTrue(supported)
+        probe.assert_called_once()
 
-        # Case 2: With GDK_DEBUG=color-mgmt (still blocked because KWin lacks TF_SRGB)
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
-             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
-             patch.object(wayland_output_hdr, "get_cm_caps", side_effect=lambda allow_probe=False: kwin_caps):
-            wayland_output_hdr._cache_cm_caps = kwin_caps
-            invalidate_hdr_support_cache()
-            self.assertFalse(check_hdr_support())
+    def test_regression_kwin_caps_after_invalidate_blocks_hdr(self):
+        """KWin 6.7.4 omits TF srgb, so GTK refuses color management.
+        Before ee2d333 the gate was skipped when caps were dropped on realize
+        and HDR was reported as supported (washed-out PQ)."""
+        from src.gtk_cm_policy import TF_PQ, TF_COMPOUND_POWER_2_4
+        supported, probe = self._check_after_realize_invalidate(
+            self._caps([TF_PQ, TF_COMPOUND_POWER_2_4]), {"GDK_DEBUG": "color-mgmt"}
+        )
+        self.assertFalse(supported)
+        probe.assert_called_once()
 
+    def test_realize_without_opt_in_blocks_hdr_even_with_good_caps(self):
+        from src.gtk_cm_policy import TF_SRGB, TF_PQ
+        supported, _probe = self._check_after_realize_invalidate(
+            self._caps([TF_SRGB, TF_PQ]), {}
+        )
+        self.assertFalse(supported)
 
 if __name__ == "__main__":
     unittest.main()

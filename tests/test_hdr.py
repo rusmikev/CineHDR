@@ -1133,10 +1133,6 @@ class TestAuditFixes(unittest.TestCase):
         self.assertEqual(config["hdr_enabled"], (config["hdr_mode"] != "force-sdr"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 
 # ──────────────────────────────────────────────────────────────
 # 9. Compositor color-management probe integration (wayland_cm_probe)
@@ -1170,8 +1166,20 @@ class TestCompositorCmProbeIntegration(unittest.TestCase):
     def test_probe_true_allows_hdr_support(self, mock_colorstate):
         from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
         mock_colorstate.get_rec2100_pq = MagicMock()
+        from src.gtk_cm_policy import (
+            CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, PRIM_BT2020, TF_SRGB, TF_PQ,
+        )
+        gtk_manageable_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC]),
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
         display = self._wayland_ready_display()
-        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
+        # Since ee2d333 the gate also requires the GTK opt-in and caps GTK accepts.
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=gtk_manageable_caps), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
              patch("src.wayland_cm_probe.probe_color_management", return_value=True):
             invalidate_hdr_support_cache()
             self.assertTrue(check_hdr_support())
@@ -1182,8 +1190,19 @@ class TestCompositorCmProbeIntegration(unittest.TestCase):
         cannot run (backward compatibility contract)."""
         from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
         mock_colorstate.get_rec2100_pq = MagicMock()
+        from src.gtk_cm_policy import (
+            CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, PRIM_BT2020, TF_SRGB, TF_PQ,
+        )
+        gtk_manageable_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC]),
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
         display = self._wayland_ready_display()
-        with patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=gtk_manageable_caps), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
              patch("src.wayland_cm_probe.probe_color_management", return_value=None):
             invalidate_hdr_support_cache()
             self.assertTrue(check_hdr_support())
@@ -1323,7 +1342,7 @@ class TestMonitorHdrGate(unittest.TestCase):
         mock_mpv, props = self._make_mock_mpv()
         seen = []
 
-        def fake_state(connector=None):
+        def fake_state(connector=None, **kwargs):
             seen.append(connector)
             return None
 
@@ -1360,11 +1379,11 @@ class TestWaylandOutputHdrModule(unittest.TestCase):
         from src import wayland_output_hdr as w
         with patch.object(w, "probe_outputs", return_value=None) as mock_probe:
             w.invalidate()
-            w.get_output_hdr_states()
-            w.get_output_hdr_states()
+            w.get_output_hdr_states(allow_probe=True)
+            w.get_output_hdr_states(allow_probe=True)
             self.assertEqual(mock_probe.call_count, 1)
             w.invalidate()
-            w.get_output_hdr_states()
+            w.get_output_hdr_states(allow_probe=True)
             self.assertEqual(mock_probe.call_count, 2)
         w.invalidate()
 
@@ -1651,3 +1670,7 @@ class TestHdrDetectionDolbyVision(unittest.TestCase):
         controller.hdr_mode = "auto"
         # Should be true
         self.assertTrue(controller.is_hdr_active)
+
+
+if __name__ == "__main__":
+    unittest.main()

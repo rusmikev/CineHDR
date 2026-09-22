@@ -39,6 +39,15 @@ test('wayland_color_trace_tests', python3,
   ]
 )
 
+test('color_mgmt_opt_in_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_color_mgmt_opt_in.py'
+  ],
+  env: [
+    'PYTHONPATH=' + meson.project_source_root()
+  ]
+)
+
 test('flatpak_manifest_tests', python3,
   args: [
     meson.current_source_dir() / 'test_flatpak_manifest.py'
