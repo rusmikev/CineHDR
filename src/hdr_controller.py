@@ -269,41 +269,35 @@ class HdrController(GObject.Object):
             target_peak = self._hdr_target_peak
             if target_peak not in HDR_PEAK_PRESETS:
                 target_peak = "auto"
+            
             if target_peak == "auto":
-                # Automatic target-peak: when the monitor's own peak (from its
-                # image description) is meaningfully below the stream's peak,
-                # hand mpv the monitor value so it tone-maps *inside* PQ to the
-                # panel's real capability instead of leaving the excess to the
-                # compositor's clip. Tri-state discipline: unknown stream peak
-                # or unknown monitor peak -> no substitution ("auto").
-                peak_val = "auto"
-                self._effective_peak_source = "auto"
                 monitor_peak = self._monitor_peak_nits()
                 stream_peak = self._stream_peak_nits()
                 if monitor_peak and stream_peak:
-                    # Threshold: 90% of the stream's peak. Below that, the
-                    # monitor clearly cannot hit the content's highlights and
-                    # mpv's tone curve produces a visibly better gradient than
-                    # leaving it to the display's / compositor's hard roll-off.
                     if monitor_peak < stream_peak * 0.9:
                         peak_val = int(round(monitor_peak))
                         self._effective_peak_source = f"monitor ({peak_val} nits)"
-                effective_target_peak = peak_val
+                        effective_target_peak = peak_val
+                    else:
+                        peak_val = int(round(stream_peak))
+                        self._effective_peak_source = f"stream ({peak_val} nits)"
+                        effective_target_peak = peak_val
+                else:
+                    # Fallback if detection fails
+                    peak_val = 1000
+                    self._effective_peak_source = "fallback (1000 nits)"
+                    effective_target_peak = "auto"
             else:
                 peak_val = int(float(target_peak))
                 effective_target_peak = peak_val
                 self._effective_peak_source = f"user preset ({peak_val} nits)"
 
-            # Contract: GL texture color state (Rec.2100) fixes primaries to
-            # BT.2020. mpv must render into that gamut; letting it default to
-            # the monitor gamut would cause GDK to convert twice and distort
-            # colors.
-            # hdr-compute-peak is intentionally left untouched: mpv's default
-            # ("auto") already enables per-frame peak detection when tone
-            # mapping is active (numeric target-peak) and skips the extra GPU
-            # pass in true pass-through (target-peak=auto).
+            # We output linear extended light (Rec.2100 Linear). This avoids the
+            # Wayland PQ double-tonemapping issue where compositors crush a 10k 
+            # nit assumed container. Mpv tone-maps to `target-peak` and outputs
+            # values > 1.0 (where 1.0 = SDR white). GTK passes this to the compositor.
             props = [
-                ("target-trc", "pq"),
+                ("target-trc", "linear"),
                 ("target-prim", "bt.2020"),
                 ("target-peak", peak_val),
             ]

@@ -497,18 +497,36 @@ def _probe_outputs_unsafe() -> Optional[Dict[str, OutputHdrInfo]]:
         )
         if not mgr:
             return None
-        # Swallow the manager's capability burst (supported_* ... done).
+
+        supported_tfs = set()
+
+        def _on_tf_named(_d, _p, tf):
+            supported_tfs.add(int(tf))
+
         mgr_listener = _make_listener(
             keep,
             [
                 _CB_U(lambda *_a: None),
                 _CB_U(lambda *_a: None),
-                _CB_U(lambda *_a: None),
+                _CB_U(_on_tf_named),
                 _CB_U(lambda *_a: None),
                 _CB_VOID(lambda *_a: None),
             ],
         )
         lib.wl_proxy_add_listener(ctypes.c_void_p(mgr), mgr_listener, None)
+        
+        # Roundtrip to get the supported TFs
+        if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
+            return None
+
+        # Workaround for GTK strict sRGB requirement:
+        # If the compositor doesn't advertise TF_SRGB (9), GTK will silently disable
+        # color management. This causes GTK to tone-map our HDR output into sRGB,
+        # destroying the HDR signal. We must detect this and fail the probe so
+        # CineHDR correctly falls back to mpv's SDR tone-mapper.
+        if 9 not in supported_tfs:
+            logging.warning("wayland_output_hdr: Compositor missing TF_SRGB(9). GTK color management will fail. Disabling HDR pipeline.")
+            return None
 
         results: Dict[str, OutputHdrInfo] = {}
         for connector, out_ptr in monitors:

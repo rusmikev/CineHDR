@@ -143,6 +143,13 @@ def _check_hdr_support_uncached() -> bool:
         if wayland_cm_probe.probe_color_management() is False:
             return False
 
+        # In case the compositor advertises wp_color_manager_v1 but misses
+        # critical things like the sRGB transfer function (which GTK requires),
+        # wayland_output_hdr's strict probe will fail (return None).
+        from . import wayland_output_hdr
+        if wayland_output_hdr.get_output_hdr_states(allow_probe=True) is None:
+            return False
+
         return True
     except Exception:
         return False

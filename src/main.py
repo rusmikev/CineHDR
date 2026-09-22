@@ -41,18 +41,11 @@ from .window import CineWindow
 
 logger = logging.getLogger(__name__)
 
-# Upstream Cine pins GSK_RENDERER=gl globally to work around frame drops on
-# the Niri compositor; CineHDR needs the modern ngl/vulkan renderers for HDR,
-# so the pin is applied only where the workaround is actually needed. Niri
-# also has no color-management support, so nothing is lost there — CineHDR
-# detects the legacy renderer and falls back to SDR tone mapping. Users can
-# still override by exporting GSK_RENDERER themselves.
-if "GSK_RENDERER" not in os.environ and os.environ.get("NIRI_SOCKET"):
-    os.environ["GSK_RENDERER"] = "gl"
-    logging.info(
-        "Niri session detected (NIRI_SOCKET): pinning GSK_RENDERER=gl "
-        "(upstream frame-drop workaround); HDR pass-through disabled."
-    )
+# Force the modern GL renderer if the user hasn't overridden it. GTK's Vulkan
+# renderer has known issues with 16-bit float textures and PQ color states
+# on some drivers (e.g., radv). 'ngl' is fully color-managed.
+if "GSK_RENDERER" not in os.environ:
+    os.environ["GSK_RENDERER"] = "ngl"
 
 # Set the icon shown in gnome sound settings
 os.environ["PIPEWIRE_PROPS"] = '{application.icon-name="io.github.rusmikev.CineHDR"}'
