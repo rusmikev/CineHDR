@@ -137,9 +137,9 @@ def _check_hdr_support_uncached() -> bool:
         # (wp_color_manager_v1 / xx_color_manager_v4) GTK cannot hand a
         # Rec.2100 PQ surface to the compositor and will silently convert
         # PQ -> sRGB with a plain colorimetric transform, which looks worse
-        # than mpv's tone mapping. Only a definitive "no" from the registry
-        # blocks HDR; an inconclusive probe (None) preserves the previous
-        # heuristic behaviour.
+        # than mpv's tone mapping. A definitive "no" from the registry blocks
+        # HDR here; an inconclusive probe (None) defers to the GTK gate below,
+        # which fails closed when the compositor caps are unknown.
         if wayland_cm_probe.probe_color_management() is False:
             return False
 
@@ -342,6 +342,11 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
         return "GTK: цветоуправление выключено без GDK_DEBUG=color-mgmt"
     from . import wayland_output_hdr
     caps = wayland_output_hdr.get_cm_caps(allow_probe=True)
+    if caps is None:
+        return (
+            "Could not read the Wayland compositor's color-management capabilities; "
+            "HDR pass-through stays off until they are known, using mpv tone mapping"
+        )
     ok, reason = gtk_color_managed(caps)
     if not ok:
         return reason

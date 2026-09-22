@@ -1140,7 +1140,8 @@ class TestAuditFixes(unittest.TestCase):
 
 class TestCompositorCmProbeIntegration(unittest.TestCase):
     """check_hdr_support() must honor the compositor registry probe:
-    a definitive False blocks HDR, an inconclusive None keeps legacy behavior."""
+    a definitive False blocks HDR; an inconclusive None defers to the GTK
+    color-management gate, which fails closed on unknown compositor caps."""
 
     def _wayland_ready_display(self):
         mock_display = MagicMock()
@@ -1184,11 +1185,49 @@ class TestCompositorCmProbeIntegration(unittest.TestCase):
             invalidate_hdr_support_cache()
             self.assertTrue(check_hdr_support())
 
+    def _check_with_probe_none(self, probed_caps):
+        """Registry probe inconclusive (None), opt-in present. get_cm_caps() is
+        not mocked: after invalidation caps can only come from probe_outputs(),
+        so probed_caps=None is exactly "the capability probe could not run"."""
+        from src import wayland_output_hdr
+        from src.hdr_detection import (
+            check_hdr_support, get_hdr_unsupported_reason, invalidate_hdr_support_cache,
+        )
+
+        def fake_probe_outputs():
+            if probed_caps is not None:
+                wayland_output_hdr._cache_cm_caps = probed_caps
+            return None if probed_caps is None else {}
+
+        self.addCleanup(invalidate_hdr_support_cache)
+        display = self._wayland_ready_display()
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=None), \
+             patch.object(wayland_output_hdr, "probe_outputs", side_effect=fake_probe_outputs) as probe:
+            invalidate_hdr_support_cache()
+            supported = check_hdr_support()
+            reason = get_hdr_unsupported_reason(display)
+            # Reaching probe_outputs() proves the verdict comes from the CM gate,
+            # not from an early return or a swallowed exception.
+            self.assertGreaterEqual(probe.call_count, 1)
+        return supported, reason
+
     @patch("src.hdr_detection.Gdk.ColorState", create=True)
-    def test_probe_none_keeps_previous_behavior(self, mock_colorstate):
-        """Unknown probe result must not regress systems where the probe
-        cannot run (backward compatibility contract)."""
-        from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
+    def test_probe_none_with_unknown_caps_fails_closed(self, mock_colorstate):
+        """Probe cannot run -> caps unknown -> no HDR pass-through (ee2d333
+        policy). Guards against restoring the pre-ee2d333 `if caps is not None`
+        skip, which let a PQ surface reach a non-color-managed GTK."""
+        mock_colorstate.get_rec2100_pq = MagicMock()
+        supported, reason = self._check_with_probe_none(probed_caps=None)
+        self.assertFalse(supported)
+        self.assertIn("Could not read", reason)
+        self.assertIn("mpv tone mapping", reason)
+
+    @patch("src.hdr_detection.Gdk.ColorState", create=True)
+    def test_probe_none_defers_to_gtk_cm_caps(self, mock_colorstate):
+        """Positive control for the test above: identical setup, only the caps
+        are known and acceptable to GTK -> HDR allowed. None itself does not block."""
         mock_colorstate.get_rec2100_pq = MagicMock()
         from src.gtk_cm_policy import (
             CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, PRIM_BT2020, TF_SRGB, TF_PQ,
@@ -1199,13 +1238,8 @@ class TestCompositorCmProbeIntegration(unittest.TestCase):
             tfs=frozenset([TF_SRGB, TF_PQ]),
             primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
         )
-        display = self._wayland_ready_display()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
-             patch("src.wayland_output_hdr.get_cm_caps", return_value=gtk_manageable_caps), \
-             patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
-             patch("src.wayland_cm_probe.probe_color_management", return_value=None):
-            invalidate_hdr_support_cache()
-            self.assertTrue(check_hdr_support())
+        supported, _reason = self._check_with_probe_none(probed_caps=gtk_manageable_caps)
+        self.assertTrue(supported)
 
     @patch("src.hdr_detection.Gdk.ColorState", create=True)
     def test_unsupported_reason_mentions_color_management(self, mock_colorstate):
