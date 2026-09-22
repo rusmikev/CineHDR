@@ -12,6 +12,7 @@ repo
 *.ui
 *.gresource
 *.compiled
+*.flatpak
 io.github.rusmikev.CineHDR.flatpak
 io.github.rusmikev.CineHDR-gpu-next.flatpak
 PROJECT_RULES.md

@@ -61,6 +61,7 @@ cine_sources = [
   'gl_bindings.py',
   'gl_renderer.py',
   'gpu_validation.py',
+  'gtk_cm_policy.py',
   'hdr_controller.py',
   'hdr_detection.py',
   'hdr_diagnostics.py',

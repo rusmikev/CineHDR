@@ -626,9 +626,8 @@ class MpvVideoWidget(Gtk.Widget):
 
         if is_hdr:
             try:
-                # Use linear extended to bypass KWin's forced 10,000 nit PQ compression curve.
-                builder.set_color_state(Gdk.ColorState.get_rec2100_linear())
-                color_state = "rec2100-linear"
+                builder.set_color_state(Gdk.ColorState.get_rec2100_pq())
+                color_state = "rec2100-pq"
             except AttributeError:
                 color_state = "unavailable"
         else:

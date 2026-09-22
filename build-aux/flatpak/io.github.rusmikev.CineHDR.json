@@ -334,6 +334,7 @@
             "name": "cinehdr",
             "builddir": true,
             "buildsystem": "meson",
+            "run-tests": true,
             "sources": [
                 {
                     "type": "dir",

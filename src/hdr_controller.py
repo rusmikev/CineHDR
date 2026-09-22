@@ -201,33 +201,38 @@ class HdrController(GObject.Object):
 
         self._mpv_observers = []
 
-        @self.mpv.property_observer("video-params")
-        def _on_video_params(_name, params):
-            # See mpv docs: video-params property contains stream color metadata (primaries, gamma, sig-peak)
-            # Cache the raw dict: apply_hdr_settings() reads sig-peak from it
-            # for the automatic target-peak substitution. python-mpv has no
-            # reliable synchronous getter to use from there instead.
-            self._last_video_params = params if isinstance(params, dict) else None
-            is_hdr = is_hdr_content(params)
-            # Dolby Vision profile comes from the *track* properties; video-params
-            # only carries the already-mapped colorimetry (bt.2020/pq) that
-            # libplacebo writes for every single-layer DoVi frame.
-            dovi = get_dovi_info(params, self.mpv)
+        observer_decorator = getattr(self.mpv, "property_observer", None)
+        if callable(observer_decorator):
+            try:
+                @observer_decorator("video-params")
+                def _on_video_params(_name, params):
+                    # See mpv docs: video-params property contains stream color metadata (primaries, gamma, sig-peak)
+                    # Cache the raw dict: apply_hdr_settings() reads sig-peak from it
+                    # for the automatic target-peak substitution. python-mpv has no
+                    # reliable synchronous getter to use from there instead.
+                    self._last_video_params = params if isinstance(params, dict) else None
+                    is_hdr = is_hdr_content(params)
+                    # Dolby Vision profile comes from the *track* properties; video-params
+                    # only carries the already-mapped colorimetry (bt.2020/pq) that
+                    # libplacebo writes for every single-layer DoVi frame.
+                    dovi = get_dovi_info(params, self.mpv)
 
-            changed = False
-            if self._is_hdr_content != is_hdr:
-                self._is_hdr_content = is_hdr
-                changed = True
-            if self._dovi_info != dovi:
-                self._dovi_info = dovi
-                self._dovi_warned = False
-                changed = True
-            if changed:
-                idle_add_once(self.apply_hdr_settings)
+                    changed = False
+                    if self._is_hdr_content != is_hdr:
+                        self._is_hdr_content = is_hdr
+                        changed = True
+                    if self._dovi_info != dovi:
+                        self._dovi_info = dovi
+                        self._dovi_warned = False
+                        changed = True
+                    if changed:
+                        idle_add_once(self.apply_hdr_settings)
 
-            if hasattr(self, "on_content_change_cb") and self.on_content_change_cb:
-                idle_add_once(self.on_content_change_cb)
-        self._mpv_observers.append(("video-params", _on_video_params))
+                    if hasattr(self, "on_content_change_cb") and self.on_content_change_cb:
+                        idle_add_once(self.on_content_change_cb)
+                self._mpv_observers.append(("video-params", _on_video_params))
+            except Exception:
+                pass
 
         # Initial background monitor state probe & periodic TTL refresh timer
         refresh_monitor_hdr_state()
@@ -238,30 +243,36 @@ class HdrController(GObject.Object):
         self.apply_hdr_settings()
 
     def _on_monitor_poll_timeout(self) -> bool:
-        """Periodic background refresh of monitor HDR state without blocking render loop."""
-        if getattr(self, "_disconnected", False):
-            return GLib.SOURCE_REMOVE
+        # Periodic background poll for output HDR state changes (monitor plugged/unplugged/toggled)
+        self.check_monitor_hdr_state_change()
+        return GLib.SOURCE_CONTINUE
+
+    def check_monitor_hdr_state_change(self):
+        """Called on monitor configuration changes or periodic timer to re-evaluate HDR output."""
         old_state = get_monitor_hdr_state(self._output_hint, allow_probe=False)
         refresh_monitor_hdr_state()
         new_state = get_monitor_hdr_state(self._output_hint, allow_probe=False)
         if old_state != new_state:
+            logging.info("Monitor HDR state changed: %s -> %s, updating playback settings", old_state, new_state)
             self.apply_hdr_settings()
-            if self.on_change_cb:
-                self.on_change_cb()
-        return GLib.SOURCE_CONTINUE
 
-    def _on_gsettings_changed(self, settings: Gio.Settings, key: str):
+    def set_output_hint(self, connector: Optional[str]):
+        """Pass the active GdkMonitor connector name (e.g. 'DP-1') to the controller."""
+        if connector != self._output_hint:
+            self._output_hint = connector
+            self.apply_hdr_settings()
+
+    def _on_gsettings_changed(self, settings, key):
         if key == "hdr-mode":
-            self._hdr_mode = settings.get_string("hdr-mode")
+            self.hdr_mode = settings.get_string("hdr-mode")
         elif key == "hdr-target-peak":
-            self._hdr_target_peak = settings.get_string("hdr-target-peak")
-        self.apply_hdr_settings()
-        if self.on_change_cb:
-            self.on_change_cb()
+            self.hdr_target_peak = settings.get_string("hdr-target-peak")
 
     def apply_hdr_settings(self):
-        """Apply tone mapping parameters and target primaries for HDR playback."""
-        if getattr(self, "_disconnected", False) or not self.mpv:
+        """
+        Configure mpv video output properties according to the resolved HDR mode.
+        """
+        if getattr(self, "_disconnected", False) or not self.mpv or not getattr(self, "_initialized", True):
             return
         hdr_output_active = self.is_hdr_active
         effective_target_peak = "auto"
@@ -271,33 +282,40 @@ class HdrController(GObject.Object):
                 target_peak = "auto"
             
             if target_peak == "auto":
+                # Automatic target-peak: when the monitor's own peak (from its
+                # image description) is meaningfully below the stream's peak,
+                # hand mpv the monitor value so it tone-maps *inside* PQ to the
+                # panel's real capability instead of leaving the excess to the
+                # compositor's clip. Tri-state discipline: unknown stream peak
+                # or unknown monitor peak -> no substitution ("auto").
+                peak_val = "auto"
+                self._effective_peak_source = "auto"
                 monitor_peak = self._monitor_peak_nits()
                 stream_peak = self._stream_peak_nits()
                 if monitor_peak and stream_peak:
+                    # Threshold: 90% of the stream's peak. Below that, the
+                    # monitor clearly cannot hit the content's highlights and
+                    # mpv's tone curve produces a visibly better gradient than
+                    # leaving it to the display's / compositor's hard roll-off.
                     if monitor_peak < stream_peak * 0.9:
                         peak_val = int(round(monitor_peak))
                         self._effective_peak_source = f"monitor ({peak_val} nits)"
-                        effective_target_peak = peak_val
-                    else:
-                        peak_val = int(round(stream_peak))
-                        self._effective_peak_source = f"stream ({peak_val} nits)"
-                        effective_target_peak = peak_val
-                else:
-                    # Fallback if detection fails
-                    peak_val = 1000
-                    self._effective_peak_source = "fallback (1000 nits)"
-                    effective_target_peak = "auto"
+                effective_target_peak = peak_val
             else:
                 peak_val = int(float(target_peak))
                 effective_target_peak = peak_val
                 self._effective_peak_source = f"user preset ({peak_val} nits)"
 
-            # We output linear extended light (Rec.2100 Linear). This avoids the
-            # Wayland PQ double-tonemapping issue where compositors crush a 10k 
-            # nit assumed container. Mpv tone-maps to `target-peak` and outputs
-            # values > 1.0 (where 1.0 = SDR white). GTK passes this to the compositor.
+            # Contract: GL texture color state (Rec.2100) fixes primaries to
+            # BT.2020. mpv must render into that gamut; letting it default to
+            # the monitor gamut would cause GDK to convert twice and distort
+            # colors.
+            # hdr-compute-peak is intentionally left untouched: mpv's default
+            # ("auto") already enables per-frame peak detection when tone
+            # mapping is active (numeric target-peak) and skips the extra GPU
+            # pass in true pass-through (target-peak=auto).
             props = [
-                ("target-trc", "linear"),
+                ("target-trc", "pq"),
                 ("target-prim", "bt.2020"),
                 ("target-peak", peak_val),
             ]

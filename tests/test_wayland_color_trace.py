@@ -5,9 +5,12 @@ import json
 import contextlib
 import hashlib
 import io
+import sys
 from pathlib import Path
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from parse_wayland_color_trace import (
     TRACE_REVISION,
@@ -237,6 +240,84 @@ class WaylandColorTraceTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(TraceValidationError, "backend"):
                 create_evidence_report(trace_path, report_path, "gpu-next")
+
+
+class TestGtkCmPolicy(unittest.TestCase):
+    def test_gtk_cm_opted_in(self):
+        from src.gtk_cm_policy import gtk_cm_opted_in
+        self.assertFalse(gtk_cm_opted_in({}))
+        self.assertFalse(gtk_cm_opted_in({"GDK_DEBUG": "opengl"}))
+        self.assertTrue(gtk_cm_opted_in({"GDK_DEBUG": "color-mgmt"}))
+        self.assertTrue(gtk_cm_opted_in({"GDK_DEBUG": "opengl:color-mgmt:portals"}))
+        self.assertTrue(gtk_cm_opted_in({"GDK_DEBUG": "all"}))
+
+    def test_gtk_color_managed_requires_opt_in(self):
+        from src.gtk_cm_policy import (
+            CmCaps, gtk_color_managed, INTENT_PERCEPTUAL, FEAT_PARAMETRIC,
+            PRIM_SRGB, PRIM_BT2020, TF_SRGB, TF_PQ
+        )
+        caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC]),
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        ok, reason = gtk_color_managed(caps, env={})
+        self.assertFalse(ok)
+        self.assertIn("GDK_DEBUG=color-mgmt", reason)
+
+    def test_gtk_color_managed_requires_caps(self):
+        from src.gtk_cm_policy import gtk_color_managed
+        ok, reason = gtk_color_managed(None, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertFalse(ok)
+        self.assertIn("wp_color_manager_v1", reason)
+
+    def test_gtk_color_managed_kwin_missing_srgb(self):
+        from src.gtk_cm_policy import (
+            CmCaps, gtk_color_managed, INTENT_PERCEPTUAL, FEAT_PARAMETRIC,
+            FEAT_SET_PRIMARIES, PRIM_SRGB, PRIM_BT2020, TF_PQ, TF_COMPOUND_POWER_2_4
+        )
+        # KWin advertises PQ and compound_power_2_4 but omits TF_SRGB (9)
+        kwin_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_PQ, TF_COMPOUND_POWER_2_4]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        ok, reason = gtk_color_managed(kwin_caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertFalse(ok)
+        self.assertIn("TF srgb", reason)
+
+    def test_gtk_color_managed_mutter_success(self):
+        from src.gtk_cm_policy import (
+            CmCaps, gtk_color_managed, gtk_can_tag_hdr, INTENT_PERCEPTUAL,
+            FEAT_PARAMETRIC, FEAT_SET_PRIMARIES, PRIM_SRGB, PRIM_BT2020,
+            TF_SRGB, TF_PQ, TF_EXT_LINEAR
+        )
+        mutter_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_SRGB, TF_PQ, TF_EXT_LINEAR]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        ok, reason = gtk_color_managed(mutter_caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertTrue(ok)
+        self.assertEqual(reason, "ok")
+        self.assertTrue(gtk_can_tag_hdr(mutter_caps, TF_PQ))
+        self.assertTrue(gtk_can_tag_hdr(mutter_caps, TF_EXT_LINEAR))
+
+    def test_gtk_can_tag_hdr_without_bt2020(self):
+        from src.gtk_cm_policy import (
+            CmCaps, gtk_can_tag_hdr, INTENT_PERCEPTUAL, FEAT_PARAMETRIC,
+            PRIM_SRGB, TF_SRGB, TF_PQ
+        )
+        sdr_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC]),
+            tfs=frozenset([TF_SRGB]),
+            primaries=frozenset([PRIM_SRGB]),
+        )
+        self.assertFalse(gtk_can_tag_hdr(sdr_caps, TF_PQ))
 
 
 if __name__ == "__main__":

@@ -83,6 +83,8 @@ from .wayland_cm_probe import (
     _WL_DISPLAY_GET_REGISTRY,
 )
 
+from .gtk_cm_policy import CmCaps
+
 # wp_color_manager_v1 enum transfer_function (color-management-v1.xml)
 TF_BT1886 = 1
 TF_GAMMA22 = 2
@@ -90,6 +92,7 @@ TF_EXT_LINEAR = 5
 TF_SRGB = 9
 TF_ST2084_PQ = 11
 TF_HLG = 13
+TF_COMPOUND_POWER_2_4 = 14
 
 # wp_color_manager_v1 enum primaries
 PRIMARIES_SRGB = 1
@@ -118,6 +121,7 @@ _TF_NAMES = {
     TF_ST2084_PQ: "st2084_pq",
     12: "st428",
     TF_HLG: "hlg",
+    TF_COMPOUND_POWER_2_4: "compound_power_2_4",
 }
 
 
@@ -498,35 +502,40 @@ def _probe_outputs_unsafe() -> Optional[Dict[str, OutputHdrInfo]]:
         if not mgr:
             return None
 
+        supported_intents = set()
+        supported_features = set()
         supported_tfs = set()
+        supported_primaries = set()
 
-        def _on_tf_named(_d, _p, tf):
-            supported_tfs.add(int(tf))
+        def _on_intent(_d, _p, val): supported_intents.add(int(val))
+        def _on_feature(_d, _p, val): supported_features.add(int(val))
+        def _on_tf_named(_d, _p, tf): supported_tfs.add(int(tf))
+        def _on_primaries_named(_d, _p, p): supported_primaries.add(int(p))
 
         mgr_listener = _make_listener(
             keep,
             [
-                _CB_U(lambda *_a: None),
-                _CB_U(lambda *_a: None),
+                _CB_U(_on_intent),
+                _CB_U(_on_feature),
                 _CB_U(_on_tf_named),
-                _CB_U(lambda *_a: None),
+                _CB_U(_on_primaries_named),
                 _CB_VOID(lambda *_a: None),
             ],
         )
         lib.wl_proxy_add_listener(ctypes.c_void_p(mgr), mgr_listener, None)
         
-        # Roundtrip to get the supported TFs
+        # Roundtrip to get the supported capabilities
         if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
             return None
 
-        # Workaround for GTK strict sRGB requirement:
-        # If the compositor doesn't advertise TF_SRGB (9), GTK will silently disable
-        # color management. This causes GTK to tone-map our HDR output into sRGB,
-        # destroying the HDR signal. We must detect this and fail the probe so
-        # CineHDR correctly falls back to mpv's SDR tone-mapper.
-        if 9 not in supported_tfs:
-            logging.warning("wayland_output_hdr: Compositor missing TF_SRGB(9). GTK color management will fail. Disabling HDR pipeline.")
-            return None
+        from .gtk_cm_policy import CmCaps
+        global _cache_cm_caps
+        _cache_cm_caps = CmCaps(
+            intents=frozenset(supported_intents),
+            features=frozenset(supported_features),
+            tfs=frozenset(supported_tfs),
+            primaries=frozenset(supported_primaries)
+        )
 
         results: Dict[str, OutputHdrInfo] = {}
         for connector, out_ptr in monitors:
@@ -646,7 +655,15 @@ def _query_one_output(lib, display, queue, mgr, table, keep, out_ptr) -> Optiona
 
         noop_u = _CB_U(lambda *_a: None)
         noop_i8 = _CB_I8(lambda *_a: None)
-        noop_uu = _CB_UU(lambda *_a: None)
+
+        def _on_target_luminance(_d, _p, mn, mx):
+            if mx:
+                state["target_max"] = float(mx)
+
+        def _on_target_max_cll(_d, _p, cll):
+            if cll:
+                state["target_cll"] = float(cll)
+
         info_listener = _make_listener(
             keep,
             [
@@ -658,8 +675,8 @@ def _query_one_output(lib, display, queue, mgr, table, keep, out_ptr) -> Optiona
                 _CB_U(_on_tf_named),         # 5 tf_named
                 _CB_UUU(_on_luminances),     # 6 luminances
                 noop_i8,                     # 7 target_primaries
-                noop_uu,                     # 8 target_luminance
-                noop_u,                      # 9 target_max_cll
+                _CB_UU(_on_target_luminance),# 8 target_luminance
+                _CB_U(_on_target_max_cll),   # 9 target_max_cll
                 noop_u,                      # 10 target_max_fall
             ],
         )
@@ -672,13 +689,14 @@ def _query_one_output(lib, display, queue, mgr, table, keep, out_ptr) -> Optiona
         if not state["done"]:
             return None
 
+        effective_max = state.get("target_max") or state.get("target_cll") or state["max"]
         return OutputHdrInfo(
             connector="",
-            hdr=classify_hdr(state["tf"], state["min"], state["max"], state["ref"]),
+            hdr=classify_hdr(state["tf"], state["min"], effective_max, state["ref"]),
             tf=state["tf"],
             primaries=state["primaries"],
             min_lum=state["min"],
-            max_lum=state["max"],
+            max_lum=effective_max,
             reference_lum=state["ref"],
         )
     finally:
@@ -698,15 +716,26 @@ def _query_one_output(lib, display, queue, mgr, table, keep, out_ptr) -> Optiona
 # ──────────────────────────────────────────────────────────────
 
 _cache_value: Optional[Dict[str, OutputHdrInfo]] = None
+_cache_cm_caps: Optional[CmCaps] = None
 _cache_time: float = 0.0
 _cache_valid: bool = False
 
 
 def invalidate():
-    global _cache_value, _cache_time, _cache_valid
+    global _cache_value, _cache_cm_caps, _cache_time, _cache_valid
     _cache_value = None
+    _cache_cm_caps = None
     _cache_time = 0.0
     _cache_valid = False
+
+
+def get_cm_caps(allow_probe: bool = False) -> Optional[CmCaps]:
+    global _cache_cm_caps
+    if _cache_cm_caps is not None:
+        return _cache_cm_caps
+    if allow_probe:
+        refresh_output_hdr_states()
+    return _cache_cm_caps
 
 
 def refresh_output_hdr_states() -> Optional[Dict[str, OutputHdrInfo]]:
