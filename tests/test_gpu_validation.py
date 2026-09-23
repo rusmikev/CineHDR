@@ -4,11 +4,13 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import time
+import types
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.gpu_validation import (
     GpuValidationSession,
@@ -1289,7 +1291,7 @@ class ValidationIntegrationTests(unittest.TestCase):
             launcher,
         )
         self.assertIn(
-            'expected_commit="1ca32dbf0f0ef57a3b11545b1ff9cf2ec5ab837a6ff1d2328e52a556d759d5c5"',
+            'expected_commit="4edda5ddca09dd99f8897e3c51738a4f508bc7318029c891e0c4e78229e5d736"',
             launcher,
         )
         self.assertIn('Usage: $0 <video-file> [quick]', launcher)
@@ -1334,6 +1336,7 @@ class ValidationIntegrationTests(unittest.TestCase):
         bootstrap = launcher[bootstrap_start:bootstrap_end].rstrip("' \\")
         compile(bootstrap, "<validation bootstrap>", "exec")
         self.assertIn('"--env=GDK_BACKEND=wayland"', launcher)
+        self.assertIn('"--env=DRI_PRIME=pci-0000_03_00_0"', launcher)
         self.assertNotIn("LIBVA_DRIVERS_PATH", launcher)
         self.assertIn('"--env=LIBVA_MESSAGING_LEVEL=2"', launcher)
         self.assertIn('"--env=CINEHDR_RENDER_BACKEND=gpu-next"', launcher)
@@ -1341,10 +1344,17 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertIn(
             '"--env=CINEHDR_GPU_VALIDATION_REPORT_DIR=${report_dir}"', launcher
         )
+        self.assertIn("original_loadfile = mpv.MPV.loadfile", launcher)
+        self.assertIn('self["hwdec"] = "vaapi-copy"', launcher)
         self.assertIn('tee "${validation_log}"', launcher)
         self.assertIn('application_status="${PIPESTATUS[0]}"', launcher)
         self.assertIn("-name 'gpu-next-quick-*.txt'", launcher)
         self.assertIn('-newer "${run_marker}"', launcher)
+        self.assertIn("grep -Eq '^Overall result: (PASS|WARN)$'", launcher)
+        self.assertIn("grep -q '^Hardware decoding: vaapi-copy$'", launcher)
+        self.assertIn("grep -q '^Active renderer: opengl-next$'", launcher)
+        self.assertIn("grep -q '^Renderer status: active$'", launcher)
+        self.assertIn("grep -q '^OpenGL renderer:.*RX 9060 XT'", launcher)
 
     def test_launcher_is_strict_and_validator_remains_opt_in(self):
         launcher = (ROOT / "run_gpu_validation.sh").read_text(encoding="utf-8")
@@ -1413,6 +1423,280 @@ class ValidationIntegrationTests(unittest.TestCase):
         generation = source.index("self.render_frame_generation += 1")
         self.assertLess(texture, color_state)
         self.assertLess(color_state, generation)
+
+
+class FlatpakLauncherReportVerificationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        launcher = (ROOT / "run_flatpak_gpu_validation.sh").read_text(
+            encoding="utf-8"
+        )
+        check_start = launcher.index(
+            'if [[ -z "${new_report}" || ! -f "${new_report}" ]]; then'
+        )
+        cls.verify_bash_snippet = launcher[check_start:]
+
+    def _run_verification(
+        self, report_content: str | None, filename: str = "gpu-next-quick-test.txt"
+    ) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            if report_content is not None:
+                report_file = tmp_path / filename
+                report_file.write_text(report_content, encoding="utf-8")
+                new_report_val = str(report_file)
+            else:
+                new_report_val = str(tmp_path / "non_existent.txt")
+
+            bash_cmd = f"""
+new_report="{new_report_val}"
+validation_log="{tmpdir}/mock_validation.log"
+{self.verify_bash_snippet}
+"""
+            return subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", bash_cmd],
+                capture_output=True,
+                text=True,
+            )
+
+    def _valid_report(self, **overrides) -> str:
+        fields = {
+            "result": "PASS",
+            "active_renderer": "opengl-next",
+            "renderer_status": "active",
+            "hwdec": "vaapi-copy",
+            "gl_renderer": "AMD Radeon RX 9060 XT (radeonsi, gfx1200, ACO, DRM 3.64, 7.2.5-200.fc44.x86_64)",
+            "extra": "",
+        }
+        fields.update(overrides)
+        return (
+            f"CineHDR GPU Next Validation Report\n\n"
+            f"Overall result: {fields['result']}\n"
+            f"Mode: quick\n"
+            f"Active renderer: {fields['active_renderer']}\n"
+            f"Renderer status: {fields['renderer_status']}\n"
+            f"Hardware decoding: {fields['hwdec']}\n"
+            f"OpenGL renderer: {fields['gl_renderer']}\n"
+            f"{fields['extra']}"
+        )
+
+    def test_valid_pass_report(self):
+        report = self._valid_report()
+        res = self._run_verification(report)
+        self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}")
+        self.assertIn("CineHDR Flatpak validation report:", res.stdout)
+        self.assertNotIn("(WARN)", res.stdout)
+
+    def test_valid_warn_report(self):
+        report = self._valid_report(
+            result="WARN",
+            extra="[Warnings]\n- temporary dropped frame during seek\n",
+        )
+        res = self._run_verification(report)
+        self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}")
+        self.assertIn("CineHDR Flatpak validation report (WARN):", res.stdout)
+
+    def test_rejects_fail_status(self):
+        report = self._valid_report(result="FAIL")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn(
+            "status line is not exactly 'Overall result: PASS' or 'Overall result: WARN'",
+            res.stderr,
+        )
+
+    def test_rejects_unknown_status(self):
+        report = self._valid_report(result="UNKNOWN")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn(
+            "status line is not exactly 'Overall result: PASS' or 'Overall result: WARN'",
+            res.stderr,
+        )
+
+    def test_rejects_extra_words_in_pass_status(self):
+        report = self._valid_report(result="PASS with caveats")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn(
+            "status line is not exactly 'Overall result: PASS' or 'Overall result: WARN'",
+            res.stderr,
+        )
+
+    def test_rejects_extra_words_in_warn_status(self):
+        report = self._valid_report(result="WARN (non-critical)")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn(
+            "status line is not exactly 'Overall result: PASS' or 'Overall result: WARN'",
+            res.stderr,
+        )
+
+    def test_rejects_duplicate_status_lines(self):
+        report = (
+            "Overall result: PASS\n"
+            "Overall result: WARN\n"
+            "Active renderer: opengl-next\n"
+            "Renderer status: active\n"
+            "Hardware decoding: vaapi-copy\n"
+            "OpenGL renderer: AMD Radeon RX 9060 XT (radeonsi, gfx1200)\n"
+        )
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("ambiguous or missing report status", res.stderr)
+
+    def test_rejects_duplicate_active_renderer(self):
+        report = self._valid_report(extra="Active renderer: opengl\n")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn(
+            "ambiguous, duplicate or missing 'Active renderer'", res.stderr
+        )
+
+    def test_rejects_duplicate_renderer_status(self):
+        report = self._valid_report(extra="Renderer status: startup-fallback\n")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn(
+            "ambiguous, duplicate or missing 'Renderer status'", res.stderr
+        )
+
+    def test_rejects_duplicate_hardware_decoding(self):
+        report = self._valid_report(extra="Hardware decoding: no\n")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn(
+            "ambiguous, duplicate or missing 'Hardware decoding'", res.stderr
+        )
+
+    def test_rejects_duplicate_opengl_renderer(self):
+        report = self._valid_report(
+            extra="OpenGL renderer: AMD Radeon 610M (Raphael)\n"
+        )
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn(
+            "ambiguous, duplicate or missing 'OpenGL renderer'", res.stderr
+        )
+
+    def test_rejects_wrong_gpu(self):
+        report = self._valid_report(gl_renderer="AMD Radeon 610M (Raphael)")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("expected RX 9060 XT in 'OpenGL renderer'", res.stderr)
+
+    def test_rejects_software_decoder(self):
+        report = self._valid_report(hwdec="no")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("expected 'Hardware decoding: vaapi-copy'", res.stderr)
+
+    def test_rejects_legacy_renderer(self):
+        report = self._valid_report(active_renderer="opengl")
+        res = self._run_verification(report)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("expected 'Active renderer: opengl-next'", res.stderr)
+
+    def test_rejects_missing_report_file(self):
+        res = self._run_verification(None)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("without a valid report file", res.stderr)
+
+    def test_rejects_empty_report(self):
+        res = self._run_verification("")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("ambiguous or missing report status", res.stderr)
+
+
+class FlatpakLauncherBootstrapExecutionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        launcher = (ROOT / "run_flatpak_gpu_validation.sh").read_text(
+            encoding="utf-8"
+        )
+        bootstrap_start = launcher.index(
+            "import logging\nimport mpv\nimport runpy"
+        )
+        bootstrap_end = launcher.index('\n    "${video_path}"', bootstrap_start)
+        cls.bootstrap_code = launcher[bootstrap_start:bootstrap_end].rstrip(
+            "' \\\n"
+        )
+
+    def test_actual_launcher_bootstrap_executes_loadfile_interception_without_gtk_or_gl(
+        self,
+    ):
+        events = []
+
+        class MockMPV:
+            def __init__(self, *args, **kwargs):
+                events.append(("init_called", args, kwargs))
+                self.options = {"hwdec": "no"}
+
+            def __setitem__(self, key, value):
+                events.append(("set_item", key, value))
+                self.options[key] = value
+
+            def __getitem__(self, key):
+                return self.options.get(key)
+
+            def loadfile(self, *args, **kwargs):
+                events.append(
+                    (
+                        "loadfile_called",
+                        args,
+                        kwargs,
+                        self.options.get("hwdec"),
+                    )
+                )
+                return "LOADFILE_RESULT_PRESERVED"
+
+        mock_mpv_mod = types.ModuleType("mpv")
+        mock_mpv_mod.MPV = MockMPV
+
+        mock_runpy_mod = types.ModuleType("runpy")
+        run_path_mock = MagicMock(return_value={"status": "app_ran"})
+        mock_runpy_mod.run_path = run_path_mock
+
+        with patch.dict(
+            "sys.modules", {"mpv": mock_mpv_mod, "runpy": mock_runpy_mod}
+        ):
+            compiled = compile(
+                self.bootstrap_code, "<validation bootstrap>", "exec"
+            )
+            namespace = {}
+            exec(compiled, namespace)
+
+            run_path_mock.assert_called_once_with(
+                "/app/bin/cinehdr", run_name="__main__"
+            )
+
+            player = mock_mpv_mod.MPV("custom_arg", flag=True)
+            self.assertEqual(player["hwdec"], "no")
+            init_events = [e for e in events if e[0] == "init_called"]
+            self.assertEqual(len(init_events), 1)
+            self.assertEqual(init_events[0][2].get("loglevel"), "v")
+            self.assertTrue(callable(init_events[0][2].get("log_handler")))
+
+            result = player.loadfile(
+                "/video/media.mkv", "append-play", start_pos=15.0
+            )
+            self.assertEqual(result, "LOADFILE_RESULT_PRESERVED")
+
+            sub_events = [
+                e for e in events if e[0] in ("set_item", "loadfile_called")
+            ]
+            self.assertEqual(len(sub_events), 2)
+            self.assertEqual(sub_events[0], ("set_item", "hwdec", "vaapi-copy"))
+            self.assertEqual(
+                sub_events[1],
+                (
+                    "loadfile_called",
+                    ("/video/media.mkv", "append-play"),
+                    {"start_pos": 15.0},
+                    "vaapi-copy",
+                ),
+            )
+            self.assertEqual(player["hwdec"], "vaapi-copy")
 
 
 if __name__ == "__main__":

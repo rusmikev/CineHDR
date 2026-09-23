@@ -51,6 +51,7 @@ outcomes, not token accounting promised by any subscription plan.
 | 2026-08-23 | Second resource-settling integration failure and GTK allocation correction | Architecture/evidence correction: primary `gpt-5.6-sol`, high; real GPU command: user | The v2 report proved the new revision loaded but GTK 4.22.4 did not emit `notify::width/height` for widget allocation, so the same legacy resize failed before endpoints. The renderer, decoder, runtime and GL/FBO state remained correct. | Replaced the ineffective property hook with Gtk.Widget's `do_size_allocate` vfunc, explicitly allocating the sole Gtk.GLArea child and tracking logical size and scale factor. Tests now execute child allocation and the forced-redraw decision rather than only inspect source. Evidence revision v3 preserves both prior FAILs; one bounded changed-integration repeat is justified, no soak. |
 | 2026-08-25 | Bounded validation governance and evidence-status correction | Architect: primary `gpt-5.6-sol`, high | Review of repeated Gate 2 integration failures found that failure-signature escalation alone did not cap total target-hardware executions; supplemental GitHub changes also rolled weak or absent row evidence into Gate 2/3 PASS claims | ADR-0006 limits an attempt family to an initial hardware run plus one evidence-driven correction, then requires `HOLD`, Architect review and explicit user approval. Gate 2W remains independent. External Antigravity/Gemini execution is restricted to an immutable Operator hand-off. Unsupported Gate 2/3 sign-off was withdrawn while accepted Gate 1/FBO/VAAPI/GDK rows were preserved. No GPU or duration test was run. |
 | 2026-08-25 | Intel/NVIDIA smoke oracle v2 | Architecture and evidence contract: primary `gpt-5.6-sol`, high; bounded implementation in the primary session because proactive delegation was unavailable | Replaced the historical aggregate 16-process predicate with independently selectable vendor/fixture rows and no automatic retry. An initial empty render, missing fixture, wrong media path, stale runtime, API fallback, stub, early exit, or file warning now prevents PASS. | Added path-safe loaded-media-frame evidence, pinned fixture/runtime/API/GPU/HDR checks, clean preflight, sanitized JSON plus raw-log hashes, and one-pinned-Flatpak execution for both Intel and NVIDIA. Local unit/source checks only; real laptop status remains `NOT_RUN` until an exact source commit and rebuilt Flatpak commit exist. |
+| 2026-09-23 | Flatpak GPU Next validation attempt family | Operator: target hardware (Gemini/User) | Run 1 (09:59:12 UTC): quick playback WARN on integrated iGPU (hwdec=no). Run 2 (10:10:05 UTC): GL probe on target dGPU. Run 3 (11:37:47 UTC, user authorized): quick playback WARN on target discrete GPU with opengl-next and vaapi-copy. | WARN (exit 0). Target discrete GPU render, active opengl-next, and active vaapi-copy confirmed. Physical decode GPU remains Unknown. VO drop observed growth after baseline: 0 (initial sample counter: 21). Fullscreen and multiple RPU warnings unresolved; Gate 2W and Dolby Vision validation remain open. |
 
 ## Initial observation
 
@@ -58,3 +59,50 @@ The routing saved the Architect tier from routine scaffold work while still
 catching a GPU-state cleanup defect at the milestone boundary. One Engineer
 correction and one Architect-requested fix were sufficient; no task required
 `max` reasoning or a complete reimplementation.
+
+### 2026-09-23 Native checkout routing reconciliation
+
+- Mirrored the active GPT-6 routing, one-failed-dispatch stop, two-local-attempt
+  hand-off, and independent Astra review contract from the main CineHDR policy.
+  Historical 5.6 routes above remain records of their original work.
+- Preserved the existing Gemini technical guide and added current-policy
+  precedence. Corrected only its retained-texture lifetime, unsynchronized
+  timeout publication, blanket hardware-matrix, and HDR-proof claims against
+  ADR-0001/0006 and current `video_widget.py`. Gemini Flash remains an immutable
+  external Operator unless separately given a bounded Engineer brief.
+- Focused governance tests passed 10/10 in this native checkout; scoped
+  `git diff --check` passed. No player, GPU/Wayland, full suite, dependency
+  installation, or remote operation ran here. Live output remains unverified.
+
+### 2026-09-23 Flatpak GPU Next validation attempt family
+
+- Executed Run 1 (Quick playback) at 2026-09-23 09:59:12 UTC: Flatpak candidate loaded `opengl-next` and custom libmpv, producing a WARN report on integrated iGPU with software decoding (`hwdec=no`). Proved packaging and GPU Next startup without stub errors, but failed target discrete GPU and hardware decode targets.
+- Executed Run 2 (GL probe) at 2026-09-23 10:10:05 UTC: GdkGLContext probe confirmed target discrete GPU rendering context under Wayland.
+- Real-hardware execution budget of two attempts per ADR-0006 was reached; row was placed on `HOLD`.
+- **User authorization for exceptional Run 3**: The user explicitly authorized a single third target-hardware execution within this attempt family after offline review and regression testing of corrected `run_flatpak_gpu_validation.sh` (SHA-256 `a7fd5c2a04c487ad01b6a81b29df192ebf8fb7887118513d5112145d15686d9c`).
+- **Refined execution brief**:
+  - Boundary under test: Pinned Flatpak candidate `4edda5ddca09dd99f8897e3c51738a4f508bc7318029c891e0c4e78229e5d736` with target discrete `DRI_PRIME` routing and pre-load `hwdec="vaapi-copy"` interception on UHD HDR10/Dolby Vision test stream (SHA-256 `fd27b83024d9ecf86d27a9a1698ed28d3eb87ddbfe8692f7751b9db96da909c7`).
+  - Falsifiable hypothesis: Simultaneously observe `Active renderer: opengl-next` with `Renderer status: active`, `OpenGL renderer` indicating target discrete GPU, and active hardware decoding `Hardware decoding: vaapi-copy` without fallback or unhandled crash.
+  - Disclaimer: Discrete GL renderer proof does not prove VAAPI decoding GPU; physical decoder device remains Unknown without direct kernel/driver VAAPI device telemetry.
+  - Exact command template: `timeout --signal=TERM --kill-after=10s 180s bash ./run_flatpak_gpu_validation.sh "<sample-path>" quick`
+  - Stop conditions: After this third run, stop immediately. No fourth run, no probes, no self-repair.
+- **Execution and accepted result of exceptional Run 3 (2026-09-23 11:37:47 – 11:39:06 UTC)**:
+  - Command template: `timeout --signal=TERM --kill-after=10s 180s bash ./run_flatpak_gpu_validation.sh "<sample-path>" quick`
+  - Exit code: `0`
+  - Overall result: `WARN` (exit 0)
+  - Report artifact: local report artifact `validation-reports/gpu-next-quick-20260923-163902.txt` (SHA-256: `7c2deb8441ecd416353911f714f7ed48d7637e39866cfa2462e44016055c0559`)
+  - Raw log artifact: local raw log artifact `validation-reports/gpu-next-quick-20260923-163750-524705.log` (SHA-256: `9ec99115999c6cd6d4b28886de21aec1f86bff605a1c67292216f5d72501e6fb`)
+  - Accepted evidence:
+    - Active renderer: `opengl-next`, status: `active`
+    - OpenGL renderer: target discrete GPU driver string matching target dGPU architecture
+    - Hardware decoding: `vaapi-copy` (`vd: Using hardware decoding (vaapi-copy).`)
+    - Target render format: `GL_RGBA16F / 16-bit`, published color state: `rec2100-pq`
+    - Drops / errors: FBO pool drops: 0, FBO allocation failures: 0, GL errors: 0, decoder drops: 0 (observed growth: 0), VO drops: 0 observed growth after baseline (initial sample counter: 21 at +0.0m baseline; not zero drops across the entire process lifetime)
+  - Unresolved observations:
+    - Fullscreen confirmation warning (`WARN: enter fullscreen — fullscreen state was not confirmed by GTK`) is retained as an unresolved observation.
+    - Multiple RPUs logged during playback (`ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in one AU. Skipping previous.`) are retained as unresolved observations; they are not declared harmless or conforming.
+  - Boundaries remaining open:
+    - Physical decoding GPU for VAAPI remains `Unknown` (neither mpv nor libva reports the underlying DRM device node in telemetry).
+    - Gate 2W (Wayland color-management protocol submission and surface lifecycle) remains `OPEN`.
+    - Dolby Vision validation (colorimetric accuracy, Profile 5 reshaping, enhancement layer / multi-RPU processing) remains `OPEN` (pending).
+  - Status: Accepted as WARN for the Flatpak packaging and discrete GPU Next startup row. The attempt family is complete; no fourth run is permitted without a new independent architecture review and explicit user authorization. (Full original command details, environment paths, and execution logs are retained exclusively in local non-public validation backup).

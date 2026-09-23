@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 app_id="io.github.rusmikev.CineHDR"
 bundle_path="${script_dir}/io.github.rusmikev.CineHDR-gpu-next.flatpak"
-expected_commit="1ca32dbf0f0ef57a3b11545b1ff9cf2ec5ab837a6ff1d2328e52a556d759d5c5"
+expected_commit="4edda5ddca09dd99f8897e3c51738a4f508bc7318029c891e0c4e78229e5d736"
 report_dir="${script_dir}/validation-reports"
 
 usage() {
@@ -59,6 +59,7 @@ flatpak run \
     "--filesystem=${video_path}:ro" \
     "--filesystem=${report_dir}:rw" \
     "--env=GDK_BACKEND=wayland" \
+    "--env=DRI_PRIME=pci-0000_03_00_0" \
     "--env=LIBVA_MESSAGING_LEVEL=2" \
     "--env=CINEHDR_RENDER_BACKEND=gpu-next" \
     "--env=CINEHDR_GPU_VALIDATION=quick" \
@@ -82,6 +83,15 @@ def validation_mpv_init(self, *args, **kwargs):
     return original_mpv_init(self, *args, **kwargs)
 
 mpv.MPV.__init__ = validation_mpv_init
+
+original_loadfile = mpv.MPV.loadfile
+
+def validation_loadfile(self, *args, **kwargs):
+    self["hwdec"] = "vaapi-copy"
+    return original_loadfile(self, *args, **kwargs)
+
+mpv.MPV.loadfile = validation_loadfile
+
 runpy.run_path("/app/bin/cinehdr", run_name="__main__")' \
     "${video_path}" 2>&1 | tee "${validation_log}"
 application_status="${PIPESTATUS[0]}"
@@ -94,9 +104,63 @@ fi
 
 new_report="$(find "${report_dir}" -maxdepth 1 -type f \
     -name 'gpu-next-quick-*.txt' -newer "${run_marker}" -print -quit)"
-if [[ -z "${new_report}" ]]; then
-    echo "CineHDR Flatpak validation ended without a new gpu-next quick report. Log: ${validation_log}" >&2
+if [[ -z "${new_report}" || ! -f "${new_report}" ]]; then
+    echo "CineHDR Flatpak validation ended without a valid report file. Log: ${validation_log}" >&2
     exit 1
 fi
 
-echo "CineHDR Flatpak validation report: ${new_report}"
+if [[ "$(grep -c '^Overall result:' "${new_report}" || true)" -ne 1 ]]; then
+    echo "CineHDR Flatpak validation rejected: ambiguous or missing report status in ${new_report}" >&2
+    exit 1
+fi
+
+if ! grep -Eq '^Overall result: (PASS|WARN)$' "${new_report}"; then
+    echo "CineHDR Flatpak validation rejected: status line is not exactly 'Overall result: PASS' or 'Overall result: WARN' in ${new_report}" >&2
+    exit 1
+fi
+
+if [[ "$(grep -c '^Active renderer:' "${new_report}" || true)" -ne 1 ]]; then
+    echo "CineHDR Flatpak validation rejected: ambiguous, duplicate or missing 'Active renderer' in ${new_report}" >&2
+    exit 1
+fi
+
+if ! grep -q '^Active renderer: opengl-next$' "${new_report}"; then
+    echo "CineHDR Flatpak validation rejected: expected 'Active renderer: opengl-next' in ${new_report}" >&2
+    exit 1
+fi
+
+if [[ "$(grep -c '^Renderer status:' "${new_report}" || true)" -ne 1 ]]; then
+    echo "CineHDR Flatpak validation rejected: ambiguous, duplicate or missing 'Renderer status' in ${new_report}" >&2
+    exit 1
+fi
+
+if ! grep -q '^Renderer status: active$' "${new_report}"; then
+    echo "CineHDR Flatpak validation rejected: expected 'Renderer status: active' in ${new_report}" >&2
+    exit 1
+fi
+
+if [[ "$(grep -c '^Hardware decoding:' "${new_report}" || true)" -ne 1 ]]; then
+    echo "CineHDR Flatpak validation rejected: ambiguous, duplicate or missing 'Hardware decoding' in ${new_report}" >&2
+    exit 1
+fi
+
+if ! grep -q '^Hardware decoding: vaapi-copy$' "${new_report}"; then
+    echo "CineHDR Flatpak validation rejected: expected 'Hardware decoding: vaapi-copy' in ${new_report}" >&2
+    exit 1
+fi
+
+if [[ "$(grep -c '^OpenGL renderer:' "${new_report}" || true)" -ne 1 ]]; then
+    echo "CineHDR Flatpak validation rejected: ambiguous, duplicate or missing 'OpenGL renderer' in ${new_report}" >&2
+    exit 1
+fi
+
+if ! grep -q '^OpenGL renderer:.*RX 9060 XT' "${new_report}"; then
+    echo "CineHDR Flatpak validation rejected: expected RX 9060 XT in 'OpenGL renderer' in ${new_report}" >&2
+    exit 1
+fi
+
+if grep -q '^Overall result: WARN$' "${new_report}"; then
+    echo "CineHDR Flatpak validation report (WARN): ${new_report}"
+else
+    echo "CineHDR Flatpak validation report: ${new_report}"
+fi
