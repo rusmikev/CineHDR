@@ -6,6 +6,9 @@
 
 import gi
 import logging
+import math
+import os
+from datetime import datetime, timezone
 from gettext import gettext as _
 
 gi.require_version("Adw", "1")
@@ -35,9 +38,9 @@ logger = logging.getLogger(__name__)
 def _positive_float(value):
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return number if number > 0 else None
+    return number if math.isfinite(number) and number > 0 else None
 
 
 def _source_peak_nits(params: dict) -> int | None:
@@ -60,23 +63,22 @@ def _hdr_status_text(
     """Describe HDR transport separately from optional HDR-to-HDR mapping."""
     if is_active and supported:
         from .hdr_detection import is_surface_submission_proven
-        proven = is_surface_submission_proven()
+        # The current gate can be overridden for tests; it is not a live
+        # protocol/presentation oracle and must never certify HDR output.
+        override = is_surface_submission_proven()
+        evidence = _("compositor submission unverified")
+        if override:
+            evidence += _("; test override enabled, not proof")
         numeric_target = _positive_float(target_peak)
         if (
             source_peak_nits is not None
             and numeric_target is not None
             and numeric_target < source_peak_nits * 0.9
         ):
-            if proven:
-                return _(
-                    "Active (HDR output · tone-mapped ~{source} → {target} nits)"
-                ).format(source=source_peak_nits, target=round(numeric_target))
             return _(
-                "Active (PQ target prepared · tone-mapped ~{source} → {target} nits; compositor submission unverified)"
-            ).format(source=source_peak_nits, target=round(numeric_target))
-        if proven:
-            return _("Active (Rec.2100 PQ HDR output)")
-        return _("Active (PQ target prepared; compositor submission unverified)")
+                "Active (Rec.2100 PQ target prepared · tone-mapped ~{source} → {target} nits; {evidence})"
+            ).format(source=source_peak_nits, target=round(numeric_target), evidence=evidence)
+        return _("Active (Rec.2100 PQ target prepared; {evidence})").format(evidence=evidence)
     if mode == "force-sdr":
         return _("Disabled (Force SDR mode)")
     if is_content:
@@ -108,6 +110,31 @@ def get_mpv_prop(mpv, name, default=None):
     return default
 
 
+def format_dovi_rpu_warnings(count: int | None, text: str | None) -> str:
+    """Format observed RPU log warnings without inferring frame/stream damage."""
+    if count is None:
+        return _("Unknown (warning observation unavailable)")
+    if count == 0:
+        return _("None (0 warning messages logged)")
+    msg = _("1 warning message logged") if count == 1 else _("{count} warning messages logged").format(count=count)
+    if text:
+        return f"{msg} ({text})"
+    return msg
+
+
+def get_dovi_rpu_warning_state(win, mpv=None) -> tuple[int | None, str | None]:
+    """Retrieve player-instance tracked RPU warning state safely."""
+    count = None
+    text = None
+    if win is not None:
+        count = getattr(win, "dovi_rpu_warning_count", None)
+        text = getattr(win, "dovi_rpu_warning_text", None)
+    if count is None and mpv is not None:
+        count = getattr(mpv, "_dovi_rpu_warning_count", None)
+        text = getattr(mpv, "_dovi_rpu_warning_text", None)
+    return count, text
+
+
 @Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/hdr_diagnostics.ui")
 class HdrDiagnosticsDialog(Adw.Dialog):
     __gtype_name__ = "HdrDiagnosticsDialog"
@@ -136,6 +163,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
     resolution_row: Adw.ActionRow = Gtk.Template.Child()
     hwdec_row: Adw.ActionRow = Gtk.Template.Child()
     dovi_profile_row: Adw.ActionRow = Gtk.Template.Child()
+    dovi_rpu_row: Adw.ActionRow = Gtk.Template.Child()
     primaries_row: Adw.ActionRow = Gtk.Template.Child()
     trc_row: Adw.ActionRow = Gtk.Template.Child()
     peak_luma_row: Adw.ActionRow = Gtk.Template.Child()
@@ -155,6 +183,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         self._copy_feedback_timer_id = None
         self._renderer_report_fields: dict[str, object] = {}
         self._performance_report_fields: dict[str, object] = {}
+        self._sampled_dovi_rpu_fact: str | None = None
         self.connect("realize", self._on_realize)
         self.connect("unrealize", self._on_unrealize)
         try:
@@ -232,7 +261,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
                 ("Graphics Offload", "offload_row"),
                 ("System HDR Limitation", "unsupported_reason_row"),
                 ("Gdk.ColorState", "color_state_row"),
-                ("Surface Format", "texture_format_row"),
+                ("FBO Format", "texture_format_row"),
             )
         )
         video = self._visible_row_values(
@@ -241,12 +270,32 @@ class HdrDiagnosticsDialog(Adw.Dialog):
                 ("Resolution & Pixel Format", "resolution_row"),
                 ("Hardware Acceleration", "hwdec_row"),
                 ("Dolby Vision Profile", "dovi_profile_row"),
+                ("Dolby Vision RPU Warnings", "dovi_rpu_row"),
                 ("Color Primaries", "primaries_row"),
                 ("Transfer Characteristics", "trc_row"),
                 ("Peak Luminance", "peak_luma_row"),
                 ("Target Tone Mapping", "target_row"),
             )
         )
+        mpv = getattr(self._win, "mpv", None)
+        if mpv is None and hasattr(self._win, "player"):
+            mpv = getattr(self._win.player, "mpv", None)
+        hw_config = get_mpv_prop(mpv, "hwdec")
+        hw_current = get_mpv_prop(mpv, "hwdec-current")
+        video["Configured decoder"] = hw_config if hw_config else "unknown"
+        video["Active decoder"] = hw_current if hw_current else "unknown"
+        video["Hardware decoding device"] = "Unknown (not reported by libmpv)"
+        rpu_fact = getattr(self, "_sampled_dovi_rpu_fact", None)
+        if rpu_fact is None:
+            if hasattr(self, "dovi_rpu_row") and hasattr(self.dovi_rpu_row, "get_subtitle"):
+                sub = self.dovi_rpu_row.get_subtitle()
+                if sub and sub != "Checking...":
+                    rpu_fact = sub
+            if rpu_fact is None:
+                rpu_count, rpu_text = get_dovi_rpu_warning_state(self._win, mpv)
+                rpu_fact = format_dovi_rpu_warnings(rpu_count, rpu_text)
+            self._sampled_dovi_rpu_fact = rpu_fact
+        video["Dolby Vision RPU Warnings"] = rpu_fact
         performance = dict(self._performance_report_fields)
         return build_video_output_report(
             self._renderer_report_fields, output, video, performance=performance
@@ -322,6 +371,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
                 renderer=requested_value, source=source_value
             ),
         )
+        runtime = getattr(gl_area, "render_runtime", {}) or {}
         active_label = {
             "opengl": _("Standard · OpenGL"),
             "opengl-next": _("GPU Next · Experimental"),
@@ -334,6 +384,9 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             active_label = _("{renderer} — stopped; restart required").format(
                 renderer=active_label
             )
+        gl_device = runtime.get("gl_renderer")
+        if gl_device:
+            active_label = f"{active_label} ({gl_device})"
         set_renderer_row("renderer_active_row", active_label)
 
         preference_restart = bool(
@@ -352,7 +405,6 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             visible_status = _("Running normally")
         set_renderer_row("renderer_reason_row", visible_status)
 
-        runtime = getattr(gl_area, "render_runtime", {}) or {}
         dependency_summary = _("Not initialized")
         if runtime:
             dependency_summary = (
@@ -457,6 +509,11 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             ),
             "Render target format": target_format or "not-rendered",
             "Render target depth": target_depth or "not-rendered",
+            "OpenGL device": runtime.get("gl_renderer") or "unknown",
+            "OpenGL vendor": runtime.get("gl_vendor") or "unknown",
+            "OpenGL renderer": runtime.get("gl_renderer") or "unknown",
+            "OpenGL version": runtime.get("gl_version") or "unknown",
+            "GLSL version": runtime.get("glsl_version") or "unknown",
             "libmpv path": runtime.get("libmpv_path", "unknown"),
             "mpv version": runtime.get("mpv_version", "unknown"),
             "libplacebo version": runtime.get("libplacebo_version", "unknown"),
@@ -524,9 +581,17 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         elif hint and hint in states:
             info = states[hint]
             if info.hdr:
-                peak = f", peak ~{int(info.max_lum)} nits" if info.max_lum else ""
+                maximum = _positive_float(info.max_lum)
+                peak = (
+                    f", reported color-volume max ~{maximum:g} nits; panel luminance not measured"
+                    if maximum is not None else ", reported luminance unknown; panel luminance not measured"
+                )
+                for label, attribute in (("target max", "target_max_lum"), ("target MaxCLL", "target_max_cll")):
+                    value = _positive_float(getattr(info, attribute, None))
+                    if value is not None:
+                        peak += f"; reported {label} {value:g} nits"
                 self.monitor_hdr_row.set_subtitle(
-                    _("HDR active on {c} ({tf}{peak})").format(c=hint, tf=info.tf_name, peak=peak)
+                    _("Compositor reports HDR on {c} ({tf}{peak})").format(c=hint, tf=info.tf_name, peak=peak)
                 )
             else:
                 self.monitor_hdr_row.set_subtitle(
@@ -536,7 +601,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             hdr_outputs = [c for c, i in states.items() if i.hdr]
             if hdr_outputs:
                 self.monitor_hdr_row.set_subtitle(
-                    _("HDR active on: {list}").format(list=", ".join(sorted(hdr_outputs)))
+                    _("Compositor reports HDR on: {list}; current output unknown").format(list=", ".join(sorted(hdr_outputs)))
                 )
             else:
                 self.monitor_hdr_row.set_subtitle(
@@ -557,18 +622,17 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         else:
             self.offload_row.set_subtitle(_("Enabled (subsurface / direct scanout possible)"))
 
-        if hasattr(Gdk, "ColorState") and hasattr(Gdk.ColorState, "get_rec2100_pq"):
-            if is_active and supported:
-                self.color_state_row.set_subtitle("Rec.2100 PQ (16-bit)")
-            else:
-                self.color_state_row.set_subtitle("sRGB (8-bit / SDR)")
-        else:
-            self.color_state_row.set_subtitle("N/A (GTK < 4.16)")
-
-        if is_active and supported:
-            self.texture_format_row.set_subtitle("GL_RGBA16F (16-bit Float, 64 bpp)")
-        else:
-            self.texture_format_row.set_subtitle("GL_RGBA8 (8-bit Int, 32 bpp)")
+        # Published texture evidence, not a prediction from the HDR checkbox.
+        color_state = getattr(gl_area, "render_color_state", None)
+        self.color_state_row.set_subtitle({
+            "rec2100-pq": "Rec.2100 PQ (published texture)",
+            "rec2100-linear": "Rec.2100 Linear (published texture)",
+            "srgb": "sRGB (published texture)",
+        }.get(color_state, _("Unknown / no published color state")))
+        self.texture_format_row.set_subtitle(
+            f"{target_format} ({target_depth}-bit render target; not the Wayland surface format)"
+            if target_format and target_depth else _("Unknown / target not rendered")
+        )
 
         # 2. Video Signal (libmpv)
         self._update_stream_info(mpv, params)
@@ -664,6 +728,20 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         except Exception:
             self.dovi_profile_row.set_visible(False)
 
+        rpu_count, rpu_text = get_dovi_rpu_warning_state(self._win, mpv)
+        rpu_fact = format_dovi_rpu_warnings(rpu_count, rpu_text)
+        self._sampled_dovi_rpu_fact = rpu_fact
+        if hasattr(self, "dovi_rpu_row") and hasattr(self.dovi_rpu_row, "set_subtitle"):
+            self.dovi_rpu_row.set_subtitle(rpu_fact)
+            is_dovi = (
+                getattr(self.dovi_profile_row, "get_visible", lambda: False)()
+                if hasattr(self, "dovi_profile_row")
+                else False
+            )
+            self.dovi_rpu_row.set_visible(
+                bool((rpu_count is not None and rpu_count > 0) or is_dovi or is_content)
+            )
+
         try:
             prim = params.get("primaries") or get_mpv_prop(mpv, "video-params/primaries") or _("Unknown")
             self.primaries_row.set_subtitle(str(prim))
@@ -737,17 +815,24 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             try:
                 hw_current = get_mpv_prop(mpv, "hwdec-current")
                 hw_config = get_mpv_prop(mpv, "hwdec")
+                hw_config_str = str(hw_config) if hw_config else "unknown"
                 if hw_current and str(hw_current).lower() not in ("no", "none", ""):
-                    self.hwdec_row.set_subtitle(f"{hw_current} ({_('GPU Acceleration active')})")
+                    self.hwdec_row.set_subtitle(
+                        f"{hw_current} ({_('GPU Acceleration active')}; configured: {hw_config_str})"
+                    )
                 elif hw_current and str(hw_current).lower() in ("no", "none"):
-                    self.hwdec_row.set_subtitle(_("Software / CPU Decoding"))
+                    self.hwdec_row.set_subtitle(
+                        f"{_('Software / CPU Decoding')} (active: no; configured: {hw_config_str})"
+                    )
                 elif hw_current is None or str(hw_current).strip() == "":
                     if hw_config and str(hw_config).lower() not in ("no", "none", ""):
-                        self.hwdec_row.set_subtitle(f"{_('Unknown (configured: ')}{hw_config})")
+                        self.hwdec_row.set_subtitle(f"{_('Unknown (configured: ')}{hw_config_str})")
                     else:
                         self.hwdec_row.set_subtitle(_("Unknown"))
                 else:
-                    self.hwdec_row.set_subtitle(_("Software / CPU Decoding"))
+                    self.hwdec_row.set_subtitle(
+                        f"{_('Software / CPU Decoding')} (active: {hw_current}; configured: {hw_config_str})"
+                    )
             except Exception:
                 self.hwdec_row.set_subtitle(_("Unknown"))
 
@@ -770,11 +855,11 @@ class HdrDiagnosticsDialog(Adw.Dialog):
 
         fps_parts = []
         if vf_fps:
-            fps_parts.append(f"{vf_fps:.2f} fps")
+            fps_parts.append(f"{vf_fps:.2f} fps (filter estimate, not presentation)")
         elif c_fps:
             fps_parts.append(f"{c_fps:.2f} fps (container)")
         else:
-            fps_parts.append(_("Waiting for playback"))
+            fps_parts.append(_("Unknown (frame-rate properties unavailable)"))
 
         extra_fps = []
         if c_fps and vf_fps:
@@ -790,36 +875,46 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             self.perf_fps_row.set_subtitle(fps_subtitle)
 
         # 2. Dropped frames (VO + Decoder + Pipeline)
-        def _int_or_zero(val):
+        def _count_or_unknown(val):
             try:
-                return int(val) if val is not None else 0
-            except (TypeError, ValueError):
-                return 0
+                number = float(val)
+                if not isinstance(val, bool) and math.isfinite(number) and number >= 0 and number.is_integer():
+                    return int(number)
+            except (TypeError, ValueError, OverflowError):
+                pass
+            return _("unknown")
 
-        vo_drops = _int_or_zero(get_mpv_prop(mpv, "frame-drop-count"))
-        dec_drops = _int_or_zero(get_mpv_prop(mpv, "decoder-frame-drop-count"))
+        vo_drops = _count_or_unknown(get_mpv_prop(mpv, "frame-drop-count"))
+        dec_drops = _count_or_unknown(get_mpv_prop(mpv, "decoder-frame-drop-count"))
 
         fbo_pool = getattr(gl_area, "fbo_pool", None) if gl_area else None
-        fbo_drops = getattr(fbo_pool, "dropped_frames", 0) if fbo_pool else 0
-        fbo_alloc_failures = getattr(fbo_pool, "allocation_failures", 0) if fbo_pool else 0
+        fbo_drops = _count_or_unknown(getattr(fbo_pool, "dropped_frames", None))
+        fbo_alloc_failures = _count_or_unknown(getattr(fbo_pool, "allocation_failures", None))
 
         dropped_subtitle = (
-            f"VO: {vo_drops} · Decoder: {dec_drops} · Pipeline (FBO): {fbo_drops}"
+            f"VO: {vo_drops} · Decoder: {dec_drops} · Pipeline (FBO): {fbo_drops} "
+            f"(baseline: Unknown (not sampled); interval: Unknown; observed growth: Unknown)"
         )
         if hasattr(self, "perf_dropped_row") and hasattr(self.perf_dropped_row, "set_subtitle"):
             self.perf_dropped_row.set_subtitle(dropped_subtitle)
 
         # 3. Delayed and mistimed frames
-        delayed = _int_or_zero(get_mpv_prop(mpv, "vo-delayed-frame-count"))
-        mistimed = _int_or_zero(get_mpv_prop(mpv, "mistimed-frame-count"))
-        delayed_subtitle = f"Delayed: {delayed} · Mistimed: {mistimed}"
+        delayed = _count_or_unknown(get_mpv_prop(mpv, "vo-delayed-frame-count"))
+        mistimed = _count_or_unknown(get_mpv_prop(mpv, "mistimed-frame-count"))
+        delayed_subtitle = (
+            f"Delayed: {delayed} · Mistimed: {mistimed} "
+            f"(baseline: Unknown (not sampled); interval: Unknown; observed growth: Unknown)"
+        )
         if hasattr(self, "perf_delayed_row") and hasattr(self.perf_delayed_row, "set_subtitle"):
             self.perf_delayed_row.set_subtitle(delayed_subtitle)
 
-        # 4. Presented frames
-        presented = getattr(gl_area, "render_frame_generation", 0) if gl_area else 0
-        pool_size = getattr(fbo_pool, "size", 0) if fbo_pool else 0
-        rendered_subtitle = f"{presented:,} frames (FBO ring: {pool_size} buffers)"
+        # 4. Texture publications can include redraws, not display presentations.
+        published = _count_or_unknown(getattr(gl_area, "render_frame_generation", None))
+        pool_size = _count_or_unknown(getattr(fbo_pool, "size", None))
+        rendered_subtitle = (
+            f"{published} texture publications (FBO ring: {pool_size}; "
+            f"baseline: Unknown (not sampled); interval: Unknown; presentations unmeasured)"
+        )
         if hasattr(self, "perf_rendered_row") and hasattr(self.perf_rendered_row, "set_subtitle"):
             self.perf_rendered_row.set_subtitle(rendered_subtitle)
 
@@ -829,7 +924,9 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             raw_avsync = get_mpv_prop(mpv, "avsync")
             if raw_avsync is not None:
                 avsync = float(raw_avsync)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            avsync = None
+        if avsync is not None and not math.isfinite(avsync):
             avsync = None
 
         total_drift = None
@@ -837,15 +934,17 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             raw_drift = get_mpv_prop(mpv, "total-avsync-change")
             if raw_drift is not None:
                 total_drift = float(raw_drift)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            total_drift = None
+        if total_drift is not None and not math.isfinite(total_drift):
             total_drift = None
 
         if avsync is not None:
             avsync_ms = avsync * 1000.0
-            drift_str = f"drift: {total_drift:+.3f} s" if total_drift is not None else "no drift"
+            drift_str = f"drift: {total_drift:+.3f} s" if total_drift is not None else "drift unknown"
             avsync_subtitle = f"{avsync_ms:+.1f} ms ({drift_str})"
         else:
-            avsync_subtitle = _("Synchronized / No audio sync offset")
+            avsync_subtitle = _("Unknown (A/V sync property unavailable)")
         if hasattr(self, "perf_avsync_row") and hasattr(self.perf_avsync_row, "set_subtitle"):
             self.perf_avsync_row.set_subtitle(avsync_subtitle)
 
@@ -853,22 +952,23 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         pipeline_status = getattr(gl_area, "render_session_status", "not-initialized") if gl_area else "unknown"
         failure_reason = getattr(gl_area, "render_failure_reason", None) if gl_area else None
         restart_reason = getattr(gl_area, "_render_restart_required_reason", None) if gl_area else None
-        scale = getattr(gl_area, "_cached_scale", 1.0) if gl_area else 1.0
+        scale = _positive_float(getattr(gl_area, "_cached_scale", None))
+        scale_text = f"{scale:.2f}x" if scale is not None else _("unknown")
         max_w = getattr(gl_area, "_cached_max_width", 0) if gl_area else 0
         max_h = getattr(gl_area, "_cached_max_height", 0) if gl_area else 0
-        target_fmt = getattr(gl_area, "render_target_format", "not-rendered") if gl_area else "unknown"
-        target_depth = getattr(gl_area, "render_target_depth", 0) if gl_area else 0
+        target_fmt = getattr(gl_area, "render_target_format", None) or _("unknown")
+        target_depth = getattr(gl_area, "render_target_depth", None) or _("unknown")
 
         if failure_reason or restart_reason:
             err = failure_reason or restart_reason
             pipeline_subtitle = f"Failed ({err})"
-        elif fbo_alloc_failures > 0:
+        elif isinstance(fbo_alloc_failures, int) and fbo_alloc_failures > 0:
             pipeline_subtitle = f"Warning: {fbo_alloc_failures} FBO allocation failures"
         elif pipeline_status == "active":
             limit_str = f" · max {max_w}x{max_h}" if max_w > 0 else ""
-            pipeline_subtitle = f"Active · {target_fmt} ({target_depth}-bit) · Scale {scale:.2f}x{limit_str}"
+            pipeline_subtitle = f"Active · {target_fmt} ({target_depth}-bit) · Scale {scale_text}{limit_str}"
         elif pipeline_status == "startup-fallback":
-            pipeline_subtitle = f"Fallback active · {target_fmt} ({target_depth}-bit) · Scale {scale:.2f}x"
+            pipeline_subtitle = f"Fallback active · {target_fmt} ({target_depth}-bit) · Scale {scale_text}"
         else:
             pipeline_subtitle = pipeline_status
 
@@ -877,19 +977,27 @@ class HdrDiagnosticsDialog(Adw.Dialog):
 
         # Store for copyable report
         self._performance_report_fields = {
-            "Playback FPS": f"{vf_fps:.3f}" if vf_fps is not None else "unknown",
+            "Sample time (UTC)": datetime.now(timezone.utc).isoformat(),
+            "Process ID": os.getpid(),
+            "Filter FPS estimate (estimated-vf-fps)": f"{vf_fps:.3f}" if vf_fps is not None else "unknown",
             "Container FPS": f"{c_fps:.3f}" if c_fps is not None else "unknown",
-            "Display FPS": f"{d_fps:.3f}" if d_fps is not None else "unknown",
+            "Display refresh estimate (Hz)": f"{d_fps:.3f}" if d_fps is not None else "unknown",
+            "Measured presentation FPS": "unavailable (no presentation timing capture)",
+            "Counter scope": "cumulative; measurement interval/reset identity unknown; not a drop rate",
+            "Counter baseline": "Unknown (not sampled)",
+            "Counter measurement interval": "Unknown (point-in-time sample)",
+            "Counter observed growth": "Unknown (single sample; delta unmeasured)",
             "VO frame drops": vo_drops,
             "Decoder frame drops": dec_drops,
             "Pipeline (FBO) drops": fbo_drops,
             "FBO allocation failures": fbo_alloc_failures,
             "VO delayed frames": delayed,
             "Mistimed frames": mistimed,
-            "Presented frames": presented,
-            "A/V sync offset": f"{avsync * 1000:+.2f} ms" if avsync is not None else "unknown",
-            "Total A/V sync change": f"{total_drift:+.3f} s" if total_drift is not None else "0.000 s",
+            "Published textures (includes redraws)": published,
+            "Presented frames": "unavailable (texture publication is not presentation)",
+            "A/V sync offset": avsync_subtitle,
+            "Total A/V sync change": f"{total_drift:+.3f} s" if total_drift is not None else "unknown",
             "Pipeline status": pipeline_subtitle,
-            "Render target surface": f"{target_fmt} ({target_depth}-bit)",
-            "Effective scale": f"{scale:.2f}",
+            "FBO render target (not Wayland surface)": f"{target_fmt} ({target_depth}-bit)",
+            "Effective scale": scale_text,
         }

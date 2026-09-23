@@ -861,6 +861,9 @@ class TestHdrDiagnostics(unittest.TestCase):
         class MockGLArea:
             hdr_controller = MockController()
             _color_state = None
+            render_color_state = "rec2100-pq"
+            render_target_format = "GL_RGBA16F"
+            render_target_depth = 16
 
         class MockMpv:
             def get_property(self, name):
@@ -907,6 +910,24 @@ class TestHdrDiagnostics(unittest.TestCase):
         self.assertIn("TRC: pq | Prim: dci-p3 | Peak: 1000", diag.target_row.subtitle)
         self.assertEqual(diag.dovi_profile_row.subtitle, "No (Standard HDR10 / HLG)")
         self.assertTrue(diag.dovi_profile_row.visible)
+
+        from types import SimpleNamespace
+        diag._win.gl_area.hdr_controller.output_hint = "HDMI-1"
+        info = SimpleNamespace(hdr=True, max_lum=10000, tf_name="st2084_pq",
+                               target_max_lum=4000, target_max_cll=1500)
+        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value={"HDMI-1": info}):
+            diag.update_diagnostics()
+        self.assertIn("reported color-volume max ~10000", diag.monitor_hdr_row.subtitle)
+        self.assertIn("panel luminance not measured", diag.monitor_hdr_row.subtitle)
+        self.assertIn("target MaxCLL 1500", diag.monitor_hdr_row.subtitle)
+        self.assertNotIn("peak ~10000", diag.monitor_hdr_row.subtitle)
+
+        diag._win.gl_area.render_color_state = None
+        diag._win.gl_area.render_target_format = None
+        diag._win.gl_area.render_target_depth = None
+        diag.update_diagnostics()
+        self.assertIn("Unknown", diag.color_state_row.subtitle)
+        self.assertIn("Unknown", diag.texture_format_row.subtitle)
 
     @unittest.mock.patch("src.hdr_diagnostics.check_hdr_support", return_value=True)
     def test_update_diagnostics_dolby_vision(self, mock_check):
@@ -1058,6 +1079,109 @@ class TestHdrDiagnostics(unittest.TestCase):
                 target_peak=1000,
             )
             self.assertIn("Rec.2100 PQ", pq_proven)
+            self.assertIn("unverified", pq_proven)
+            self.assertIn("override", pq_proven)
+            self.assertNotIn("HDR output", pq_proven)
+
+    def _performance_snapshot(self, props, area=None):
+        from types import SimpleNamespace
+        from src.hdr_diagnostics import HdrDiagnosticsDialog
+
+        class Row:
+            subtitle = ""
+            def set_subtitle(self, value):
+                self.subtitle = value
+
+        dialog = SimpleNamespace(_win=SimpleNamespace())
+        for name in ("fps", "dropped", "delayed", "rendered", "avsync", "pipeline"):
+            setattr(dialog, f"perf_{name}_row", Row())
+        HdrDiagnosticsDialog._update_performance_info(dialog, props, area)
+        return dialog
+
+    def test_missing_performance_is_unknown_not_success(self):
+        diag = self._performance_snapshot({})
+        report = diag._performance_report_fields
+        for name in ("VO frame drops", "Decoder frame drops", "Pipeline (FBO) drops",
+                     "FBO allocation failures", "VO delayed frames", "Mistimed frames",
+                     "Published textures (includes redraws)", "Total A/V sync change"):
+            self.assertEqual(report[name], "unknown", name)
+        self.assertIn("Unknown", diag.perf_avsync_row.subtitle)
+        self.assertNotIn("Synchronized", diag.perf_avsync_row.subtitle)
+        self.assertEqual(report["A/V sync offset"], diag.perf_avsync_row.subtitle)
+        self.assertIn("unavailable", report["Presented frames"])
+        self.assertIn("unavailable", report["Measured presentation FPS"])
+
+    def test_real_zero_and_publication_remain_distinct(self):
+        from types import SimpleNamespace
+        from src.diagnostics_report import build_video_output_report
+        area = SimpleNamespace(
+            render_frame_generation=14958, _cached_scale=1.25,
+            fbo_pool=SimpleNamespace(size=5, dropped_frames=0, allocation_failures=0),
+        )
+        diag = self._performance_snapshot({
+            "estimated-vf-fps": 23.976, "container-fps": 23.976,
+            "frame-drop-count": 20, "decoder-frame-drop-count": 0,
+            "vo-delayed-frame-count": 0, "mistimed-frame-count": 0,
+            "avsync": 0, "total-avsync-change": 0,
+        }, area)
+        fields = diag._performance_report_fields
+        self.assertEqual(fields["Decoder frame drops"], 0)
+        self.assertEqual(fields["Pipeline (FBO) drops"], 0)
+        self.assertEqual(fields["Published textures (includes redraws)"], 14958)
+        self.assertIn("unavailable", fields["Presented frames"])
+        self.assertIn("not presentation", diag.perf_fps_row.subtitle)
+        self.assertNotIn("Playback FPS", fields)
+        self.assertEqual(fields["A/V sync offset"], diag.perf_avsync_row.subtitle)
+        self.assertIn("+0.0 ms", fields["A/V sync offset"])
+        self.assertEqual(fields["Counter baseline"], "Unknown (not sampled)")
+        self.assertEqual(fields["Counter observed growth"], "Unknown (single sample; delta unmeasured)")
+        self.assertIn("reset identity unknown", fields["Counter scope"])
+        report = build_video_output_report({}, {}, {}, performance=fields)
+        self.assertIn("Published textures (includes redraws): 14958", report)
+        self.assertNotIn("Presented frames: 14958", report)
+        self.assertIn("Process ID:", report)
+
+    def test_single_sample_counter_and_growth_baseline_unknown(self):
+        from types import SimpleNamespace
+        area = SimpleNamespace(
+            render_frame_generation=100, _cached_scale=1.0,
+            fbo_pool=SimpleNamespace(size=3, dropped_frames=0, allocation_failures=0),
+        )
+        diag = self._performance_snapshot({
+            "frame-drop-count": 21,
+            "decoder-frame-drop-count": 0,
+            "vo-delayed-frame-count": 0,
+            "mistimed-frame-count": 0,
+        }, area)
+        fields = diag._performance_report_fields
+        # При значении счётчика 0 сам счётчик остаётся нулём
+        self.assertEqual(fields["Decoder frame drops"], 0)
+        self.assertEqual(fields["Pipeline (FBO) drops"], 0)
+        self.assertEqual(fields["VO delayed frames"], 0)
+        self.assertEqual(fields["Mistimed frames"], 0)
+        # При счётчике 21 сам счётчик равен 21
+        self.assertEqual(fields["VO frame drops"], 21)
+        # Базовая точка и наблюдаемый прирост остаются Unknown
+        self.assertEqual(fields["Counter baseline"], "Unknown (not sampled)")
+        self.assertEqual(fields["Counter observed growth"], "Unknown (single sample; delta unmeasured)")
+        self.assertIn("baseline: Unknown (not sampled)", diag.perf_dropped_row.subtitle)
+        self.assertIn("observed growth: Unknown", diag.perf_dropped_row.subtitle)
+        self.assertIn("VO: 21", diag.perf_dropped_row.subtitle)
+        self.assertIn("Decoder: 0", diag.perf_dropped_row.subtitle)
+
+    def test_invalid_performance_is_not_zero_or_nan(self):
+        for invalid in (None, "", "invalid", float("nan"), float("inf"), -1, 1.5, True):
+            with self.subTest(value=invalid):
+                diag = self._performance_snapshot({"frame-drop-count": invalid})
+                self.assertEqual(diag._performance_report_fields["VO frame drops"], "unknown")
+        for invalid in (float("nan"), float("inf"), "-inf", "invalid"):
+            diag = self._performance_snapshot({
+                "avsync": invalid, "total-avsync-change": invalid,
+                "estimated-vf-fps": invalid,
+            })
+            self.assertIn("Unknown", diag.perf_avsync_row.subtitle)
+            self.assertEqual(diag._performance_report_fields["Total A/V sync change"], "unknown")
+            self.assertEqual(diag._performance_report_fields["Filter FPS estimate (estimated-vf-fps)"], "unknown")
 
 
 class TestAuditFixes(unittest.TestCase):
@@ -2228,6 +2352,281 @@ class TestHwdecDiagnosticsReporting(unittest.TestCase):
     def test_hwdec_unknown_when_both_missing(self):
         sub = self._get_subtitle({"hwdec-current": None, "hwdec": None})
         self.assertEqual(sub, "Unknown")
+
+
+class TestDoviRpuWarningDiagnostics(unittest.TestCase):
+    """Tests for Dolby Vision RPU log warning tracking and diagnostics reporting."""
+
+    def _make_dummy_owner(self):
+        class DummyOwner:
+            def __init__(self):
+                self.dovi_rpu_warning_count = 0
+                self.dovi_rpu_warning_text = None
+                self._dovi_rpu_logged = False
+                self.mpv = MagicMock()
+        return DummyOwner()
+
+    def test_first_warning_saved_and_text_captured(self):
+        from src.window import make_mpv_log_handler
+        owner = self._make_dummy_owner()
+        mock_logger = MagicMock()
+        handler = make_mpv_log_handler(owner, mock_logger)
+
+        raw_msg = "hevc: Multiple Dolby Vision RPUs found in frame 42\n"
+        handler("warn", "ffmpeg/video", raw_msg)
+
+        self.assertEqual(owner.dovi_rpu_warning_count, 1)
+        self.assertEqual(
+            owner.dovi_rpu_warning_text,
+            "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 42",
+        )
+        self.assertEqual(owner.mpv._dovi_rpu_warning_count, 1)
+        self.assertEqual(
+            owner.mpv._dovi_rpu_warning_text,
+            "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 42",
+        )
+        mock_logger.warning.assert_called_once()
+        warning_args = mock_logger.warning.call_args[0]
+        self.assertIn("further duplicate RPU warnings suppressed", warning_args[0])
+
+    def test_repeated_warnings_counted_without_spam(self):
+        from src.window import make_mpv_log_handler
+        owner = self._make_dummy_owner()
+        mock_logger = MagicMock()
+        handler = make_mpv_log_handler(owner, mock_logger)
+
+        first_msg = "hevc: Multiple Dolby Vision RPUs found in frame 1\n"
+        handler("warn", "ffmpeg/video", first_msg)
+        first_text = owner.dovi_rpu_warning_text
+
+        for frame in range(2, 10):
+            handler("warn", "ffmpeg/video", f"hevc: Multiple Dolby Vision RPUs found in frame {frame}\n")
+
+        self.assertEqual(owner.dovi_rpu_warning_count, 9)
+        self.assertEqual(owner.dovi_rpu_warning_text, first_text)
+        self.assertEqual(owner.mpv._dovi_rpu_warning_count, 9)
+        self.assertEqual(mock_logger.warning.call_count, 1)
+        mock_logger.log.assert_not_called()
+
+    def test_other_warnings_and_errors_not_lost(self):
+        import logging
+        from src.window import make_mpv_log_handler
+        owner = self._make_dummy_owner()
+        mock_logger = MagicMock()
+        handler = make_mpv_log_handler(owner, mock_logger)
+
+        handler("error", "ffmpeg", "decode error on packet 10\n")
+        handler("info", "cplayer", "buffering: 100%\n")
+
+        self.assertEqual(owner.dovi_rpu_warning_count, 0)
+        self.assertIsNone(owner.dovi_rpu_warning_text)
+        mock_logger.warning.assert_not_called()
+        self.assertEqual(mock_logger.log.call_count, 2)
+        mock_logger.log.assert_any_call(logging.WARNING, "[%s] %s", "ffmpeg", "decode error on packet 10")
+        mock_logger.log.assert_any_call(logging.DEBUG, "[%s] %s", "cplayer", "buffering: 100%")
+
+    def test_unavailable_observation_does_not_become_confirmed_zero(self):
+        from src.hdr_diagnostics import (
+            format_dovi_rpu_warnings,
+            get_dovi_rpu_warning_state,
+        )
+
+        # When observation is unavailable (None), must be Unknown, never None/0
+        unavail = format_dovi_rpu_warnings(None, None)
+        self.assertIn("Unknown", unavail)
+        self.assertNotIn("None (0", unavail)
+        self.assertNotIn("corrupt", unavail.lower())
+
+        # When observation is confirmed zero, must be None/0, never Unknown
+        zero = format_dovi_rpu_warnings(0, None)
+        self.assertIn("None (0", zero)
+        self.assertNotIn("Unknown", zero)
+        self.assertNotIn("corrupt", zero.lower())
+
+        # get_dovi_rpu_warning_state preserves None when attributes are missing
+        empty_win = MagicMock(spec=[])
+        count, text = get_dovi_rpu_warning_state(empty_win, None)
+        self.assertIsNone(count)
+        self.assertIsNone(text)
+
+        # get_dovi_rpu_warning_state preserves 0 when attribute is 0
+        owner = self._make_dummy_owner()
+        count, text = get_dovi_rpu_warning_state(owner, None)
+        self.assertEqual(count, 0)
+        self.assertIsNone(text)
+
+    def test_ui_and_copy_report_reflect_identical_facts(self):
+        from src.hdr_diagnostics import (
+            HdrDiagnosticsDialog,
+            format_dovi_rpu_warnings,
+        )
+
+        test_cases = [
+            (None, None),
+            (0, None),
+            (1, "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 1"),
+            (7, "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 1"),
+        ]
+
+        for count, text in test_cases:
+            with self.subTest(count=count, text=text):
+                diag = HdrDiagnosticsDialog.__new__(HdrDiagnosticsDialog)
+                diag.dovi_rpu_row = MagicMock()
+                diag.dovi_profile_row = MagicMock()
+                diag.dovi_profile_row.get_visible.return_value = True
+                diag.status_row = MagicMock()
+                diag.display_hdr_row = MagicMock()
+                diag.compositor_cm_row = MagicMock()
+                diag.monitor_hdr_row = MagicMock()
+                diag.unsupported_reason_row = MagicMock()
+                diag.offload_row = MagicMock()
+                diag.color_state_row = MagicMock()
+                diag.texture_format_row = MagicMock()
+                diag.codec_row = MagicMock()
+                diag.resolution_row = MagicMock()
+                diag.hwdec_row = MagicMock()
+                diag.primaries_row = MagicMock()
+                diag.trc_row = MagicMock()
+                diag.peak_luma_row = MagicMock()
+                diag.target_row = MagicMock()
+                diag.renderer_active_row = MagicMock()
+                diag.renderer_configured_row = MagicMock()
+                diag.renderer_reason_row = MagicMock()
+                diag.renderer_target_row = MagicMock()
+                diag.renderer_requested_row = MagicMock()
+                diag.renderer_dependency_row = MagicMock()
+                diag.gpu_next_capability_row = MagicMock()
+                diag.dovi_capability_row = MagicMock()
+                diag._renderer_report_fields = {}
+                diag._performance_report_fields = {}
+
+                mock_win = MagicMock()
+                mock_win.dovi_rpu_warning_count = count
+                mock_win.dovi_rpu_warning_text = text
+                mock_mpv = MagicMock()
+                mock_mpv._dovi_rpu_warning_count = count
+                mock_mpv._dovi_rpu_warning_text = text
+                mock_mpv.get_property.return_value = None
+                mock_mpv.__getitem__.side_effect = KeyError
+                mock_win.mpv = mock_mpv
+                mock_win.player.mpv = mock_mpv
+                mock_win._video_area = None
+                mock_win.gl_area = None
+                diag._win = mock_win
+
+                diag.update_diagnostics()
+                ui_subtitle = diag.dovi_rpu_row.set_subtitle.call_args[0][0]
+
+                diag.dovi_rpu_row.get_subtitle.return_value = ui_subtitle
+                diag.dovi_rpu_row.get_visible.return_value = True
+
+                expected_fact = format_dovi_rpu_warnings(count, text)
+                self.assertEqual(ui_subtitle, expected_fact)
+
+                report = diag._copy_report()
+                self.assertIn(f"Dolby Vision RPU Warnings: {expected_fact}", report)
+
+    def test_cinewindow_wires_actual_mpv_log_handler_without_gtk_or_gpu(self):
+        """Verify CineWindow passes self._mpv_log_handler to mpv.MPV without NameError."""
+        from src.window import CineWindow
+        win = CineWindow.__new__(CineWindow)
+        app_mock = MagicMock()
+        captured_kwargs = {}
+
+        def mock_mpv_constructor(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            raise StopIteration("mpv_initialized")
+
+        with patch("src.window.Adw.ApplicationWindow.__init__", return_value=None), \
+             patch("src.window.Gtk.WindowGroup"), \
+             patch("src.window.settings"), \
+             patch("src.window.mpv.MPV", side_effect=mock_mpv_constructor):
+            with self.assertRaises(StopIteration):
+                win.__init__(application=app_mock)
+
+        self.assertIn("log_handler", captured_kwargs)
+        self.assertIs(captured_kwargs["log_handler"], win._mpv_log_handler)
+        self.assertTrue(callable(win._mpv_log_handler))
+
+        # Verify executing the wired log handler records RPU warning on win
+        captured_kwargs["log_handler"]("warn", "ffmpeg/video", "hevc: Multiple Dolby Vision RPUs found in frame 10")
+        self.assertEqual(win.dovi_rpu_warning_count, 1)
+        self.assertEqual(win.dovi_rpu_warning_text, "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 10")
+
+    def test_diagnostics_export_preserves_consistent_snapshot_when_new_warning_arrives(self):
+        """Export must use the snapshot taken at update_diagnostics and not re-read mutable counters."""
+        from src.hdr_diagnostics import HdrDiagnosticsDialog, format_dovi_rpu_warnings
+
+        diag = HdrDiagnosticsDialog.__new__(HdrDiagnosticsDialog)
+        diag.dovi_rpu_row = MagicMock()
+        diag.dovi_profile_row = MagicMock()
+        diag.dovi_profile_row.get_visible.return_value = True
+        diag.status_row = MagicMock()
+        diag.display_hdr_row = MagicMock()
+        diag.compositor_cm_row = MagicMock()
+        diag.monitor_hdr_row = MagicMock()
+        diag.unsupported_reason_row = MagicMock()
+        diag.offload_row = MagicMock()
+        diag.color_state_row = MagicMock()
+        diag.texture_format_row = MagicMock()
+        diag.codec_row = MagicMock()
+        diag.resolution_row = MagicMock()
+        diag.hwdec_row = MagicMock()
+        diag.primaries_row = MagicMock()
+        diag.trc_row = MagicMock()
+        diag.peak_luma_row = MagicMock()
+        diag.target_row = MagicMock()
+        diag.renderer_active_row = MagicMock()
+        diag.renderer_configured_row = MagicMock()
+        diag.renderer_reason_row = MagicMock()
+        diag.renderer_target_row = MagicMock()
+        diag.renderer_requested_row = MagicMock()
+        diag.renderer_dependency_row = MagicMock()
+        diag.gpu_next_capability_row = MagicMock()
+        diag.dovi_capability_row = MagicMock()
+        diag._renderer_report_fields = {}
+        diag._performance_report_fields = {}
+
+        mock_win = MagicMock()
+        mock_win.dovi_rpu_warning_count = 1
+        mock_win.dovi_rpu_warning_text = "ffmpeg: Multiple Dolby Vision RPUs found in frame 1"
+        mock_mpv = MagicMock()
+        mock_mpv._dovi_rpu_warning_count = 1
+        mock_mpv._dovi_rpu_warning_text = mock_win.dovi_rpu_warning_text
+        mock_mpv.get_property.return_value = None
+        mock_mpv.__getitem__.side_effect = KeyError
+        mock_win.mpv = mock_mpv
+        mock_win.player.mpv = mock_mpv
+        mock_win._video_area = None
+        mock_win.gl_area = None
+        diag._win = mock_win
+
+        # 1. Update UI diagnostics with count = 1
+        diag.update_diagnostics()
+        first_snapshot_fact = format_dovi_rpu_warnings(1, mock_win.dovi_rpu_warning_text)
+        self.assertEqual(diag._sampled_dovi_rpu_fact, first_snapshot_fact)
+        diag.dovi_rpu_row.get_subtitle.return_value = first_snapshot_fact
+        diag.dovi_rpu_row.get_visible.return_value = True
+
+        # 2. A new warning arrives in background (count becomes 2)
+        mock_win.dovi_rpu_warning_count = 2
+        mock_mpv._dovi_rpu_warning_count = 2
+
+        # 3. Export Copy Report without calling update_diagnostics()
+        report_1 = diag._copy_report()
+        self.assertIn(f"Dolby Vision RPU Warnings: {first_snapshot_fact}", report_1)
+        self.assertNotIn("2 warning messages logged", report_1)
+
+        # 4. Next UI update takes a new snapshot
+        diag.update_diagnostics()
+        second_snapshot_fact = format_dovi_rpu_warnings(2, mock_win.dovi_rpu_warning_text)
+        self.assertEqual(diag._sampled_dovi_rpu_fact, second_snapshot_fact)
+        diag.dovi_rpu_row.get_subtitle.return_value = second_snapshot_fact
+
+        # 5. Export now reflects the new snapshot
+        report_2 = diag._copy_report()
+        self.assertIn(f"Dolby Vision RPU Warnings: {second_snapshot_fact}", report_2)
+        self.assertNotIn(f"Dolby Vision RPU Warnings: {first_snapshot_fact}", report_2)
 
 
 if __name__ == "__main__":

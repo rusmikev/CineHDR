@@ -79,6 +79,37 @@ gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1120, 630
 
 
+def make_mpv_log_handler(owner, mpv_logger=None):
+    """Create an mpv log handler that tracks Dolby Vision RPU warnings without spamming or invoking GTK."""
+    if mpv_logger is None:
+        mpv_logger = logging.getLogger("mpv")
+
+    def _mpv_log_handler(level: str, prefix: str, message: str):
+        if "Multiple Dolby Vision RPUs" in message:
+            owner.dovi_rpu_warning_count += 1
+            clean_msg = message.strip()
+            if owner.dovi_rpu_warning_text is None:
+                if prefix and not clean_msg.startswith(prefix):
+                    owner.dovi_rpu_warning_text = f"{prefix}: {clean_msg}"
+                else:
+                    owner.dovi_rpu_warning_text = clean_msg
+            if hasattr(owner, "mpv") and owner.mpv is not None:
+                owner.mpv._dovi_rpu_warning_count = owner.dovi_rpu_warning_count
+                owner.mpv._dovi_rpu_warning_text = owner.dovi_rpu_warning_text
+            if not owner._dovi_rpu_logged:
+                owner._dovi_rpu_logged = True
+                mpv_logger.warning(
+                    "[%s] %s (further duplicate RPU warnings suppressed)",
+                    prefix,
+                    clean_msg,
+                )
+            return
+        lvl = logging.WARNING if level in ("warn", "error", "fatal") else logging.DEBUG
+        mpv_logger.log(lvl, "[%s] %s", prefix, message.rstrip())
+
+    return _mpv_log_handler
+
+
 @Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/window.ui")
 class CineWindow(Adw.ApplicationWindow):
     __gtype_name__ = "CineWindow"
@@ -193,14 +224,14 @@ class CineWindow(Adw.ApplicationWindow):
 
         mpv_logger = logging.getLogger("mpv")
 
-        def _mpv_log_handler(level: str, prefix: str, message: str):
-            if "Multiple Dolby Vision RPUs" in message:
-                return
-            lvl = logging.WARNING if level in ("warn", "error", "fatal") else logging.DEBUG
-            mpv_logger.log(lvl, "[%s] %s", prefix, message.rstrip())
+        self.dovi_rpu_warning_count: int = 0
+        self.dovi_rpu_warning_text: str | None = None
+        self._dovi_rpu_logged: bool = False
+
+        self._mpv_log_handler = make_mpv_log_handler(self, mpv_logger)
 
         self.mpv = mpv.MPV(
-            log_handler=_mpv_log_handler,
+            log_handler=self._mpv_log_handler,
             loglevel="warn",
             audio_client_name=_("CineHDR"),
             screenshot_directory=SCREENSHOT_DIR,
@@ -240,6 +271,8 @@ class CineWindow(Adw.ApplicationWindow):
             save_watch_history=True,
             watch_history_path=WATCH_HISTORY_JSONL,
         )
+        self.mpv._dovi_rpu_warning_count = self.dovi_rpu_warning_count
+        self.mpv._dovi_rpu_warning_text = self.dovi_rpu_warning_text
 
         self._video_area = VideoGLArea(
             self.mpv,

@@ -122,7 +122,7 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
         }
 
         Adw.ActionRow texture_format_row {
-          title: _("Surface Format");
+          title: _("FBO Format");
           subtitle: "Checking...";
         }
       }
@@ -151,6 +151,12 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
           subtitle: "Checking...";
         }
 
+        Adw.ActionRow dovi_rpu_row {
+          title: _("Dolby Vision RPU Warnings");
+          subtitle: "Checking...";
+          visible: false;
+        }
+
         Adw.ActionRow primaries_row {
           title: _("Color Primaries");
           subtitle: "Checking...";
@@ -174,10 +180,10 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
 
       Adw.PreferencesGroup {
         title: _("Playback Performance & Drops");
-        description: _("Real-time video framerate and frame loss counters.");
+        description: _("Source-rate estimates and cumulative counters; display presentation is not measured.");
 
         Adw.ActionRow perf_fps_row {
-          title: _("Playback Framerate");
+          title: _("Source Rate / Display Refresh Estimate");
           subtitle: "Checking...";
         }
 
@@ -192,7 +198,7 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
         }
 
         Adw.ActionRow perf_rendered_row {
-          title: _("Presented Frames");
+          title: _("Published Textures (Not Presented Frames)");
           subtitle: "Checking...";
         }
 
