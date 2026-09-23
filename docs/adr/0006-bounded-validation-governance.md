@@ -79,7 +79,8 @@ of iterating on the target machine.
 A third execution is exceptional. It requires all of the following before the
 command is sent:
 
-- an Architect (`gpt-5.6-sol`, high) review of both retained failures;
+- an independent architecture review (`gpt-6-astra`, high) of the Sol high
+  proposal and both retained failures;
 - an ADR amendment or new row revision describing the material change;
 - a local regression check that would have rejected the previous implementation
   when such a check is technically possible;
@@ -88,7 +89,8 @@ command is sent:
 
 Changing the failure signature without changing the tested boundary does not
 reset the two-run budget. A genuinely new dependency/toolkit version or a
-redesigned measurement boundary may start a new family after Architect review.
+redesigned measurement boundary may start a new family after independent
+architecture review under `docs/MODEL_POLICY.md`.
 
 ### Test ladder and duration
 
@@ -125,7 +127,7 @@ where artifacts are written.
 ### External test executor
 
 A user-designated agent on target hardware, including Antigravity with Gemini
-Flash 7 on the Intel/NVIDIA laptop, is an Operator under
+Flash on the Intel/NVIDIA laptop, is an Operator under
 `docs/MODEL_POLICY.md`. It may:
 
 - verify the exact commit and clean execution checkout;
@@ -139,7 +141,7 @@ Flash 7 on the Intel/NVIDIA laptop, is an Operator under
 It must not edit CineHDR, install or replace drivers/dependencies unless the
 user separately authorizes that action, retry with changed arguments, weaken a
 validator, select a new threshold, discard a failed report, or declare a row or
-gate accepted. The primary Architect reviews the returned evidence. An
+gate accepted. The primary evidence adjudicator reviews the returned evidence. An
 executor-produced summary is context, not acceptance authority.
 
 ### Claim-to-oracle rule

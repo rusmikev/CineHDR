@@ -18,8 +18,13 @@ io.github.rusmikev.CineHDR-gpu-next.flatpak
 PROJECT_RULES.md
 AUDIT_TASKS.md
 ANTIGRAVITY_HANDOVER.md
-GEMINI.md
 *.patch
 !build-aux/patches/**
 *.html
 /validation-reports/
+/test_report.json
+/benchmark_report.json
+/benchmark_report.md
+/tests/clips/
+/tests/pixel_validator
+/.local/

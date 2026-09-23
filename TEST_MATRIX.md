@@ -46,9 +46,9 @@ For each environment, test the following:
 
 | GPU Hardware | Driver / Session | Render Backends Tested | Smoke Status | Evidence |
 | :--- | :--- | :--- | :---: | :--- |
-| **Intel Raptor Lake Iris Xe** | Mesa Wayland (Flatpak) | `legacy` (`opengl`) | ⚠️ **PROVISIONAL** | [`test_report.json`](test_report.json) |
-| **NVIDIA RTX 3050 Laptop** | NV 610.57.04 / 595.80 (Native PRIME) | `legacy` (`opengl`) | ⚠️ **PROVISIONAL** | [`test_report.json`](test_report.json) |
-| **Intel + NVIDIA** | Flatpak / Native PRIME | `gpu-next` (`opengl-next`) | ℹ️ **STUB_UNSUPPORTED** | [`test_report.json`](test_report.json) |
+| **Intel Raptor Lake Iris Xe** | Mesa Wayland (Flatpak) | `legacy` (`opengl`) | ⚠️ **PROVISIONAL** | `test_report.json` (local artifact) |
+| **NVIDIA RTX 3050 Laptop** | NV 610.57.04 / 595.80 (Native PRIME) | `legacy` (`opengl`) | ⚠️ **PROVISIONAL** | `test_report.json` (local artifact) |
+| **Intel + NVIDIA** | Flatpak / Native PRIME | `gpu-next` (`opengl-next`) | ℹ️ **STUB_UNSUPPORTED** | `test_report.json` (local artifact) |
 
 *Evidence correction (2026-08-25): the JSON proves legacy process startup and
 the expected GL vendor, but its historical PASS predicate did not require a
