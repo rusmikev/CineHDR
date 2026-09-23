@@ -442,6 +442,34 @@ class TestDiagnosticsReport(unittest.TestCase):
         self.assertIn("Video Codec / Format: hevc", report)
         self.assertNotIn("/private/movie.mkv", report)
 
+    def test_plain_text_report_includes_performance_and_drops_section(self):
+        report = build_video_output_report(
+            {"Active API": "opengl"},
+            {"HDR Status": "Active"},
+            {"Video Codec / Format": "hevc"},
+            performance={
+                "Playback FPS": "23.976",
+                "Container FPS": "24.000",
+                "Display FPS": "240.000",
+                "VO dropped frames": 0,
+                "Decoder dropped frames": 0,
+                "Pipeline (FBO) drops": 0,
+                "FBO allocation failures": 0,
+                "VO delayed frames": 0,
+                "Mistimed frames": 0,
+                "Presented frames": 1248,
+                "A/V sync offset": "+0.20 ms",
+                "Total A/V sync change": "0.000 s",
+                "Pipeline status": "Active · GL_RGBA16F (16-bit)",
+            },
+        )
+        self.assertIn("[Playback Performance & Drops]", report)
+        self.assertIn("Playback FPS: 23.976", report)
+        self.assertIn("VO dropped frames: 0", report)
+        self.assertIn("Pipeline (FBO) drops: 0", report)
+        self.assertIn("Presented frames: 1248", report)
+        self.assertIn("A/V sync offset: +0.20 ms", report)
+
 
 class TestRenderTargetSpec(unittest.TestCase):
     def test_float_and_byte_targets_have_matching_format_and_depth(self):
@@ -989,6 +1017,98 @@ class TestRuntimeDiagnostics(unittest.TestCase):
         self.assertEqual(runtime["ffmpeg_version"], "8.test")
         self.assertEqual(runtime["mpv_configuration"], "-Dlibmpv=true")
 
+    def test_update_cached_scale_and_limits_uses_fractional_monitor_scale(self):
+        from src.video_widget import MpvVideoWidget
+
+        class FakeGeom:
+            width = 3072
+            height = 1728
+
+        class FakeMonitor:
+            def get_scale(self):
+                return 1.25
+
+            def get_geometry(self):
+                return FakeGeom()
+
+        class FakeDisplay:
+            def get_monitor_at_surface(self, surface):
+                return FakeMonitor()
+
+        class FakeSurface:
+            pass
+
+        class FakeNative:
+            def get_surface(self):
+                return FakeSurface()
+
+        widget = SimpleNamespace(
+            props=SimpleNamespace(scale_factor=2),
+            get_native=lambda: FakeNative(),
+            get_display=lambda: FakeDisplay(),
+        )
+
+        MpvVideoWidget._update_cached_scale_and_limits(widget)
+        self.assertEqual(widget._cached_scale, 1.25)
+        self.assertEqual(widget._cached_max_width, 3840)
+        self.assertEqual(widget._cached_max_height, 2160)
+
+    def test_render_target_capped_to_monitor_physical_resolution(self):
+        source_path = os.path.join(
+            os.path.dirname(__file__), "..", "src", "video_widget.py"
+        )
+        with open(source_path, encoding="utf-8") as source_file:
+            source = source_file.read()
+
+        self.assertIn("_cached_scale", source)
+        self.assertIn("_cached_max_width", source)
+        self.assertIn("_cached_max_height", source)
+        # Ensure video-timing-offset is not forced to 0
+        self.assertNotIn('video-timing-offset"] = 0', source)
+
+    def test_window_timing_offset_and_log_filtering(self):
+        source_path = os.path.join(
+            os.path.dirname(__file__), "..", "src", "window.py"
+        )
+        with open(source_path, encoding="utf-8") as source_file:
+            source = source_file.read()
+
+        self.assertNotIn('video-timing-offset"] = 0', source)
+        self.assertIn("Multiple Dolby Vision RPUs", source)
+
+    def test_hdr_diagnostics_ui_includes_performance_and_drops_group(self):
+        blueprint_path = os.path.join(
+            os.path.dirname(__file__), "..", "src", "hdr_diagnostics.blp"
+        )
+        with open(blueprint_path, encoding="utf-8") as blueprint_file:
+            blueprint = blueprint_file.read()
+
+        self.assertIn('title: _("Playback Performance & Drops")', blueprint)
+        self.assertIn("perf_fps_row", blueprint)
+        self.assertIn("perf_dropped_row", blueprint)
+        self.assertIn("perf_delayed_row", blueprint)
+        self.assertIn("perf_rendered_row", blueprint)
+        self.assertIn("perf_avsync_row", blueprint)
+        self.assertIn("perf_pipeline_row", blueprint)
+
+    def test_update_performance_info_is_wired_in_hdr_diagnostics(self):
+        source_path = os.path.join(
+            os.path.dirname(__file__), "..", "src", "hdr_diagnostics.py"
+        )
+        with open(source_path, encoding="utf-8") as source_file:
+            source = source_file.read()
+
+        self.assertIn("def _update_performance_info(self,", source)
+        self.assertIn("self._update_performance_info(mpv, gl_area)", source)
+        self.assertIn("self._performance_report_fields", source)
+        self.assertIn("perf_fps_row", source)
+        self.assertIn("perf_dropped_row", source)
+        self.assertIn("perf_delayed_row", source)
+        self.assertIn("perf_rendered_row", source)
+        self.assertIn("perf_avsync_row", source)
+        self.assertIn("perf_pipeline_row", source)
+
 
 if __name__ == "__main__":
     unittest.main()
+

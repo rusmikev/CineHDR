@@ -33,7 +33,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gio, GLib, Gtk, Gdk
 
-from .gtk_cm_policy import OPT_IN_NOT_REQUESTED, OPT_IN_TOO_LATE, apply_color_mgmt_opt_in
+from .gtk_cm_policy import (
+    OPT_IN_NOT_REQUESTED,
+    OPT_IN_TOO_LATE,
+    apply_color_mgmt_opt_in,
+    apply_gsk_renderer_policy,
+)
 from .mpris import MPRIS
 from .preferences import Preferences, settings
 from .render_backend import select_process_backend
@@ -42,18 +47,12 @@ from .window import CineWindow
 
 logger = logging.getLogger(__name__)
 
-# Upstream Cine pins GSK_RENDERER=gl globally to work around frame drops on
-# the Niri compositor; CineHDR needs the modern ngl/vulkan renderers for HDR,
-# so the pin is applied only where the workaround is actually needed. Niri
-# also has no color-management support, so nothing is lost there — CineHDR
-# detects the legacy renderer and falls back to SDR tone mapping. Users can
-# still override by exporting GSK_RENDERER themselves.
-if "GSK_RENDERER" not in os.environ and os.environ.get("NIRI_SOCKET"):
-    os.environ["GSK_RENDERER"] = "gl"
-    logging.info(
-        "Niri session detected (NIRI_SOCKET): pinning GSK_RENDERER=gl "
-        "(upstream frame-drop workaround); HDR pass-through disabled."
-    )
+# Configure optimal modern GSK renderer if not explicitly overridden by user
+apply_gsk_renderer_policy(os.environ)
+logging.info(
+    "Configured GSK_RENDERER=%s for GLArea OpenGL texture sharing",
+    os.environ.get("GSK_RENDERER", "default"),
+)
 
 # Opt-in for GTK 4 experimental Wayland color management (GDK_DEBUG=color-mgmt).
 # Without it GTK does not bind wp_color_manager_v1 and maps surfaces to sRGB.

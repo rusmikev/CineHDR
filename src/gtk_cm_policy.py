@@ -93,6 +93,37 @@ def apply_color_mgmt_opt_in(
     env["GDK_DEBUG"] = with_color_mgmt(current)
     return OPT_IN_APPLIED
 
+
+def get_gtk_version() -> Tuple[int, int]:
+    """Read GTK major and minor version without importing or initializing Gtk."""
+    try:
+        import ctypes
+        lib = ctypes.CDLL("libgtk-4.so.1")
+        return (int(lib.gtk_get_major_version()), int(lib.gtk_get_minor_version()))
+    except Exception:
+        return (4, 18)
+
+
+def apply_gsk_renderer_policy(env: MutableMapping[str, str]) -> Optional[str]:
+    """Configure modern OpenGL renderer if not explicitly overridden by user.
+
+    In GTK >= 4.18, 'gl' is the modern NGL renderer supporting Gdk.ColorState
+    and 16-bit float textures. In GTK < 4.18, 'ngl' is the modern renderer.
+    GTK 4.22+ defaults to 'vulkan', which cannot sample OpenGL textures from
+    GLArea without severe cross-API synchronization penalties and 4K stutter.
+    Setting GSK_RENDERER ensures GTK uses its OpenGL renderer sharing the GPU
+    context with GLArea.
+    """
+    if "GSK_RENDERER" in env:
+        return env["GSK_RENDERER"]
+    if env.get("NIRI_SOCKET"):
+        env["GSK_RENDERER"] = "gl"
+        return "gl"
+    major, minor = get_gtk_version()
+    renderer = "gl" if (major, minor) >= (4, 18) else "ngl"
+    env["GSK_RENDERER"] = renderer
+    return renderer
+
 def gtk_color_managed(caps: Optional[CmCaps], env=os.environ) -> Tuple[bool, str]:
     """(bool, причина): будет ли GTK вообще управлять цветом."""
     if not gtk_cm_opted_in(env):

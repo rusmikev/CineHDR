@@ -101,7 +101,7 @@ class MpvVideoWidget(Gtk.Widget):
         self.gl_area.connect("realize", self._on_realize)
         self.gl_area.connect("unrealize", self._on_unrealize)
 
-        self.fbo_pool = GLFramebufferPool(size=3)
+        self.fbo_pool = GLFramebufferPool(size=5)
         self.mpv_ctx: Optional[mpv.MpvRenderContext] = None
         self.render_backend_selection = render_backend_selection or ProcessRenderSelection(
             configured=RenderBackend.LEGACY,
@@ -142,13 +142,20 @@ class MpvVideoWidget(Gtk.Widget):
         self._render_restart_required_reason: Optional[str] = None
         self._hdr_controller_disconnected = False
         self._video_selection_for_context_restore: Optional[str] = None
+        self._cached_scale: float = 1.0
+        self._cached_max_width: int = 0
+        self._cached_max_height: int = 0
 
         # Delegate HDR state and mpv property observers to HdrController
         self.hdr_controller = HdrController(
             mpv_player,
-            on_change_cb=lambda: idle_add_once(self.queue_draw)
+            on_change_cb=lambda: idle_add_once(self._on_hdr_controller_change)
         )
         self._window = None
+        try:
+            self.connect("notify::scale-factor", lambda *_: self._update_cached_scale_and_limits())
+        except Exception:
+            pass
 
     def setup_window_integration(self, window):
         """Clean integration hook for window-level HDR UI (e.g. hdr_menu_btn)."""
@@ -156,14 +163,57 @@ class MpvVideoWidget(Gtk.Widget):
 
     def _update_cached_hdr_support(self, *args):
         from .hdr_detection import invalidate_hdr_support_cache
-        invalidate_hdr_support_cache()
+        invalidate_hdr_support_cache(invalidate_compositor=False)
         old_support = getattr(self, "_cached_hdr_support", None)
-        self._cached_hdr_support = check_hdr_support()
+        self._cached_hdr_support = check_hdr_support(allow_probe=False)
         self._cached_hdr_support_valid = True
         self._push_output_hint()
-        if old_support is not None and old_support != self._cached_hdr_support and hasattr(self, "hdr_controller"):
-            self.hdr_controller.apply_hdr_settings()
-            self.queue_draw()
+        self._update_cached_scale_and_limits()
+        if hasattr(self, "hdr_controller"):
+            self.hdr_controller.request_monitor_probe()
+            if old_support is not None and old_support != self._cached_hdr_support:
+                self.hdr_controller.apply_hdr_settings()
+                self.queue_draw()
+
+    def _update_cached_scale_and_limits(self):
+        scale = float(self.props.scale_factor) if hasattr(self, "props") and hasattr(self.props, "scale_factor") else 1.0
+        max_w = 0
+        max_h = 0
+        try:
+            native = self.get_native()
+            surface = native.get_surface() if native and hasattr(native, "get_surface") else None
+            display = self.get_display()
+            if surface and display and hasattr(display, "get_monitor_at_surface"):
+                monitor = display.get_monitor_at_surface(surface)
+                if monitor:
+                    if hasattr(monitor, "get_scale"):
+                        scale = float(monitor.get_scale())
+                    elif hasattr(monitor, "get_scale_factor"):
+                        scale = float(monitor.get_scale_factor())
+                    geom = monitor.get_geometry()
+                    if geom and geom.width > 0 and geom.height > 0:
+                        max_w = int(round(geom.width * scale))
+                        max_h = int(round(geom.height * scale))
+        except Exception:
+            pass
+        self._cached_scale = scale
+        self._cached_max_width = max_w
+        self._cached_max_height = max_h
+
+    def _on_hdr_controller_change(self):
+        """Consume a completed controller probe without starting another one.
+
+        The widget keeps a small render-path cache in addition to
+        ``hdr_detection``'s process cache. A monitor probe completes after the
+        initial conservative value may already have been latched here, so a
+        redraw alone is insufficient: refresh this cache from the now-populated
+        non-blocking capability cache before selecting the next FBO format.
+        """
+        from .hdr_detection import invalidate_support_decision
+        invalidate_support_decision()
+        self._cached_hdr_support = check_hdr_support(allow_probe=False)
+        self._cached_hdr_support_valid = True
+        self.queue_draw()
 
     def _push_output_hint(self):
         """Tell HdrController which monitor the widget currently sits on, so
@@ -465,7 +515,10 @@ class MpvVideoWidget(Gtk.Widget):
         ):
             return
         self._render_pending = True
-        idle_add_once(self._render_pending_frame)
+        GLib.idle_add(
+            self._render_pending_frame,
+            priority=GLib.PRIORITY_HIGH_IDLE,
+        )
 
     def do_measure(self, orientation: int, for_size: int) -> tuple[int, int, int, int]:
         if getattr(self, "gl_area", None):
@@ -474,6 +527,8 @@ class MpvVideoWidget(Gtk.Widget):
 
     def do_size_allocate(self, width: int, height: int, baseline: int):
         """Allocate children and redraw a paused frame for the new target."""
+        if hasattr(self, "_update_cached_scale_and_limits"):
+            self._update_cached_scale_and_limits()
         previous = getattr(self, "_last_target_configuration", (0, 0, 0))
         # Allocate our dummy child context holder
         if getattr(self, "gl_area", None):
@@ -512,9 +567,17 @@ class MpvVideoWidget(Gtk.Widget):
         if w <= 0 or h <= 0:
             return GLib.SOURCE_REMOVE
 
-        scale = self.props.scale_factor
-        scaled_w = int(w * scale)
-        scaled_h = int(h * scale)
+        scale = getattr(self, "_cached_scale", float(getattr(self.props, "scale_factor", 1.0)))
+        scaled_w = int(round(w * scale))
+        scaled_h = int(round(h * scale))
+        max_w = getattr(self, "_cached_max_width", 0)
+        max_h = getattr(self, "_cached_max_height", 0)
+        if max_w > 0:
+            scaled_w = min(scaled_w, max_w)
+        if max_h > 0:
+            scaled_h = min(scaled_h, max_h)
+        scaled_w = max(1, scaled_w)
+        scaled_h = max(1, scaled_h)
 
         # NOTE: the "HDR requested but unsupported" warning is emitted by
         # HdrController.apply_hdr_settings(); calling it here behind
@@ -526,7 +589,10 @@ class MpvVideoWidget(Gtk.Widget):
         self.gl_area.make_current()
         slot = self.fbo_pool.acquire(scaled_w, scaled_h, is_float=use_float)
         if not slot:
-            logging.debug("FBO pool exhausted, dropping frame")
+            logging.warning(
+                "FBO pool exhausted (total dropped: %d), dropping frame",
+                self.fbo_pool.dropped_frames,
+            )
             return GLib.SOURCE_REMOVE
 
         render_error = None
@@ -539,6 +605,7 @@ class MpvVideoWidget(Gtk.Widget):
             self.render_target_depth = target_spec.depth
             self.mpv_ctx.render(
                 flip_y=False,
+                block_for_target_time=False,
                 depth=target_spec.depth,
                 opengl_fbo={
                     "w": scaled_w,

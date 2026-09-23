@@ -154,7 +154,7 @@ class GLFramebufferPool:
     Prevents GTK compositor / GPU rendering race conditions (tearing/stuttering) by ensuring
     libmpv only renders into buffers that are not currently being sampled by GTK.
     """
-    def __init__(self, size: int = 3):
+    def __init__(self, size: int = 5):
         self.size = size
         self.slots = [FramebufferSlot(i) for i in range(size)]
         self.dropped_frames = 0

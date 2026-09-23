@@ -59,16 +59,24 @@ def _hdr_status_text(
 ) -> str:
     """Describe HDR transport separately from optional HDR-to-HDR mapping."""
     if is_active and supported:
+        from .hdr_detection import is_surface_submission_proven
+        proven = is_surface_submission_proven()
         numeric_target = _positive_float(target_peak)
         if (
             source_peak_nits is not None
             and numeric_target is not None
             and numeric_target < source_peak_nits * 0.9
         ):
+            if proven:
+                return _(
+                    "Active (HDR output · tone-mapped ~{source} → {target} nits)"
+                ).format(source=source_peak_nits, target=round(numeric_target))
             return _(
-                "Active (HDR output · tone-mapped ~{source} → {target} nits)"
+                "Active (PQ target prepared · tone-mapped ~{source} → {target} nits; compositor submission unverified)"
             ).format(source=source_peak_nits, target=round(numeric_target))
-        return _("Active (Rec.2100 PQ HDR output)")
+        if proven:
+            return _("Active (Rec.2100 PQ HDR output)")
+        return _("Active (PQ target prepared; compositor submission unverified)")
     if mode == "force-sdr":
         return _("Disabled (Force SDR mode)")
     if is_content:
@@ -79,32 +87,22 @@ def _hdr_status_text(
 def get_mpv_prop(mpv, name, default=None):
     if mpv is None:
         return default
+    if hasattr(mpv, "get_property"):
+        try:
+            res = mpv.get_property(name)
+            return res if res is not None else default
+        except Exception:
+            pass
     try:
-        if hasattr(mpv, "_get_property"):
-            res = mpv._get_property(name)
-            if res is not None:
-                return res
+        res = mpv[name]
+        return res if res is not None else default
     except Exception:
         pass
     try:
         attr_name = name.replace("-", "_")
         if hasattr(mpv, attr_name):
             res = getattr(mpv, attr_name)
-            if res is not None:
-                return res
-    except Exception:
-        pass
-    try:
-        if hasattr(mpv, "get_property"):
-            res = mpv.get_property(name)
-            if res is not None:
-                return res
-    except Exception:
-        pass
-    try:
-        res = mpv[name]
-        if res is not None:
-            return res
+            return res if res is not None else default
     except Exception:
         pass
     return default
@@ -143,12 +141,20 @@ class HdrDiagnosticsDialog(Adw.Dialog):
     peak_luma_row: Adw.ActionRow = Gtk.Template.Child()
     target_row: Adw.ActionRow = Gtk.Template.Child()
 
+    perf_fps_row: Adw.ActionRow = Gtk.Template.Child()
+    perf_dropped_row: Adw.ActionRow = Gtk.Template.Child()
+    perf_delayed_row: Adw.ActionRow = Gtk.Template.Child()
+    perf_rendered_row: Adw.ActionRow = Gtk.Template.Child()
+    perf_avsync_row: Adw.ActionRow = Gtk.Template.Child()
+    perf_pipeline_row: Adw.ActionRow = Gtk.Template.Child()
+
     def __init__(self, window, **kwargs):
         super().__init__(**kwargs)
         self._win = window
         self._timer_id = None
         self._copy_feedback_timer_id = None
         self._renderer_report_fields: dict[str, object] = {}
+        self._performance_report_fields: dict[str, object] = {}
         self.connect("realize", self._on_realize)
         self.connect("unrealize", self._on_unrealize)
         try:
@@ -241,8 +247,9 @@ class HdrDiagnosticsDialog(Adw.Dialog):
                 ("Target Tone Mapping", "target_row"),
             )
         )
+        performance = dict(self._performance_report_fields)
         return build_video_output_report(
-            self._renderer_report_fields, output, video
+            self._renderer_report_fields, output, video, performance=performance
         )
 
     @Gtk.Template.Callback()
@@ -564,37 +571,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             self.texture_format_row.set_subtitle("GL_RGBA8 (8-bit Int, 32 bpp)")
 
         # 2. Video Signal (libmpv)
-        if not mpv:
-            return
-
-        try:
-            codec = get_mpv_prop(mpv, "video-format") or get_mpv_prop(mpv, "video-codec")
-            self.codec_row.set_subtitle(str(codec) if codec else _("No video loaded"))
-        except Exception:
-            self.codec_row.set_subtitle(_("Unknown"))
-
-        try:
-            w = params.get("w") or get_mpv_prop(mpv, "video-params/w") or get_mpv_prop(mpv, "width")
-            h = params.get("h") or get_mpv_prop(mpv, "video-params/h") or get_mpv_prop(mpv, "height")
-            pix = params.get("pixelformat") or get_mpv_prop(mpv, "video-params/pixelformat")
-            if w and h:
-                res_str = f"{w}x{h}"
-                if pix:
-                    res_str += f" ({pix})"
-                self.resolution_row.set_subtitle(res_str)
-            else:
-                self.resolution_row.set_subtitle(_("Unknown"))
-        except Exception:
-            self.resolution_row.set_subtitle(_("Unknown"))
-
-        try:
-            hw = get_mpv_prop(mpv, "hwdec-current") or get_mpv_prop(mpv, "hwdec")
-            if hw and str(hw).lower() not in ("no", "none", ""):
-                self.hwdec_row.set_subtitle(f"{hw} ({_('GPU Acceleration active')})")
-            else:
-                self.hwdec_row.set_subtitle(_("Software / CPU Decoding"))
-        except Exception:
-            self.hwdec_row.set_subtitle(_("Unknown"))
+        self._update_stream_info(mpv, params)
 
         try:
             from .hdr_detection import get_dovi_info
@@ -713,3 +690,206 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             self.target_row.set_subtitle(f"TRC: {t_trc} | Prim: {t_prim} | Peak: {t_peak} ({peak_src})")
         except Exception:
             self.target_row.set_subtitle(_("Unknown"))
+
+        # 3. Playback Performance & Frame Loss
+        self._update_performance_info(mpv, gl_area)
+
+    def _update_stream_info(self, mpv=None, params=None):
+        if mpv is None:
+            mpv = getattr(self._win, "mpv", None)
+            if mpv is None and hasattr(self._win, "player"):
+                mpv = getattr(self._win.player, "mpv", None)
+        if not mpv:
+            return
+
+        if params is None:
+            params = (
+                get_mpv_prop(mpv, "video-params")
+                or get_mpv_prop(mpv, "video-out-params")
+                or {}
+            )
+        if not isinstance(params, dict):
+            params = {}
+
+        if hasattr(self, "codec_row") and hasattr(self.codec_row, "set_subtitle"):
+            try:
+                codec = get_mpv_prop(mpv, "video-format") or get_mpv_prop(mpv, "video-codec")
+                self.codec_row.set_subtitle(str(codec) if codec else _("No video loaded"))
+            except Exception:
+                self.codec_row.set_subtitle(_("Unknown"))
+
+        if hasattr(self, "resolution_row") and hasattr(self.resolution_row, "set_subtitle"):
+            try:
+                w = params.get("w") or get_mpv_prop(mpv, "video-params/w") or get_mpv_prop(mpv, "width")
+                h = params.get("h") or get_mpv_prop(mpv, "video-params/h") or get_mpv_prop(mpv, "height")
+                pix = params.get("pixelformat") or get_mpv_prop(mpv, "video-params/pixelformat")
+                if w and h:
+                    res_str = f"{w}x{h}"
+                    if pix:
+                        res_str += f" ({pix})"
+                    self.resolution_row.set_subtitle(res_str)
+                else:
+                    self.resolution_row.set_subtitle(_("Unknown"))
+            except Exception:
+                self.resolution_row.set_subtitle(_("Unknown"))
+
+        if hasattr(self, "hwdec_row") and hasattr(self.hwdec_row, "set_subtitle"):
+            try:
+                hw_current = get_mpv_prop(mpv, "hwdec-current")
+                hw_config = get_mpv_prop(mpv, "hwdec")
+                if hw_current and str(hw_current).lower() not in ("no", "none", ""):
+                    self.hwdec_row.set_subtitle(f"{hw_current} ({_('GPU Acceleration active')})")
+                elif hw_current and str(hw_current).lower() in ("no", "none"):
+                    self.hwdec_row.set_subtitle(_("Software / CPU Decoding"))
+                elif hw_current is None or str(hw_current).strip() == "":
+                    if hw_config and str(hw_config).lower() not in ("no", "none", ""):
+                        self.hwdec_row.set_subtitle(f"{_('Unknown (configured: ')}{hw_config})")
+                    else:
+                        self.hwdec_row.set_subtitle(_("Unknown"))
+                else:
+                    self.hwdec_row.set_subtitle(_("Software / CPU Decoding"))
+            except Exception:
+                self.hwdec_row.set_subtitle(_("Unknown"))
+
+    def _update_performance_info(self, mpv=None, gl_area=None):
+        if mpv is None:
+            mpv = getattr(self._win, "mpv", None)
+            if mpv is None and hasattr(self._win, "player"):
+                mpv = getattr(self._win.player, "mpv", None)
+        if gl_area is None:
+            gl_area = getattr(self._win, "_video_area", None) or getattr(
+                self._win, "gl_area", None
+            )
+
+        # 1. Framerates
+        vf_fps = _positive_float(get_mpv_prop(mpv, "estimated-vf-fps"))
+        c_fps = _positive_float(get_mpv_prop(mpv, "container-fps"))
+        d_fps = _positive_float(get_mpv_prop(mpv, "display-fps")) or _positive_float(
+            get_mpv_prop(mpv, "estimated-display-fps")
+        )
+
+        fps_parts = []
+        if vf_fps:
+            fps_parts.append(f"{vf_fps:.2f} fps")
+        elif c_fps:
+            fps_parts.append(f"{c_fps:.2f} fps (container)")
+        else:
+            fps_parts.append(_("Waiting for playback"))
+
+        extra_fps = []
+        if c_fps and vf_fps:
+            extra_fps.append(f"container: {c_fps:.2f} fps")
+        if d_fps:
+            extra_fps.append(f"display: {d_fps:.1f} Hz")
+        if extra_fps:
+            fps_subtitle = f"{fps_parts[0]} ({' · '.join(extra_fps)})"
+        else:
+            fps_subtitle = fps_parts[0]
+
+        if hasattr(self, "perf_fps_row") and hasattr(self.perf_fps_row, "set_subtitle"):
+            self.perf_fps_row.set_subtitle(fps_subtitle)
+
+        # 2. Dropped frames (VO + Decoder + Pipeline)
+        def _int_or_zero(val):
+            try:
+                return int(val) if val is not None else 0
+            except (TypeError, ValueError):
+                return 0
+
+        vo_drops = _int_or_zero(get_mpv_prop(mpv, "frame-drop-count"))
+        dec_drops = _int_or_zero(get_mpv_prop(mpv, "decoder-frame-drop-count"))
+
+        fbo_pool = getattr(gl_area, "fbo_pool", None) if gl_area else None
+        fbo_drops = getattr(fbo_pool, "dropped_frames", 0) if fbo_pool else 0
+        fbo_alloc_failures = getattr(fbo_pool, "allocation_failures", 0) if fbo_pool else 0
+
+        dropped_subtitle = (
+            f"VO: {vo_drops} · Decoder: {dec_drops} · Pipeline (FBO): {fbo_drops}"
+        )
+        if hasattr(self, "perf_dropped_row") and hasattr(self.perf_dropped_row, "set_subtitle"):
+            self.perf_dropped_row.set_subtitle(dropped_subtitle)
+
+        # 3. Delayed and mistimed frames
+        delayed = _int_or_zero(get_mpv_prop(mpv, "vo-delayed-frame-count"))
+        mistimed = _int_or_zero(get_mpv_prop(mpv, "mistimed-frame-count"))
+        delayed_subtitle = f"Delayed: {delayed} · Mistimed: {mistimed}"
+        if hasattr(self, "perf_delayed_row") and hasattr(self.perf_delayed_row, "set_subtitle"):
+            self.perf_delayed_row.set_subtitle(delayed_subtitle)
+
+        # 4. Presented frames
+        presented = getattr(gl_area, "render_frame_generation", 0) if gl_area else 0
+        pool_size = getattr(fbo_pool, "size", 0) if fbo_pool else 0
+        rendered_subtitle = f"{presented:,} frames (FBO ring: {pool_size} buffers)"
+        if hasattr(self, "perf_rendered_row") and hasattr(self.perf_rendered_row, "set_subtitle"):
+            self.perf_rendered_row.set_subtitle(rendered_subtitle)
+
+        # 5. A/V Sync
+        avsync = None
+        try:
+            raw_avsync = get_mpv_prop(mpv, "avsync")
+            if raw_avsync is not None:
+                avsync = float(raw_avsync)
+        except (TypeError, ValueError):
+            avsync = None
+
+        total_drift = None
+        try:
+            raw_drift = get_mpv_prop(mpv, "total-avsync-change")
+            if raw_drift is not None:
+                total_drift = float(raw_drift)
+        except (TypeError, ValueError):
+            total_drift = None
+
+        if avsync is not None:
+            avsync_ms = avsync * 1000.0
+            drift_str = f"drift: {total_drift:+.3f} s" if total_drift is not None else "no drift"
+            avsync_subtitle = f"{avsync_ms:+.1f} ms ({drift_str})"
+        else:
+            avsync_subtitle = _("Synchronized / No audio sync offset")
+        if hasattr(self, "perf_avsync_row") and hasattr(self.perf_avsync_row, "set_subtitle"):
+            self.perf_avsync_row.set_subtitle(avsync_subtitle)
+
+        # 6. Render Pipeline Status
+        pipeline_status = getattr(gl_area, "render_session_status", "not-initialized") if gl_area else "unknown"
+        failure_reason = getattr(gl_area, "render_failure_reason", None) if gl_area else None
+        restart_reason = getattr(gl_area, "_render_restart_required_reason", None) if gl_area else None
+        scale = getattr(gl_area, "_cached_scale", 1.0) if gl_area else 1.0
+        max_w = getattr(gl_area, "_cached_max_width", 0) if gl_area else 0
+        max_h = getattr(gl_area, "_cached_max_height", 0) if gl_area else 0
+        target_fmt = getattr(gl_area, "render_target_format", "not-rendered") if gl_area else "unknown"
+        target_depth = getattr(gl_area, "render_target_depth", 0) if gl_area else 0
+
+        if failure_reason or restart_reason:
+            err = failure_reason or restart_reason
+            pipeline_subtitle = f"Failed ({err})"
+        elif fbo_alloc_failures > 0:
+            pipeline_subtitle = f"Warning: {fbo_alloc_failures} FBO allocation failures"
+        elif pipeline_status == "active":
+            limit_str = f" · max {max_w}x{max_h}" if max_w > 0 else ""
+            pipeline_subtitle = f"Active · {target_fmt} ({target_depth}-bit) · Scale {scale:.2f}x{limit_str}"
+        elif pipeline_status == "startup-fallback":
+            pipeline_subtitle = f"Fallback active · {target_fmt} ({target_depth}-bit) · Scale {scale:.2f}x"
+        else:
+            pipeline_subtitle = pipeline_status
+
+        if hasattr(self, "perf_pipeline_row") and hasattr(self.perf_pipeline_row, "set_subtitle"):
+            self.perf_pipeline_row.set_subtitle(pipeline_subtitle)
+
+        # Store for copyable report
+        self._performance_report_fields = {
+            "Playback FPS": f"{vf_fps:.3f}" if vf_fps is not None else "unknown",
+            "Container FPS": f"{c_fps:.3f}" if c_fps is not None else "unknown",
+            "Display FPS": f"{d_fps:.3f}" if d_fps is not None else "unknown",
+            "VO frame drops": vo_drops,
+            "Decoder frame drops": dec_drops,
+            "Pipeline (FBO) drops": fbo_drops,
+            "FBO allocation failures": fbo_alloc_failures,
+            "VO delayed frames": delayed,
+            "Mistimed frames": mistimed,
+            "Presented frames": presented,
+            "A/V sync offset": f"{avsync * 1000:+.2f} ms" if avsync is not None else "unknown",
+            "Total A/V sync change": f"{total_drift:+.3f} s" if total_drift is not None else "0.000 s",
+            "Pipeline status": pipeline_subtitle,
+            "Render target surface": f"{target_fmt} ({target_depth}-bit)",
+            "Effective scale": f"{scale:.2f}",
+        }

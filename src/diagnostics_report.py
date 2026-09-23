@@ -23,14 +23,18 @@ def build_video_output_report(
     renderer: Mapping[str, object],
     output: Mapping[str, object],
     video: Mapping[str, object],
+    performance: Mapping[str, object] | None = None,
 ) -> str:
     """Build a stable plain-text report without exposing the media path."""
     lines = ["CineHDR Video Output Diagnostics"]
-    for title, fields in (
+    sections = [
         ("Video Renderer", renderer),
         ("Output & Color State", output),
         ("Video Signal", video),
-    ):
+    ]
+    if performance:
+        sections.append(("Playback Performance & Drops", performance))
+    for title, fields in sections:
         lines.extend(("", f"[{title}]"))
         for name, value in fields.items():
             if name.strip().lower() in _MEDIA_PATH_FIELDS:

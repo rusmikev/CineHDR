@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 import ctypes
+import time
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -181,6 +182,14 @@ class TestHDRConfigPersistence(unittest.TestCase):
 class TestApplyHDRSettings(unittest.TestCase):
     """Tests for apply_hdr_settings mpv property mapping and SDR protection."""
 
+    def setUp(self):
+        p1 = patch("src.hdr_controller.is_surface_submission_proven", return_value=True)
+        p2 = patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+        p1.start()
+        p2.start()
+        self.addCleanup(p1.stop)
+        self.addCleanup(p2.stop)
+
     def _make_mock_mpv(self):
         """Create a mock mpv player that records property assignments."""
         props = {}
@@ -189,6 +198,22 @@ class TestApplyHDRSettings(unittest.TestCase):
         mock.__getitem__ = lambda self, k: props.get(k)
         mock._props = props
         return mock, props
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_conservative_auto_mode_keeps_sdr(self, _mock_support):
+        """When surface submission is unproven, auto mode conservatively stays in SDR."""
+        from src.hdr_controller import HdrController
+
+        with patch("src.hdr_controller.is_surface_submission_proven", return_value=False):
+            mock_mpv, props = self._make_mock_mpv()
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            controller._hdr_target_peak = "400"
+            controller.apply_hdr_settings()
+            self.assertEqual(props["target-trc"], "auto")
+            self.assertEqual(props["target-prim"], "auto")
+            self.assertEqual(props["target-peak"], "auto")
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_hdr_enabled_and_hdr_content_sets_targets(self, _mock_support):
@@ -1020,8 +1045,19 @@ class TestHdrDiagnostics(unittest.TestCase):
             source_peak_nits=1000,
             target_peak=1000,
         )
-        self.assertIn("Rec.2100 PQ", pq_output)
+        self.assertIn("PQ target prepared; compositor submission unverified", pq_output)
         self.assertNotIn("Pass-through", pq_output)
+
+        with patch("src.hdr_detection.is_surface_submission_proven", return_value=True):
+            pq_proven = _hdr_status_text(
+                is_active=True,
+                supported=True,
+                mode="auto",
+                is_content=True,
+                source_peak_nits=1000,
+                target_peak=1000,
+            )
+            self.assertIn("Rec.2100 PQ", pq_proven)
 
 
 class TestAuditFixes(unittest.TestCase):
@@ -1242,6 +1278,46 @@ class TestCompositorCmProbeIntegration(unittest.TestCase):
         self.assertTrue(supported)
 
     @patch("src.hdr_detection.Gdk.ColorState", create=True)
+    def test_async_probe_transition_from_pending_to_supported(self, mock_colorstate):
+        """When check_hdr_support(allow_probe=False) is called before caps are known,
+        it returns False without latching _cached_support. When async probe completes
+        and updates _cache_cm_caps, check_hdr_support(allow_probe=False) returns True."""
+        mock_colorstate.get_rec2100_pq = MagicMock()
+        from src.gtk_cm_policy import (
+            CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, PRIM_BT2020, TF_SRGB, TF_PQ,
+        )
+        from src.hdr_detection import check_hdr_support, invalidate_hdr_support_cache
+        from src import wayland_output_hdr, wayland_cm_probe
+        import src.hdr_detection as hd
+
+        display = self._wayland_ready_display()
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=True):
+            invalidate_hdr_support_cache()
+            wayland_cm_probe._cache_valid = True
+            wayland_output_hdr._cache_cm_caps = None
+
+            # 1. Before caps are known, allow_probe=False returns False
+            self.assertFalse(check_hdr_support(allow_probe=False))
+            # Critical: _cached_support must not be permanently latched False!
+            self.assertIsNone(hd._cached_support)
+
+            # 2. Async probe completes and populates _cache_cm_caps
+            gtk_manageable_caps = CmCaps(
+                intents=frozenset([INTENT_PERCEPTUAL]),
+                features=frozenset([FEAT_PARAMETRIC]),
+                tfs=frozenset([TF_SRGB, TF_PQ]),
+                primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+            )
+            wayland_output_hdr._update_cache({}, gtk_manageable_caps)
+
+            # 3. Subsequent call with allow_probe=False now discovers True and latches True
+            self.assertTrue(check_hdr_support(allow_probe=False))
+            self.assertTrue(hd._cached_support)
+
+
+    @patch("src.hdr_detection.Gdk.ColorState", create=True)
     def test_unsupported_reason_mentions_color_management(self, mock_colorstate):
         from src.hdr_detection import (
             check_hdr_support,
@@ -1356,19 +1432,21 @@ class TestMonitorHdrGate(unittest.TestCase):
             controller = HdrController(mock_mpv)
             controller._hdr_mode = "auto"
             controller._is_hdr_content = True
-            self.assertTrue(controller.is_hdr_active)
+            # Conservative auto mode: unknown monitor state keeps SDR tone mapping
+            self.assertFalse(controller.is_hdr_active)
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_monitor_hdr_allows_auto(self, _sup):
         from src.hdr_controller import HdrController
         mock_mpv, props = self._make_mock_mpv()
-        with patch("src.hdr_controller.get_monitor_hdr_state", return_value=True):
-            controller = HdrController(mock_mpv)
-            controller._hdr_mode = "auto"
-            controller._is_hdr_content = True
-            self.assertTrue(controller.is_hdr_active)
-            controller.apply_hdr_settings()
-            self.assertEqual(props.get("target-trc"), "pq")
+        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True):
+            with patch("src.hdr_controller.get_monitor_hdr_state", return_value=True):
+                controller = HdrController(mock_mpv)
+                controller._hdr_mode = "auto"
+                controller._is_hdr_content = True
+                self.assertTrue(controller.is_hdr_active)
+                controller.apply_hdr_settings()
+                self.assertEqual(props.get("target-trc"), "pq")
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_output_hint_is_forwarded_and_triggers_reapply(self, _sup):
@@ -1519,6 +1597,11 @@ class TestAutoTargetPeak(unittest.TestCase):
         mock_mpv.__getitem__ = MagicMock(side_effect=KeyError)
         mock_mpv.property_observer = lambda name: (lambda fn: fn)
         return mock_mpv, props
+
+    def setUp(self):
+        patcher = patch("src.hdr_controller.is_surface_submission_proven", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _controller(self, props_mpv, hint="HDMI-1", sig_peak=4.926):  # ≈1000 nits
         from src.hdr_controller import HdrController
@@ -1701,9 +1784,450 @@ class TestHdrDetectionDolbyVision(unittest.TestCase):
         controller = HdrController(mock)
         controller._is_hdr_content = True
         controller._dovi_info = {"unsupported": False} # Represents P8
-        controller.hdr_mode = "auto"
+        controller.hdr_mode = "force-hdr"
         # Should be true
         self.assertTrue(controller.is_hdr_active)
+
+
+class TestSurfaceSubmissionOverride(unittest.TestCase):
+    def test_surface_submission_proven_default_false(self):
+        from src.hdr_detection import is_surface_submission_proven
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(is_surface_submission_proven())
+
+    def test_surface_submission_force_override_true(self):
+        from src.hdr_detection import is_surface_submission_proven
+        with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "1"}):
+            self.assertTrue(is_surface_submission_proven())
+
+    def test_surface_submission_force_override_other(self):
+        from src.hdr_detection import is_surface_submission_proven
+        with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "0"}):
+            self.assertFalse(is_surface_submission_proven())
+
+
+class TestAsyncMonitorProbeLifecycle(unittest.TestCase):
+    def test_async_refresh_monitor_hdr_state_callbacks(self):
+        from src.hdr_detection import async_refresh_monitor_hdr_state
+        from src.wayland_output_hdr import OutputHdrInfo
+
+        # Test successful HDR detection
+        cb_results = []
+        with patch("src.wayland_output_hdr.async_refresh_output_hdr_states") as mock_refresh:
+            mock_refresh.side_effect = lambda on_complete, timeout_sec=2.0: on_complete({
+                "DP-1": OutputHdrInfo(connector="DP-1", hdr=True)
+            })
+            async_refresh_monitor_hdr_state(on_complete=lambda r: cb_results.append(r))
+            self.assertEqual(cb_results, [True])
+
+        # Test SDR detection
+        cb_results.clear()
+        with patch("src.wayland_output_hdr.async_refresh_output_hdr_states") as mock_refresh:
+            mock_refresh.side_effect = lambda on_complete, timeout_sec=2.0: on_complete({
+                "DP-1": OutputHdrInfo(connector="DP-1", hdr=False)
+            })
+            async_refresh_monitor_hdr_state(on_complete=lambda r: cb_results.append(r))
+            self.assertEqual(cb_results, [False])
+
+        # Test failure/None
+        cb_results.clear()
+        with patch("src.wayland_output_hdr.async_refresh_output_hdr_states") as mock_refresh:
+            mock_refresh.side_effect = lambda on_complete, timeout_sec=2.0: on_complete(None)
+            async_refresh_monitor_hdr_state(on_complete=lambda r: cb_results.append(r))
+            self.assertEqual(cb_results, [None])
+
+    def test_controller_request_monitor_probe_lifecycle_and_cancellation(self):
+        from src.hdr_controller import HdrController
+
+        class MockMpv:
+            def __init__(self):
+                self._props = {}
+                self.property_observer = lambda name: (lambda fn: fn)
+            def __getitem__(self, item):
+                return self._props.get(item, "auto")
+            def __setitem__(self, item, value):
+                self._props[item] = value
+
+        mock_mpv = MockMpv()
+        changed = []
+
+        class MockSource:
+            def __init__(self):
+                self.cancelled = False
+                self.destroyed = False
+            def cancel(self):
+                self.cancelled = True
+            def destroy(self):
+                self.destroyed = True
+
+        first_source = MockSource()
+        second_source = MockSource()
+
+        with patch("src.hdr_detection.async_refresh_monitor_hdr_state", return_value=first_source):
+            controller = HdrController(mock_mpv, on_change_cb=lambda: changed.append(True))
+            self.assertIs(controller._monitor_probe_source, first_source)
+
+            # Requesting probe again while in-flight cancels the previous source
+            with patch("src.hdr_detection.async_refresh_monitor_hdr_state", return_value=second_source):
+                controller.request_monitor_probe()
+                self.assertTrue(first_source.cancelled)
+                self.assertIs(controller._monitor_probe_source, second_source)
+
+            # Completion callback applies settings and fires on_change_cb
+            changed.clear()
+            controller._on_monitor_hdr_state_probed(True)
+            self.assertIsNone(controller._monitor_probe_source)
+            self.assertEqual(len(changed), 1)
+
+            # Disconnect cleans up source
+            controller._monitor_probe_source = second_source
+            controller.disconnect()
+            self.assertTrue(second_source.cancelled)
+            self.assertIsNone(controller._monitor_probe_source)
+
+    def test_video_widget_requests_monitor_probe_on_update(self):
+        from src.video_widget import MpvVideoWidget
+
+        widget = MpvVideoWidget.__new__(MpvVideoWidget)
+        widget.hdr_controller = MagicMock()
+        widget.queue_draw = MagicMock()
+        widget._push_output_hint = MagicMock()
+        widget._cached_hdr_support_valid = False
+
+        with patch("src.video_widget.check_hdr_support", return_value=True):
+            widget._update_cached_hdr_support()
+            widget.hdr_controller.request_monitor_probe.assert_called_once()
+
+    def test_controller_change_refreshes_widget_render_cache_without_reprobe(self):
+        from src.video_widget import MpvVideoWidget
+
+        widget = MpvVideoWidget.__new__(MpvVideoWidget)
+        widget._cached_hdr_support = False
+        widget._cached_hdr_support_valid = True
+        widget.queue_draw = MagicMock()
+
+        with patch("src.video_widget.check_hdr_support", return_value=True) as support:
+            widget._on_hdr_controller_change()
+
+        support.assert_called_once_with(allow_probe=False)
+        self.assertTrue(widget._cached_hdr_support)
+        self.assertTrue(widget._cached_hdr_support_valid)
+        widget.queue_draw.assert_called_once_with()
+
+
+class TestWaylandOutputHdrSourceStateMachine(unittest.TestCase):
+    """Unit tests for the non-blocking WaylandOutputHdrSource state machine."""
+
+    def setUp(self):
+        from gi.repository import GLib
+        self.GLib = GLib
+
+    def _make_source(self, on_complete=None):
+        import time
+        from src.wayland_output_hdr import WaylandOutputHdrSource, _InterfaceTable, STATE_INIT
+        source = WaylandOutputHdrSource.__new__(WaylandOutputHdrSource)
+        source.on_complete = on_complete or MagicMock()
+        source.timeout_sec = 2.0
+        source.t0 = time.monotonic()
+        source._cleaned_up = False
+        source._done = False
+        source._sync_done = False
+        source.state = STATE_INIT
+        source.result = None
+        source.keep = []
+        source.display = 12345
+        source.lib = MagicMock()
+        source.table = _InterfaceTable(0)
+        source.callback_iface_addr = 54321
+        source.queue = 111
+        source.wrapper = 222
+        source.registry = 333
+        source.mgr = None
+        source.sync_cb = None
+        source.names = {}
+        source.monitors = [("HDMI-A-1", 999)]
+        source.output_states = {}
+        source.temp_cm_caps = None
+        source._cm_intents = set()
+        source._cm_features = set()
+        source._cm_tfs = set()
+        source._cm_primaries = set()
+        source._completion_notified = False
+        return source
+
+    def test_rejection_of_xx_color_manager_v4_without_wp(self):
+        """When registry has only xx_color_manager_v4, per-output HDR probe is UNAVAILABLE (None)."""
+        from src.wayland_output_hdr import STATE_WAIT_REGISTRY
+        source = self._make_source()
+        source.state = STATE_WAIT_REGISTRY
+        source._sync_done = True
+        source.names = {"xx_color_manager_v4": (1, 4)}
+
+        res = source.dispatch(None, None)
+        self.assertEqual(res, self.GLib.SOURCE_REMOVE)
+        self.assertTrue(source._done)
+        self.assertIsNone(source.result)
+        source.on_complete.assert_called_once_with(None)
+
+    def test_binding_of_wp_color_manager_v1(self):
+        """When registry has wp_color_manager_v1, binds manager and gets output description."""
+        from src.wayland_output_hdr import STATE_WAIT_REGISTRY, STATE_WAIT_DESCRIPTIONS
+        source = self._make_source()
+        source.state = STATE_WAIT_REGISTRY
+        source._sync_done = True
+        source.names = {"wp_color_manager_v1": (5, 1)}
+
+        source.lib.wl_proxy_marshal_constructor_versioned.return_value = 0x5555
+        source.lib.wl_proxy_add_listener.return_value = 0
+        source.lib.wl_proxy_marshal_constructor.side_effect = [0x6666, 0x7777, 0x8888]
+
+        res = source.dispatch(None, None)
+        self.assertEqual(res, self.GLib.SOURCE_CONTINUE)
+        self.assertEqual(source.state, STATE_WAIT_DESCRIPTIONS)
+        self.assertEqual(source.mgr, 0x5555)
+        self.assertIn("HDMI-A-1", source.output_states)
+        self.assertEqual(source.output_states["HDMI-A-1"]["cm_out"], 0x6666)
+        self.assertEqual(source.output_states["HDMI-A-1"]["img"], 0x7777)
+
+    def test_no_color_manager_global_returns_empty_dict(self):
+        """When registry has neither global, completes with empty dict (no HDR outputs)."""
+        from src.wayland_output_hdr import STATE_WAIT_REGISTRY
+        source = self._make_source()
+        source.state = STATE_WAIT_REGISTRY
+        source._sync_done = True
+        source.names = {"wl_compositor": (1, 4)}
+
+        res = source.dispatch(None, None)
+        self.assertEqual(res, self.GLib.SOURCE_REMOVE)
+        self.assertTrue(source._done)
+        self.assertEqual(source.result, {})
+        source.on_complete.assert_called_once_with({})
+
+    def test_prepare_timeout_finishes_before_glib_dispatch(self):
+        """If monotonic time exceeds timeout_sec, prepare() reports source ready and finishes with None."""
+        source = self._make_source()
+        source.timeout_sec = 0.5
+        source.t0 = time.monotonic() - 1.0  # 1s ago
+
+        ready, timeout = source.prepare()
+        self.assertTrue(ready)
+        self.assertEqual(timeout, 0)
+        self.assertTrue(source._done)
+        self.assertIsNone(source.result)
+
+    def test_ready_and_failed_description_callbacks(self):
+        """When description state arrives, STATE_WAIT_DESCRIPTIONS creates info object or marks SDR."""
+        from src.wayland_output_hdr import STATE_WAIT_DESCRIPTIONS, STATE_WAIT_INFOS
+        source = self._make_source()
+        source.state = STATE_WAIT_DESCRIPTIONS
+        source._sync_done = True
+        source.output_states = {
+            "HDMI-A-1": {"failed": True, "ready": False, "img": 0x111, "cm_out": 0x112},
+            "DP-1": {"failed": False, "ready": True, "img": 0x221, "cm_out": 0x222},
+        }
+
+        source.lib.wl_proxy_marshal_constructor.side_effect = [0x222, 0x333]
+        source.lib.wl_proxy_add_listener.return_value = 0
+
+        res = source.dispatch(None, None)
+        self.assertEqual(res, self.GLib.SOURCE_CONTINUE)
+        self.assertEqual(source.state, STATE_WAIT_INFOS)
+        self.assertFalse(source.output_states["HDMI-A-1"]["hdr_info"].hdr)
+        self.assertEqual(source.output_states["DP-1"]["info_obj"], 0x222)
+
+    def test_information_done_callback_classifies_hdr(self):
+        """When info is done in STATE_WAIT_INFOS, classifies HDR and returns result dict."""
+        from src.wayland_output_hdr import STATE_WAIT_INFOS
+        source = self._make_source()
+        source.state = STATE_WAIT_INFOS
+        source._sync_done = True
+        source.output_states = {
+            "HDMI-A-1": {
+                "done": True,
+                "tf": 11,  # ST2084 PQ
+                "primaries": 3,
+                "min": 0.005,
+                "max": 1000.0,
+                "ref": 203.0,
+            }
+        }
+
+        res = source.dispatch(None, None)
+        self.assertEqual(res, self.GLib.SOURCE_REMOVE)
+        self.assertTrue(source._done)
+        self.assertIsNotNone(source.result)
+        self.assertTrue(source.result["HDMI-A-1"].hdr)
+        self.assertEqual(source.result["HDMI-A-1"].max_lum, 1000.0)
+        source.on_complete.assert_called_once_with(source.result)
+
+    def test_listener_registration_error_handles_cleanly(self):
+        """If proxy add_listener fails during sync post, raises RuntimeError and source finishes None."""
+        source = self._make_source()
+        source.lib.wl_proxy_marshal_constructor.return_value = 0x999
+        source.lib.wl_proxy_add_listener.return_value = -1
+
+        with self.assertRaises(RuntimeError):
+            source._post_sync()
+
+    def test_manager_listener_failure_is_unavailable(self):
+        from src.wayland_output_hdr import STATE_WAIT_REGISTRY
+
+        source = self._make_source()
+        source.state = STATE_WAIT_REGISTRY
+        source._sync_done = True
+        source.names = {"wp_color_manager_v1": (5, 1)}
+        source.lib.wl_proxy_marshal_constructor_versioned.return_value = 0x5555
+        source.lib.wl_proxy_add_listener.return_value = -1
+
+        result = source.dispatch(None, None)
+
+        self.assertEqual(result, self.GLib.SOURCE_REMOVE)
+        self.assertTrue(source._done)
+        self.assertIsNone(source.result)
+        source.on_complete.assert_called_once_with(None)
+
+    def test_image_description_listener_failure_is_unavailable(self):
+        from src.wayland_output_hdr import STATE_WAIT_REGISTRY
+
+        source = self._make_source()
+        source.state = STATE_WAIT_REGISTRY
+        source._sync_done = True
+        source.names = {"wp_color_manager_v1": (5, 1)}
+        source.lib.wl_proxy_marshal_constructor_versioned.return_value = 0x5555
+        source.lib.wl_proxy_marshal_constructor.side_effect = [0x6666, 0x7777]
+        source.lib.wl_proxy_add_listener.side_effect = [0, -1]
+
+        result = source.dispatch(None, None)
+
+        self.assertEqual(result, self.GLib.SOURCE_REMOVE)
+        self.assertTrue(source._done)
+        self.assertIsNone(source.result)
+        source.on_complete.assert_called_once_with(None)
+
+    def test_image_info_listener_failure_is_unavailable(self):
+        from src.wayland_output_hdr import STATE_WAIT_DESCRIPTIONS
+
+        source = self._make_source()
+        source.state = STATE_WAIT_DESCRIPTIONS
+        source._sync_done = True
+        source.output_states = {
+            "HDMI-A-1": {
+                "failed": False,
+                "ready": True,
+                "img": 0x111,
+                "cm_out": 0x112,
+                "info_obj": None,
+            }
+        }
+        source.lib.wl_proxy_marshal_constructor.return_value = 0x222
+        source.lib.wl_proxy_add_listener.return_value = -1
+
+        result = source.dispatch(None, None)
+
+        self.assertEqual(result, self.GLib.SOURCE_REMOVE)
+        self.assertTrue(source._done)
+        self.assertIsNone(source.result)
+        source.on_complete.assert_called_once_with(None)
+
+    def test_cancel_in_all_states(self):
+        """Cancellation in any state immediately cleans up, sets _done=True, and does not call on_complete."""
+        from src.wayland_output_hdr import STATE_WAIT_REGISTRY, STATE_WAIT_DESCRIPTIONS, STATE_WAIT_INFOS
+        for state in (STATE_WAIT_REGISTRY, STATE_WAIT_DESCRIPTIONS, STATE_WAIT_INFOS):
+            source = self._make_source()
+            source.state = state
+            source.cancel()
+            self.assertTrue(source._done)
+            self.assertIsNone(source.on_complete)
+            res = source.dispatch(None, None)
+            self.assertEqual(res, self.GLib.SOURCE_REMOVE)
+
+    def test_completion_callback_failure_is_guarded_and_not_repeated(self):
+        source = self._make_source(on_complete=MagicMock(side_effect=RuntimeError("boom")))
+        source._finish({})
+
+        with self.assertLogs(level="ERROR") as captured:
+            self.assertEqual(source.dispatch(None, None), self.GLib.SOURCE_REMOVE)
+            self.assertEqual(source.dispatch(None, None), self.GLib.SOURCE_REMOVE)
+        source.on_complete.assert_called_once_with({})
+        self.assertTrue(
+            any("on_complete callback failed" in line for line in captured.output)
+        )
+
+    def test_cleanup_destroys_all_proxies_and_is_idempotent(self):
+        """cleanup() destroys all active proxies and safely handles repeated calls."""
+        source = self._make_source()
+        source.sync_cb = 0x10
+        source.mgr = 0x20
+        source.registry = 0x30
+        source.wrapper = 0x40
+        source.queue = 0x50
+        source.output_states = {
+            "HDMI-A-1": {"info_obj": 0x60, "img": 0x70, "cm_out": 0x80}
+        }
+
+        source.cleanup()
+        self.assertTrue(source._cleaned_up)
+        self.assertIsNone(source.mgr)
+        self.assertIsNone(source.registry)
+        self.assertIsNone(source.wrapper)
+        self.assertIsNone(source.queue)
+        self.assertEqual(len(source.output_states), 0)
+
+        source.lib.reset_mock()
+        source.cleanup()
+        source.lib.wl_proxy_destroy.assert_not_called()
+
+
+class TestLuminanceFieldsSeparation(unittest.TestCase):
+    def test_output_hdr_info_separates_target_and_physical_luminance(self):
+        from src.wayland_output_hdr import OutputHdrInfo
+        info = OutputHdrInfo(
+            connector="DP-1",
+            hdr=True,
+            min_lum=0.005,
+            max_lum=740.0,
+            reference_lum=203.0,
+            target_max_lum=10000.0,
+            target_max_cll=4000.0,
+        )
+        self.assertEqual(info.max_lum, 740.0)
+        self.assertEqual(info.target_max_lum, 10000.0)
+        self.assertEqual(info.target_max_cll, 4000.0)
+
+
+class TestHwdecDiagnosticsReporting(unittest.TestCase):
+    def _get_subtitle(self, props):
+        from src.hdr_diagnostics import HdrDiagnosticsDialog
+        diag = HdrDiagnosticsDialog.__new__(HdrDiagnosticsDialog)
+        diag.hwdec_row = MagicMock()
+        mock_win = MagicMock()
+        mock_mpv = MagicMock()
+        mock_mpv.get_property.side_effect = lambda name: props.get(name)
+        mock_mpv.__getitem__.side_effect = lambda name: props.get(name)
+        mock_win.mpv = mock_mpv
+        mock_win.player.mpv = mock_mpv
+        diag._win = mock_win
+        diag._update_stream_info()
+        diag.hwdec_row.set_subtitle.assert_called_once()
+        return diag.hwdec_row.set_subtitle.call_args[0][0]
+
+    def test_hwdec_active_when_current_is_hardware(self):
+        sub = self._get_subtitle({"hwdec-current": "vaapi", "hwdec": "auto"})
+        self.assertIn("vaapi", sub)
+        self.assertIn("GPU Acceleration active", sub)
+
+    def test_hwdec_software_when_current_is_no(self):
+        sub = self._get_subtitle({"hwdec-current": "no", "hwdec": "auto"})
+        self.assertIn("Software / CPU Decoding", sub)
+
+    def test_hwdec_unknown_configured_when_current_missing(self):
+        sub = self._get_subtitle({"hwdec-current": None, "hwdec": "auto"})
+        self.assertIn("Unknown (configured: auto)", sub)
+        self.assertNotIn("GPU Acceleration active", sub)
+
+    def test_hwdec_unknown_when_both_missing(self):
+        sub = self._get_subtitle({"hwdec-current": None, "hwdec": None})
+        self.assertEqual(sub, "Unknown")
 
 
 if __name__ == "__main__":

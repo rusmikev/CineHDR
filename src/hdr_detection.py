@@ -28,7 +28,8 @@ This module isolates the logic required to determine whether:
 
 import gi
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gdk, Gtk
 from typing import Optional, Any
 
 from . import wayland_cm_probe
@@ -38,14 +39,22 @@ from . import wayland_output_hdr
 _cached_support = None
 
 
-def invalidate_hdr_support_cache():
+def invalidate_support_decision():
     global _cached_support
     _cached_support = None
-    # The compositor capability probe and the per-output HDR state cache
-    # each cache independently; keep all three in lockstep so a monitor
-    # hot-plug / re-realize re-evaluates everything.
-    wayland_cm_probe.invalidate()
-    wayland_output_hdr.invalidate()
+
+
+def invalidate_hdr_support_cache(invalidate_compositor: bool = True):
+    global _cached_support
+    _cached_support = None
+    # The per-output HDR state cache is dropped on monitor hot-plug / re-realize.
+    # The compositor capability probe (globals enumeration) does not change on
+    # monitor hot-plug and is only invalidated when explicitly requested,
+    # preventing synchronous Wayland roundtrips on hot paths.
+    if invalidate_compositor:
+        wayland_cm_probe.invalidate()
+    wayland_output_hdr.invalidate(invalidate_caps=invalidate_compositor)
+
 
 
 def get_monitor_hdr_state(
@@ -80,6 +89,35 @@ def refresh_monitor_hdr_state() -> Optional[bool]:
         return None
 
 
+def async_refresh_monitor_hdr_state(
+    on_complete: Optional[Any] = None, timeout_sec: float = 2.0
+) -> Optional[Any]:
+    """Asynchronously refresh the Wayland monitor HDR states cache via non-blocking GLib.Source."""
+    try:
+        def _cb(states):
+            if on_complete:
+                try:
+                    if states is None:
+                        on_complete(None)
+                    elif not states:
+                        on_complete(False)
+                    else:
+                        on_complete(any(info.hdr for info in states.values()))
+                except Exception:
+                    pass
+
+        return wayland_output_hdr.async_refresh_output_hdr_states(
+            on_complete=_cb, timeout_sec=timeout_sec
+        )
+    except Exception:
+        if on_complete:
+            try:
+                on_complete(None)
+            except Exception:
+                pass
+        return None
+
+
 def get_compositor_cm_support() -> Optional[bool]:
     """Tri-state: does the Wayland compositor advertise color management?
 
@@ -91,22 +129,27 @@ def get_compositor_cm_support() -> Optional[bool]:
     return wayland_cm_probe.probe_color_management()
 
 
-def check_hdr_support() -> bool:
+def check_hdr_support(allow_probe: bool = True) -> bool:
     global _cached_support
     if _cached_support is not None:
         return _cached_support
-    _cached_support = _check_hdr_support_uncached()
-    return _cached_support
+    res = _check_hdr_support_uncached(allow_probe=allow_probe)
+    from . import wayland_output_hdr
+    caps = wayland_output_hdr.get_cm_caps(allow_probe=False)
+    if allow_probe or caps is not None:
+        _cached_support = res
+    return res
 
 
-def _check_hdr_support_uncached() -> bool:
+def _check_hdr_support_uncached(allow_probe: bool = True) -> bool:
     """
     Check if the current desktop session and GTK runtime support HDR rendering.
     """
     try:
         import os
         if os.environ.get("GSK_RENDERER", "").lower() == "gl":
-            return False
+            if (Gtk.get_major_version(), Gtk.get_minor_version()) < (4, 18):
+                return False
         if not hasattr(Gdk, "ColorState") or not hasattr(Gdk.ColorState, "get_rec2100_pq"):
             return False
         if not hasattr(Gdk, "MemoryFormat") or not hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT"):
@@ -151,7 +194,9 @@ def _check_hdr_support_uncached() -> bool:
             return False
 
         from . import wayland_output_hdr
-        caps = wayland_output_hdr.get_cm_caps(allow_probe=True)
+        caps = wayland_output_hdr.get_cm_caps(allow_probe=allow_probe)
+        if caps is None:
+            return False
         ok, _reason = gtk_color_managed(caps)
         if not ok or not gtk_can_tag_hdr(caps, TF_PQ):
             return False
@@ -159,6 +204,21 @@ def _check_hdr_support_uncached() -> bool:
         return True
     except Exception:
         return False
+
+
+def is_surface_submission_proven() -> bool:
+    """Check whether Wayland surface submission with HDR metadata is verified.
+
+    Per ADR-0007, GTK connects to the color manager registry global but does not
+    attach image descriptions to application wl_surfaces without verified toolkit/
+    compositor support. Consequently, Rec.2100 PQ textures prepared by the app
+    are not proven to be passed to the compositor without conversion.
+
+    Returns False by default until the unblocking criteria defined in ADR-0007
+    are met. Supports CINEHDR_FORCE_SURFACE_SUBMISSION=1 for test validation.
+    """
+    import os
+    return os.environ.get("CINEHDR_FORCE_SURFACE_SUBMISSION") == "1"
 
 
 def is_hdr_content(params: dict) -> bool:
@@ -321,7 +381,8 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
     """
     import os
     if os.environ.get("GSK_RENDERER", "").lower() == "gl":
-        return "GSK_RENDERER=gl forces legacy 8-bit OpenGL rendering without HDR support"
+        if (Gtk.get_major_version(), Gtk.get_minor_version()) < (4, 18):
+            return "GSK_RENDERER=gl forces legacy 8-bit OpenGL rendering without HDR support (GTK < 4.18)"
     if not hasattr(Gdk, "ColorState") or not hasattr(Gdk.ColorState, "get_rec2100_pq") or not hasattr(Gdk, "MemoryFormat") or not hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT"):
         return "Gdk.ColorState is not available (requires GTK >= 4.16)"
     if not display:

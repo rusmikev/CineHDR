@@ -191,10 +191,17 @@ class CineWindow(Adw.ApplicationWindow):
         self._is_inactive: bool = False
         self._mpv_ctx: mpv.MpvRenderContext
 
+        mpv_logger = logging.getLogger("mpv")
+
+        def _mpv_log_handler(level: str, prefix: str, message: str):
+            if "Multiple Dolby Vision RPUs" in message:
+                return
+            lvl = logging.WARNING if level in ("warn", "error", "fatal") else logging.DEBUG
+            mpv_logger.log(lvl, "[%s] %s", prefix, message.rstrip())
+
         self.mpv = mpv.MPV(
-            # terminal=True,
-            # log_handler=print,
-            loglevel="info",
+            log_handler=_mpv_log_handler,
+            loglevel="warn",
             audio_client_name=_("CineHDR"),
             screenshot_directory=SCREENSHOT_DIR,
             screenshot_template="cine_%n",

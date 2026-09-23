@@ -171,6 +171,41 @@ template $HdrDiagnosticsDialog: Adw.Dialog {
           subtitle: "Checking...";
         }
       }
+
+      Adw.PreferencesGroup {
+        title: _("Playback Performance & Drops");
+        description: _("Real-time video framerate and frame loss counters.");
+
+        Adw.ActionRow perf_fps_row {
+          title: _("Playback Framerate");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow perf_dropped_row {
+          title: _("Dropped Frames");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow perf_delayed_row {
+          title: _("Delayed & Mistimed Frames");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow perf_rendered_row {
+          title: _("Presented Frames");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow perf_avsync_row {
+          title: _("A/V Sync Offset");
+          subtitle: "Checking...";
+        }
+
+        Adw.ActionRow perf_pipeline_row {
+          title: _("Render Pipeline Status");
+          subtitle: "Checking...";
+        }
+      }
     };
   }
 }

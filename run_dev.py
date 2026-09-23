@@ -32,11 +32,12 @@ sys.path.insert(0, root_dir)
 
 # Must precede every Gtk/Adw/Gdk import: PyGObject initializes GTK on import
 # and GDK reads GDK_DEBUG exactly once (see src/gtk_cm_policy.py).
-from src.gtk_cm_policy import apply_color_mgmt_opt_in
+from src.gtk_cm_policy import apply_color_mgmt_opt_in, apply_gsk_renderer_policy
 
 apply_color_mgmt_opt_in(
     os.environ, sys.argv, gtk_initialized="gi.repository.Gtk" in sys.modules
 )
+apply_gsk_renderer_policy(os.environ)
 
 # Keep the development build current before loading its resources. Meson is
 # incremental, so this is cheap when nothing changed and prevents a running

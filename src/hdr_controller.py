@@ -40,6 +40,7 @@ from .hdr_detection import (
     get_dovi_info,
     get_monitor_hdr_state,
     refresh_monitor_hdr_state,
+    is_surface_submission_proven,
 )
 
 # Single source of truth for the HDR mode values and the peak-brightness
@@ -234,27 +235,44 @@ class HdrController(GObject.Object):
             except Exception:
                 pass
 
-        # Initial background monitor state probe & periodic TTL refresh timer
-        refresh_monitor_hdr_state()
-        self._monitor_poll_timer_id: Optional[int] = GLib.timeout_add_seconds(
-            2, self._on_monitor_poll_timeout
-        )
+        # Initial background non-blocking monitor state probe
+        self._monitor_poll_timer_id: Optional[int] = None
+        self._monitor_probe_source = None
+        self.request_monitor_probe()
 
         self.apply_hdr_settings()
 
-    def _on_monitor_poll_timeout(self) -> bool:
-        # Periodic background poll for output HDR state changes (monitor plugged/unplugged/toggled)
-        self.check_monitor_hdr_state_change()
-        return GLib.SOURCE_CONTINUE
+    def request_monitor_probe(self):
+        """Asynchronously probe Wayland monitor HDR states without blocking the UI loop."""
+        if getattr(self, "_disconnected", False):
+            return
+        if getattr(self, "_monitor_probe_source", None):
+            try:
+                if hasattr(self._monitor_probe_source, "cancel"):
+                    self._monitor_probe_source.cancel()
+                elif hasattr(self._monitor_probe_source, "destroy"):
+                    self._monitor_probe_source.destroy()
+            except Exception:
+                pass
+            self._monitor_probe_source = None
+
+        from .hdr_detection import async_refresh_monitor_hdr_state
+        self._monitor_probe_source = async_refresh_monitor_hdr_state(
+            on_complete=self._on_monitor_hdr_state_probed
+        )
+
+    def _on_monitor_hdr_state_probed(self, state: Optional[bool]):
+        """Handle completion of the non-blocking monitor HDR probe."""
+        self._monitor_probe_source = None
+        if getattr(self, "_disconnected", False):
+            return
+        from .hdr_detection import check_hdr_support
+        check_hdr_support(allow_probe=False)
+        self.apply_hdr_settings()
 
     def check_monitor_hdr_state_change(self):
-        """Called on monitor configuration changes or periodic timer to re-evaluate HDR output."""
-        old_state = get_monitor_hdr_state(self._output_hint, allow_probe=False)
-        refresh_monitor_hdr_state()
-        new_state = get_monitor_hdr_state(self._output_hint, allow_probe=False)
-        if old_state != new_state:
-            logging.info("Monitor HDR state changed: %s -> %s, updating playback settings", old_state, new_state)
-            self.apply_hdr_settings()
+        """Called on monitor configuration changes to re-evaluate HDR output asynchronously."""
+        self.request_monitor_probe()
 
     def _on_gsettings_changed(self, settings, key):
         if key == "hdr-mode":
@@ -328,9 +346,17 @@ class HdrController(GObject.Object):
                     val = default_val
                 props.append((prop, val))
 
+        if not hasattr(self, "_applied_mpv_props"):
+            self._applied_mpv_props = {}
+
+        props_changed = False
         for prop, val in props:
+            if self._applied_mpv_props.get(prop) == val:
+                continue
             try:
                 self.mpv[prop] = val
+                self._applied_mpv_props[prop] = val
+                props_changed = True
             except mpv.ShutdownError:
                 # Property observers can deliver their final empty state after
                 # CineHDR has asked libmpv to quit. This is normal shutdown,
@@ -357,7 +383,9 @@ class HdrController(GObject.Object):
             "hdr_mode": self._hdr_mode,
             "dovi_profile": self.dovi_profile,
         }
-        logging.info(f"HDR Pipeline Telemetry: {json.dumps(telemetry)}")
+        if getattr(self, "_last_telemetry", None) != telemetry:
+            self._last_telemetry = telemetry
+            logging.info(f"HDR Pipeline Telemetry: {json.dumps(telemetry)}")
 
         if self.on_change_cb:
             self.on_change_cb()
@@ -530,7 +558,7 @@ class HdrController(GObject.Object):
     @property
     def is_hdr_active(self) -> bool:
         """Returns True if HDR color state should be applied to the GL texture."""
-        if not check_hdr_support():
+        if not check_hdr_support(allow_probe=False):
             return False
         # Capability gate, deliberately ahead of the user's mode: an unshapeable
         # Dolby Vision profile (5) reaches us as IPT decoded with a BT.2020-NC
@@ -548,11 +576,15 @@ class HdrController(GObject.Object):
             # mpv's tone mapping for the compositor's simpler conversion, so
             # the user's choice is respected.
             return True
-        # Quality gate for auto mode only: a capable compositor with monitor
-        # HDR switched *off* converts PQ -> SDR itself, which looks worse
-        # than mpv's tone mapping. Only a definitive "monitor is SDR" blocks
-        # HDR; an unknown state (None) preserves previous behaviour.
-        if get_monitor_hdr_state(self._output_hint, allow_probe=False) is False:
+        # Quality gate for auto mode per ADR-0007:
+        # Since GTK currently does not provide a way to prove Wayland surface
+        # submission of colorimetry, and testing shows it may fail to pass the
+        # surface description even when the compositor supports it, 'auto' mode
+        # conservatively falls back to SDR tone mapping unless surface submission
+        # is proven. 'force-hdr' remains an experimental override.
+        if not is_surface_submission_proven():
+            return False
+        if get_monitor_hdr_state(self._output_hint, allow_probe=False) is not True:
             return False
         return self._is_hdr_content
 
@@ -600,6 +632,16 @@ class HdrController(GObject.Object):
             except Exception:
                 pass
             self._monitor_poll_timer_id = None
+
+        if hasattr(self, "_monitor_probe_source") and self._monitor_probe_source:
+            try:
+                if hasattr(self._monitor_probe_source, "cancel"):
+                    self._monitor_probe_source.cancel()
+                elif hasattr(self._monitor_probe_source, "destroy"):
+                    self._monitor_probe_source.destroy()
+            except Exception:
+                pass
+            self._monitor_probe_source = None
 
         if getattr(self, "_gsettings", None):
             try:
