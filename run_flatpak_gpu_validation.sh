@@ -78,7 +78,16 @@ def validation_mpv_log_handler(level, prefix, text):
 original_mpv_init = mpv.MPV.__init__
 
 def validation_mpv_init(self, *args, **kwargs):
-    kwargs["log_handler"] = validation_mpv_log_handler
+    app_log_handler = kwargs.get("log_handler")
+
+    def combined_log_handler(level, prefix, text):
+        try:
+            if app_log_handler is not None:
+                app_log_handler(level, prefix, text)
+        finally:
+            validation_mpv_log_handler(level, prefix, text)
+
+    kwargs["log_handler"] = combined_log_handler
     kwargs["loglevel"] = "v"
     return original_mpv_init(self, *args, **kwargs)
 

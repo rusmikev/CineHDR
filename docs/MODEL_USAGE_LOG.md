@@ -86,13 +86,13 @@ correction and one Architect-requested fix were sufficient; no task required
   - Disclaimer: Discrete GL renderer proof does not prove VAAPI decoding GPU; physical decoder device remains Unknown without direct kernel/driver VAAPI device telemetry.
   - Exact command template: `timeout --signal=TERM --kill-after=10s 180s bash ./run_flatpak_gpu_validation.sh "<sample-path>" quick`
   - Stop conditions: After this third run, stop immediately. No fourth run, no probes, no self-repair.
-- **Execution and accepted result of exceptional Run 3 (2026-09-23 11:37:47 – 11:39:06 UTC)**:
+- **Execution and observed result of exceptional Run 3 (2026-09-23 11:37:47 – 11:39:06 UTC)**:
   - Command template: `timeout --signal=TERM --kill-after=10s 180s bash ./run_flatpak_gpu_validation.sh "<sample-path>" quick`
   - Exit code: `0`
   - Overall result: `WARN` (exit 0)
   - Report artifact: local report artifact `validation-reports/gpu-next-quick-20260923-163902.txt` (SHA-256: `7c2deb8441ecd416353911f714f7ed48d7637e39866cfa2462e44016055c0559`)
   - Raw log artifact: local raw log artifact `validation-reports/gpu-next-quick-20260923-163750-524705.log` (SHA-256: `9ec99115999c6cd6d4b28886de21aec1f86bff605a1c67292216f5d72501e6fb`)
-  - Accepted evidence:
+  - Observed runtime evidence:
     - Active renderer: `opengl-next`, status: `active`
     - OpenGL renderer: target discrete GPU driver string matching target dGPU architecture
     - Hardware decoding: `vaapi-copy` (`vd: Using hardware decoding (vaapi-copy).`)
@@ -105,4 +105,4 @@ correction and one Architect-requested fix were sufficient; no task required
     - Physical decoding GPU for VAAPI remains `Unknown` (neither mpv nor libva reports the underlying DRM device node in telemetry).
     - Gate 2W (Wayland color-management protocol submission and surface lifecycle) remains `OPEN`.
     - Dolby Vision validation (colorimetric accuracy, Profile 5 reshaping, enhancement layer / multi-RPU processing) remains `OPEN` (pending).
-  - Status: Accepted as WARN for the Flatpak packaging and discrete GPU Next startup row. The attempt family is complete; no fourth run is permitted without a new independent architecture review and explicit user authorization. (Full original command details, environment paths, and execution logs are retained exclusively in local non-public validation backup).
+  - Status: Observed result is WARN (exit 0) for discrete GPU Next startup and vaapi-copy in this candidate execution. However, formal row acceptance remains unconfirmed (provenance unverified) because exact source Git provenance was not established for Flatpak candidate 4edda5dd. Historical observations and log artifacts remain recorded and are not declared false. Independent previously accepted rows remain unaffected. The attempt family execution budget of three runs is complete; no fourth run is permitted without a new independent architecture review and explicit user authorization. (Full original command details, environment paths, and execution logs are retained exclusively in local non-public validation backup).

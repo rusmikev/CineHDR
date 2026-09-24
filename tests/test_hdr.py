@@ -2628,6 +2628,114 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
         self.assertIn(f"Dolby Vision RPU Warnings: {second_snapshot_fact}", report_2)
         self.assertNotIn(f"Dolby Vision RPU Warnings: {first_snapshot_fact}", report_2)
 
+    def test_diagnostics_export_preserves_consistent_decoder_snapshot(self):
+        """Export must use the decoder snapshot taken at update_diagnostics and not re-read properties."""
+        from src.hdr_diagnostics import HdrDiagnosticsDialog
+
+        diag = HdrDiagnosticsDialog.__new__(HdrDiagnosticsDialog)
+        diag.dovi_rpu_row = MagicMock()
+        diag.dovi_profile_row = MagicMock()
+        diag.dovi_profile_row.get_visible.return_value = False
+        diag.status_row = MagicMock()
+        diag.display_hdr_row = MagicMock()
+        diag.compositor_cm_row = MagicMock()
+        diag.monitor_hdr_row = MagicMock()
+        diag.unsupported_reason_row = MagicMock()
+        diag.offload_row = MagicMock()
+        diag.color_state_row = MagicMock()
+        diag.texture_format_row = MagicMock()
+        diag.codec_row = MagicMock()
+        diag.resolution_row = MagicMock()
+        diag.hwdec_row = MagicMock()
+        diag.primaries_row = MagicMock()
+        diag.trc_row = MagicMock()
+        diag.peak_luma_row = MagicMock()
+        diag.target_row = MagicMock()
+        diag.renderer_active_row = MagicMock()
+        diag.renderer_configured_row = MagicMock()
+        diag.renderer_reason_row = MagicMock()
+        diag.renderer_target_row = MagicMock()
+        diag.renderer_requested_row = MagicMock()
+        diag.renderer_dependency_row = MagicMock()
+        diag.gpu_next_capability_row = MagicMock()
+        diag.dovi_capability_row = MagicMock()
+        diag._renderer_report_fields = {}
+        diag._performance_report_fields = {}
+        diag._sampled_configured_decoder = None
+        diag._sampled_active_decoder = None
+        diag._sampled_dovi_rpu_fact = "None (0 warning messages logged)"
+
+        mock_win = MagicMock()
+        mock_win.dovi_rpu_warning_count = 0
+        mock_win.dovi_rpu_warning_text = None
+        mock_mpv = MagicMock()
+        mock_mpv._dovi_rpu_warning_count = 0
+        mock_mpv._dovi_rpu_warning_text = None
+
+        props = {"hwdec": "vaapi-copy", "hwdec-current": "vaapi-copy"}
+
+        def mock_get_property(name, default=None):
+            return props.get(name, default)
+
+        def mock_getitem(name):
+            if name in props:
+                return props[name]
+            raise KeyError(name)
+
+        mock_mpv.get_property.side_effect = mock_get_property
+        mock_mpv.__getitem__.side_effect = mock_getitem
+        mock_win.mpv = mock_mpv
+        mock_win.player.mpv = mock_mpv
+        mock_win._video_area = None
+        mock_win.gl_area = None
+        diag._win = mock_win
+
+        # 0. Before snapshot, both configured and active decoders default to Unknown
+        report_pre = diag._copy_report()
+        self.assertIn("Configured decoder: Unknown", report_pre)
+        self.assertIn("Active decoder: Unknown", report_pre)
+
+        # 1. Update UI diagnostics with actual=vaapi-copy, configured=vaapi-copy
+        diag.update_diagnostics()
+        self.assertEqual(diag._sampled_configured_decoder, "vaapi-copy")
+        self.assertEqual(diag._sampled_active_decoder, "vaapi-copy")
+        ui_subtitle = diag.hwdec_row.set_subtitle.call_args[0][0]
+        self.assertIn("vaapi-copy", ui_subtitle)
+        self.assertIn("GPU Acceleration active", ui_subtitle)
+
+        # Verify export matches the snapshot
+        report_1 = diag._copy_report()
+        self.assertIn("Configured decoder: vaapi-copy", report_1)
+        self.assertIn("Active decoder: vaapi-copy", report_1)
+
+        # 2. Before next export, actual changes to "no" in mpv
+        props["hwdec-current"] = "no"
+
+        # Export without calling update_diagnostics() preserves original snapshot
+        report_mid = diag._copy_report()
+        self.assertIn("Configured decoder: vaapi-copy", report_mid)
+        self.assertIn("Active decoder: vaapi-copy", report_mid)
+        self.assertNotIn("Active decoder: no", report_mid)
+
+        # 3. Next UI update takes a new snapshot and updates both UI and export
+        diag.update_diagnostics()
+        self.assertEqual(diag._sampled_active_decoder, "no")
+        ui_subtitle_new = diag.hwdec_row.set_subtitle.call_args[0][0]
+        self.assertIn("Software / CPU Decoding", ui_subtitle_new)
+        self.assertIn("active: no", ui_subtitle_new)
+
+        report_2 = diag._copy_report()
+        self.assertIn("Configured decoder: vaapi-copy", report_2)
+        self.assertIn("Active decoder: no", report_2)
+        self.assertNotIn("Active decoder: vaapi-copy", report_2)
+
+        # 4. Actual becomes unavailable (None / missing property)
+        props["hwdec-current"] = None
+        diag.update_diagnostics()
+        self.assertEqual(diag._sampled_active_decoder, "unknown")
+        report_3 = diag._copy_report()
+        self.assertIn("Active decoder: unknown", report_3)
+
 
 if __name__ == "__main__":
     unittest.main()

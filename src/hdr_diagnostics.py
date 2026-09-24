@@ -184,6 +184,8 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         self._renderer_report_fields: dict[str, object] = {}
         self._performance_report_fields: dict[str, object] = {}
         self._sampled_dovi_rpu_fact: str | None = None
+        self._sampled_configured_decoder: str | None = None
+        self._sampled_active_decoder: str | None = None
         self.connect("realize", self._on_realize)
         self.connect("unrealize", self._on_unrealize)
         try:
@@ -280,10 +282,12 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         mpv = getattr(self._win, "mpv", None)
         if mpv is None and hasattr(self._win, "player"):
             mpv = getattr(self._win.player, "mpv", None)
-        hw_config = get_mpv_prop(mpv, "hwdec")
-        hw_current = get_mpv_prop(mpv, "hwdec-current")
-        video["Configured decoder"] = hw_config if hw_config else "unknown"
-        video["Active decoder"] = hw_current if hw_current else "unknown"
+        video["Configured decoder"] = (
+            getattr(self, "_sampled_configured_decoder", None) or "Unknown"
+        )
+        video["Active decoder"] = (
+            getattr(self, "_sampled_active_decoder", None) or "Unknown"
+        )
         video["Hardware decoding device"] = "Unknown (not reported by libmpv)"
         rpu_fact = getattr(self, "_sampled_dovi_rpu_fact", None)
         if rpu_fact is None:
@@ -811,11 +815,25 @@ class HdrDiagnosticsDialog(Adw.Dialog):
             except Exception:
                 self.resolution_row.set_subtitle(_("Unknown"))
 
-        if hasattr(self, "hwdec_row") and hasattr(self.hwdec_row, "set_subtitle"):
+        hw_current = None
+        hw_config = None
+        if mpv is not None:
             try:
                 hw_current = get_mpv_prop(mpv, "hwdec-current")
+            except Exception:
+                pass
+            try:
                 hw_config = get_mpv_prop(mpv, "hwdec")
-                hw_config_str = str(hw_config) if hw_config else "unknown"
+            except Exception:
+                pass
+
+        hw_config_str = str(hw_config) if hw_config else "unknown"
+        hw_current_str = str(hw_current) if hw_current else "unknown"
+        self._sampled_configured_decoder = hw_config_str
+        self._sampled_active_decoder = hw_current_str
+
+        if hasattr(self, "hwdec_row") and hasattr(self.hwdec_row, "set_subtitle"):
+            try:
                 if hw_current and str(hw_current).lower() not in ("no", "none", ""):
                     self.hwdec_row.set_subtitle(
                         f"{hw_current} ({_('GPU Acceleration active')}; configured: {hw_config_str})"

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -1318,11 +1319,12 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertIn('"--command=python3"', launcher)
         self.assertIn('logging.basicConfig(level=logging.INFO)', launcher)
         self.assertIn("import mpv", launcher)
-        self.assertIn("original_mpv_init = mpv.MPV.__init__", launcher)
         self.assertIn(
-            'kwargs["log_handler"] = validation_mpv_log_handler', launcher
+            'kwargs["log_handler"] = combined_log_handler', launcher
         )
-        self.assertIn('kwargs["loglevel"] = "v"', launcher)
+        self.assertIn(
+            'validation_mpv_log_handler(level, prefix, text)', launcher
+        )
         self.assertIn("mpv.MPV.__init__ = validation_mpv_init", launcher)
         self.assertIn("cinehdr.validation.libmpv", launcher)
         self.assertIn(
@@ -1697,6 +1699,146 @@ class FlatpakLauncherBootstrapExecutionTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(player["hwdec"], "vaapi-copy")
+
+    def test_actual_launcher_bootstrap_chains_app_log_handler_and_preserves_rpu_warnings(
+        self,
+    ):
+        events = []
+
+        class MockMPV:
+            def __init__(self, *args, **kwargs):
+                events.append(("init_called", args, kwargs))
+                self.options = {"hwdec": "no"}
+
+            def __setitem__(self, key, value):
+                self.options[key] = value
+
+            def __getitem__(self, key):
+                return self.options.get(key)
+
+            def loadfile(self, *args, **kwargs):
+                return "OK"
+
+        mock_mpv_mod = types.ModuleType("mpv")
+        mock_mpv_mod.MPV = MockMPV
+
+        mock_runpy_mod = types.ModuleType("runpy")
+        mock_runpy_mod.run_path = MagicMock(return_value={"status": "app_ran"})
+
+        with patch.dict(
+            "sys.modules", {"mpv": mock_mpv_mod, "runpy": mock_runpy_mod}
+        ):
+            compiled = compile(
+                self.bootstrap_code, "<validation bootstrap>", "exec"
+            )
+            namespace = {}
+            exec(compiled, namespace)
+
+            # 1. Test chaining when app provides log_handler (like CineWindow with make_mpv_log_handler)
+            class MockAppLogHandler:
+                def __init__(self):
+                    self.dovi_rpu_warning_count = 0
+                    self.dovi_rpu_warning_text = None
+                    self.received = []
+
+                def __call__(self, level, prefix, message):
+                    self.received.append((level, prefix, message))
+                    if "Multiple Dolby Vision RPUs" in message:
+                        self.dovi_rpu_warning_count += 1
+                        if self.dovi_rpu_warning_text is None:
+                            self.dovi_rpu_warning_text = f"{prefix}: {message.strip()}"
+
+            app_log_handler = MockAppLogHandler()
+
+            mock_mpv_mod.MPV(log_handler=app_log_handler)
+            init_kw = events[-1][2]
+            chained_handler = init_kw.get("log_handler")
+            self.assertTrue(callable(chained_handler))
+
+            # Intercept validator logger to verify it also gets messages
+            validation_logger = logging.getLogger("cinehdr.validation.libmpv")
+            old_level = validation_logger.level
+            validation_logger.setLevel(logging.INFO)
+            validator_records = []
+
+            class CaptureHandler(logging.Handler):
+                def emit(self, record):
+                    validator_records.append(record.getMessage())
+
+            capture_handler = CaptureHandler()
+            validation_logger.addHandler(capture_handler)
+            try:
+                # Send first RPU warning
+                msg1 = "hevc: Multiple Dolby Vision RPUs found in frame 10"
+                chained_handler("warn", "ffmpeg/video", msg1)
+                self.assertEqual(app_log_handler.dovi_rpu_warning_count, 1)
+                self.assertEqual(
+                    app_log_handler.dovi_rpu_warning_text,
+                    f"ffmpeg/video: {msg1}",
+                )
+                self.assertEqual(len(validator_records), 1)
+                self.assertIn(msg1, validator_records[0])
+
+                # Send second RPU warning
+                msg2 = "hevc: Multiple Dolby Vision RPUs found in frame 20"
+                chained_handler("warn", "ffmpeg/video", msg2)
+                self.assertEqual(app_log_handler.dovi_rpu_warning_count, 2)
+                # First text preserved:
+                self.assertEqual(
+                    app_log_handler.dovi_rpu_warning_text,
+                    f"ffmpeg/video: {msg1}",
+                )
+                self.assertEqual(len(validator_records), 2)
+                self.assertIn(msg2, validator_records[1])
+
+                # Send standard non-RPU message
+                std_msg = "Playback started"
+                chained_handler("info", "cplayer", std_msg)
+                self.assertEqual(app_log_handler.dovi_rpu_warning_count, 2)
+                self.assertEqual(len(app_log_handler.received), 3)
+                self.assertEqual(len(validator_records), 3)
+                self.assertIn(std_msg, validator_records[2])
+            finally:
+                validation_logger.removeHandler(capture_handler)
+
+            # 2. Test execution when app provides NO log_handler (None / absent)
+            mock_mpv_mod.MPV()
+            init_kw_no_handler = events[-1][2]
+            chained_no_handler = init_kw_no_handler.get("log_handler")
+            self.assertTrue(callable(chained_no_handler))
+
+            validation_logger.addHandler(capture_handler)
+            try:
+                # Must not raise an exception when app_log_handler is absent
+                chained_no_handler("info", "cplayer", "Standalone message without app handler")
+                self.assertIn("Standalone message without app handler", validator_records[-1])
+            finally:
+                validation_logger.removeHandler(capture_handler)
+
+            # 3. Test exception propagation: app handler throws an exception;
+            # the validator still records the message, and the exception is not suppressed.
+            class BrokenAppLogHandler:
+                def __call__(self, level, prefix, message):
+                    raise RuntimeError("Simulated failure in app log handler")
+
+            broken_handler = BrokenAppLogHandler()
+            mock_mpv_mod.MPV(log_handler=broken_handler)
+            init_kw_broken = events[-1][2]
+            chained_broken = init_kw_broken.get("log_handler")
+            self.assertTrue(callable(chained_broken))
+
+            validator_records.clear()
+            validation_logger.addHandler(capture_handler)
+            try:
+                fail_msg = "hevc: Multiple Dolby Vision RPUs found in frame 99"
+                with self.assertRaises(RuntimeError) as cm:
+                    chained_broken("warn", "ffmpeg/video", fail_msg)
+                self.assertIn("Simulated failure in app log handler", str(cm.exception))
+                self.assertEqual(len(validator_records), 1)
+                self.assertIn(fail_msg, validator_records[0])
+            finally:
+                validation_logger.removeHandler(capture_handler)
+                validation_logger.setLevel(old_level)
 
 
 if __name__ == "__main__":
