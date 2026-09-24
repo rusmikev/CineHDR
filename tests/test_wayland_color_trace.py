@@ -40,6 +40,163 @@ noise from CineHDR logging is ignored
 
 
 class WaylandColorTraceTests(unittest.TestCase):
+    def test_early_bind_survives_later_registry_id_reuse(self):
+        trace = (
+            "-> wl_display#1.get_registry(new id wl_registry#2)\n"
+            + VALID_TRACE.replace(
+                'wp_color_manager_v1#11.get_surface(',
+                'wl_display#1.get_registry(new id wl_registry#2)\n'
+                'wl_registry#2.global(19, "wp_color_manager_v1", 2)\n'
+                'wp_color_manager_v1#11.get_surface(',
+            )
+        )
+        evidence = validate_trace(trace)
+        self.assertEqual(evidence["matched"]["registry_global"]["registry_id"], 2)
+        self.assertEqual(evidence["matched"]["registry_global"]["id"], 19)
+        self.assertEqual(evidence["matched"]["registry_global"]["event_index"], 6)
+        self.assertEqual(evidence["matched"]["registry_global"]["advertised_version"], 1)
+        self.assertEqual(evidence["matched"]["manager"]["bound_version"], 1)
+
+    def test_early_bind_survives_later_advertisement_on_other_registry(self):
+        trace = VALID_TRACE.replace(
+            'wp_color_manager_v1#11.get_surface(',
+            'wl_registry#7.global(19, "wp_color_manager_v1", 2)\n'
+            'wp_color_manager_v1#11.get_surface(',
+        )
+        evidence = validate_trace(trace)
+        self.assertEqual(evidence["matched"]["registry_global"]["registry_id"], 2)
+        self.assertEqual(evidence["matched"]["registry_global"]["id"], 19)
+
+    def test_future_or_other_registry_advertisement_cannot_authorize_bind(self):
+        for trace in (
+            VALID_TRACE.replace(
+                'wl_registry#2.global(19, "wp_color_manager_v1", 1)\n', ''
+            ) + '\nwl_registry#2.global(19, "wp_color_manager_v1", 1)',
+            VALID_TRACE.replace(
+                'wl_registry#2.global(19, "wp_color_manager_v1", 1)',
+                'wl_registry#9.global(19, "wp_color_manager_v1", 1)',
+            ),
+        ):
+            with self.subTest(trace=trace[:35]):
+                with self.assertRaises(TraceValidationError):
+                    validate_trace(trace)
+
+    def test_bind_version_must_not_exceed_advertised_version(self):
+        trace = VALID_TRACE.replace(
+            'wl_registry#2.bind(19, "wp_color_manager_v1", 1,',
+            'wl_registry#2.bind(19, "wp_color_manager_v1", 2,',
+        )
+        with self.assertRaises(TraceValidationError):
+            validate_trace(trace)
+
+    def test_unknown_new_id_surface_creation_is_accepted_once(self):
+        trace = VALID_TRACE.replace(
+            'new id wp_color_management_surface_v1#23', 'new id [unknown]#23'
+        )
+        self.assertEqual(validate_trace(trace)["status"], "PASS")
+        with self.assertRaises(TraceValidationError):
+            validate_trace(trace.replace(
+                'wp_image_description_v1#31.ready(123)',
+                'wp_color_manager_v1#3.get_surface('
+                'new id wp_color_management_surface_v1#23, wl_surface#8)\n'
+                'wp_image_description_v1#31.ready(123)',
+            ))
+
+    def test_implicit_prior_description_or_surface_lifetime_is_rejected(self):
+        traces = (
+            VALID_TRACE.replace(
+                'wp_image_description_v1#31.ready(123)',
+                'wp_image_description_v1#31.ready(123)\n'
+                'wp_image_description_creator_params_v1#50.create('
+                'new id wp_image_description_v1#31)',
+            ),
+            VALID_TRACE.replace(
+                'wp_image_description_v1#31.ready(123)',
+                'wl_compositor#4.create_surface(new id wl_surface#8)\n'
+                'wp_image_description_v1#31.ready(123)',
+            ),
+        )
+        for trace in traces:
+            with self.subTest(trace=trace[-130:]):
+                with self.assertRaises(TraceValidationError):
+                    validate_trace(trace)
+
+    def test_calls_before_captured_chain_object_creation_are_ambiguous(self):
+        traces = (
+            VALID_TRACE.replace(
+                'wl_registry#2.bind(19, "wp_color_manager_v1", 1,',
+                'wp_color_manager_v1#11.done()\n'
+                'wl_registry#2.bind(19, "wp_color_manager_v1", 1,',
+            ),
+            VALID_TRACE.replace(
+                'wp_color_manager_v1#11.get_surface(',
+                'wp_color_management_surface_v1#23.destroy()\n'
+                'wp_color_manager_v1#11.get_surface(',
+            ),
+            VALID_TRACE.replace(
+                'wp_color_manager_v1#11.get_surface(',
+                'wl_surface#8.commit()\n'
+                'wl_compositor#4.create_surface(new id wl_surface#8)\n'
+                'wp_color_manager_v1#11.get_surface(',
+            ),
+            VALID_TRACE.replace(
+                'wp_image_description_v1#31.ready(123)',
+                'wp_image_description_v1#31.destroy()\n'
+                'wp_image_description_creator_params_v1#50.create('
+                'new id wp_image_description_v1#31)\n'
+                'wp_image_description_v1#31.ready(123)',
+            ),
+        )
+        for trace in traces:
+            with self.subTest(trace=trace[-130:]):
+                with self.assertRaises(TraceValidationError):
+                    validate_trace(trace)
+
+    def test_reused_registry_or_chain_object_id_is_ambiguous(self):
+        traces = (
+            VALID_TRACE.replace(
+                'wl_registry#2.global(19, "wp_color_manager_v1", 1)',
+                'wl_display#1.get_registry(new id wl_registry#2)\n'
+                'wl_registry#2.global(19, "wp_color_manager_v1", 1)',
+            ).replace(
+                'wl_registry#2.bind(19, "wp_color_manager_v1", 1,',
+                'wl_display#1.get_registry(new id wl_registry#2)\n'
+                'wl_registry#2.bind(19, "wp_color_manager_v1", 1,',
+            ),
+            VALID_TRACE.replace(
+                'wl_registry#2.bind(19, "wp_color_manager_v1", 1,',
+                'wl_display#1.get_registry(new id wl_registry#2)\n'
+                'wl_registry#2.global(19, "wp_color_manager_v1", 1)\n'
+                'wl_registry#2.bind(19, "wp_color_manager_v1", 1,',
+            ),
+            VALID_TRACE.replace(
+                'wp_color_manager_v1#11.supported_intent(0)',
+                'wl_registry#9.bind(19, "wp_color_manager_v1", 1, new id [unknown]#11)\n'
+                'wp_color_manager_v1#11.supported_intent(0)',
+            ),
+            VALID_TRACE.replace(
+                'wp_image_description_v1#31.ready(123)',
+                'wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)\n'
+                'wp_image_description_creator_params_v1#51.create(new id wp_image_description_v1#31)\n'
+                'wp_image_description_v1#31.ready(123)',
+            ),
+            VALID_TRACE.replace(
+                'wp_color_manager_v1#11.get_surface(',
+                'wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#8)\n'
+                'wp_color_manager_v1#11.get_surface(',
+            ),
+            VALID_TRACE.replace(
+                'wp_image_description_v1#31.ready(123)',
+                'wl_compositor#4.create_surface(new id wl_surface#8)\n'
+                'wl_compositor#5.create_surface(new id wl_surface#8)\n'
+                'wp_image_description_v1#31.ready(123)',
+            ),
+        )
+        for trace in traces:
+            with self.subTest(trace=trace[-130:]):
+                with self.assertRaises(TraceValidationError):
+                    validate_trace(trace)
+
     def test_valid_trace_selects_a_complete_manager_not_private_probe_traffic(self):
         evidence = validate_trace(VALID_TRACE)
         self.assertEqual(evidence["schema"], TRACE_SCHEMA)

@@ -106,3 +106,9 @@ correction and one Architect-requested fix were sufficient; no task required
     - Gate 2W (Wayland color-management protocol submission and surface lifecycle) remains `OPEN`.
     - Dolby Vision validation (colorimetric accuracy, Profile 5 reshaping, enhancement layer / multi-RPU processing) remains `OPEN` (pending).
   - Status: Observed result is WARN (exit 0) for discrete GPU Next startup and vaapi-copy in this candidate execution. However, formal row acceptance remains unconfirmed (provenance unverified) because exact source Git provenance was not established for Flatpak candidate 4edda5dd. Historical observations and log artifacts remain recorded and are not declared false. Independent previously accepted rows remain unaffected. The attempt family execution budget of three runs is complete; no fourth run is permitted without a new independent architecture review and explicit user authorization. (Full original command details, environment paths, and execution logs are retained exclusively in local non-public validation backup).
+
+### 2026-09-24 Wayland trace parser correction (offline)
+
+- Sol high proposal received independent Astra high conditional review; Sol medium implemented the bounded parser correction on base Git `4831fefb4f7fe8df74462286b233b39eb579cae3` under ADR-0004.
+- Focused Wayland trace tests passed 28/28; validation governance tests passed 11/11. Pure `validate_trace` replay of retained `wayland-client.raw.log` (SHA-256 `6a7f36cffd97c5a0561b6f955fab68d9153b5a5d29eb620345abfa3f5858746d`) returned parser PASS; ignored local evidence is `validation-reports/wayland-parser-offline-replay.json` with parser SHA-256 `09775ed521e0810d071950982f1dcbe4eae01b5fd52dc340df85d9d1512c9748`.
+- No playback, GPU/Wayland hardware execution, or remote operation ran. Gate 2W remains OPEN; offline parser replay does not accept a hardware evidence row.

@@ -53,12 +53,16 @@ CALL_RE = re.compile(
     r"(?P<method>[A-Za-z_][A-Za-z0-9_]*)\((?P<args>.*)\)"
 )
 GLOBAL_RE = re.compile(
-    r'^\s*(?P<global_id>\d+)\s*,\s*"wp_color_manager_v1"\s*,\s*\d+\s*$'
+    r'^\s*(?P<global_id>\d+)\s*,\s*"wp_color_manager_v1"\s*,\s*(?P<version>\d+)\s*$'
 )
 BIND_RE = re.compile(
-    r'^\s*(?P<global_id>\d+)\s*,\s*"wp_color_manager_v1"\s*,\s*\d+\s*,\s*'
+    r'^\s*(?P<global_id>\d+)\s*,\s*"wp_color_manager_v1"\s*,\s*(?P<version>\d+)\s*,\s*'
     r"new id (?:wp_color_manager_v1|\[unknown\])(?:#|@)(?P<manager_id>\d+)\s*$"
 )
+NEW_ID_RE = re.compile(
+    r"\bnew id (?P<interface>[A-Za-z_][A-Za-z0-9_]*)(?:#|@)(?P<object_id>\d+)\b"
+)
+UNKNOWN_NEW_ID_RE = re.compile(r"\bnew id \[unknown\](?:#|@)(?P<object_id>\d+)\b")
 GET_SURFACE_RE = re.compile(
     r"^\s*new id (?:wp_color_management_surface_v1|\[unknown\])(?:#|@)"
     r"(?P<color_surface_id>\d+)\s*,\s*wl_surface(?:#|@)(?P<wl_surface_id>\d+)\s*$"
@@ -171,6 +175,17 @@ def _same_surface_commit_after(
     )
 
 
+def _used_before_creation(
+    calls: list[TraceCall], interface: str, object_id: int, creation_index: int
+) -> bool:
+    return any(
+        call.interface == interface
+        and call.object_id == object_id
+        and call.index < creation_index
+        for call in calls
+    )
+
+
 def validate_trace(trace: str) -> dict[str, Any]:
     """Return deterministic positive evidence or raise on every missing link."""
     fatal = _fatal_error(trace)
@@ -183,15 +198,31 @@ def validate_trace(trace: str) -> dict[str, Any]:
         if call.interface == "wl_registry" and call.method == "global"
     ]
     manager_globals = [
-        (call, int(match["global_id"]))
+        (call, int(match["global_id"]), int(match["version"]))
         for call, match in globals_
         if match is not None
     ]
     if not manager_globals:
         raise TraceValidationError("wp_color_manager_v1 was not advertised by the registry")
 
-    global_indexes = {global_id: call.index for call, global_id in manager_globals}
-    bindings: list[tuple[TraceCall, int, int]] = []
+    creations: dict[tuple[str, int], list[int]] = {}
+    for call in calls:
+        match = NEW_ID_RE.search(call.args)
+        if match is not None:
+            interface = match["interface"]
+        else:
+            match = UNKNOWN_NEW_ID_RE.search(call.args)
+            interface = {
+                ("wl_display", "get_registry"): "wl_registry",
+                ("wl_compositor", "create_surface"): "wl_surface",
+                ("wp_color_manager_v1", "get_surface"): "wp_color_management_surface_v1",
+                ("wp_image_description_creator_params_v1", "create"): "wp_image_description_v1",
+            }.get((call.interface, call.method))
+        if match is not None and interface is not None:
+            creations.setdefault((interface, int(match["object_id"])), []).append(call.index)
+
+    bindings: list[tuple[TraceCall, TraceCall, int, int, int, int]] = []
+    manager_bind_counts: dict[int, int] = {}
     for call in calls:
         if call.interface != "wl_registry" or call.method != "bind":
             continue
@@ -200,12 +231,48 @@ def validate_trace(trace: str) -> dict[str, Any]:
             continue
         global_id = int(match["global_id"])
         manager_id = int(match["manager_id"])
-        if global_id in global_indexes and global_indexes[global_id] < call.index:
-            bindings.append((call, global_id, manager_id))
+        manager_bind_counts[manager_id] = manager_bind_counts.get(manager_id, 0) + 1
+        bound_version = int(match["version"])
+        registry_creations = [
+            index for index in creations.get(("wl_registry", call.object_id), [])
+            if index < call.index
+        ]
+        # Reused registry IDs can belong to other Wayland connections. A bind
+        # after a second creation cannot be assigned to one by numeric ID.
+        if len(registry_creations) > 1:
+            continue
+        if registry_creations and any(
+            earlier.interface == "wl_registry"
+            and earlier.object_id == call.object_id
+            and earlier.index < registry_creations[0]
+            for earlier in calls
+        ):
+            continue
+        advertisements = [
+            (global_call, advertised_version)
+            for global_call, advertised_id, advertised_version in manager_globals
+            if global_call.object_id == call.object_id
+            and advertised_id == global_id
+            and global_call.index < call.index
+            and (not registry_creations or global_call.index > registry_creations[0])
+        ]
+        if len(advertisements) != 1:
+            continue
+        global_call, advertised_version = advertisements[0]
+        if not 1 <= bound_version <= advertised_version:
+            continue
+        bindings.append(
+            (call, global_call, global_id, manager_id, advertised_version, bound_version)
+        )
     if not bindings:
         raise TraceValidationError("wp_color_manager_v1 was advertised but not bound")
 
-    for bind, global_id, manager_id in bindings:
+    for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
+        if (
+            manager_bind_counts[manager_id] != 1
+            or _used_before_creation(calls, "wp_color_manager_v1", manager_id, bind.index)
+        ):
+            continue
         perceptual = next(
             (
                 call
@@ -255,6 +322,23 @@ def validate_trace(trace: str) -> dict[str, Any]:
                 )
             )
         for get_surface, color_surface_id, wl_surface_id in surfaces:
+            wl_surface_creations = creations.get(("wl_surface", wl_surface_id), [])
+            if (
+                len(creations.get(("wp_color_management_surface_v1", color_surface_id), [])) != 1
+                or _used_before_creation(
+                    calls, "wp_color_management_surface_v1", color_surface_id,
+                    get_surface.index,
+                )
+                or len(wl_surface_creations) > 1
+                or (wl_surface_creations and wl_surface_creations[0] >= get_surface.index)
+                or (
+                    wl_surface_creations
+                    and _used_before_creation(
+                        calls, "wl_surface", wl_surface_id, wl_surface_creations[0]
+                    )
+                )
+            ):
+                continue
             for set_description in calls:
                 if (
                     set_description.interface != "wp_color_management_surface_v1"
@@ -267,12 +351,24 @@ def validate_trace(trace: str) -> dict[str, Any]:
                 if description_match is None:
                     continue
                 description_id = int(description_match["description_id"])
+                description_creations = creations.get(
+                    ("wp_image_description_v1", description_id), []
+                )
+                if len(description_creations) > 1:
+                    continue
+                if description_creations and _used_before_creation(
+                    calls, "wp_image_description_v1", description_id,
+                    description_creations[0],
+                ):
+                    continue
                 ready = _description_ready_before(
                     calls, description_id, set_description.index
                 )
                 if ready is None:
                     continue
                 ready_call, readiness = ready
+                if description_creations and description_creations[0] >= ready_call.index:
+                    continue
                 commit = _same_surface_commit_after(
                     calls, wl_surface_id, set_description.index
                 )
@@ -286,11 +382,14 @@ def validate_trace(trace: str) -> dict[str, Any]:
                     "matched": {
                         "registry_global": {
                             "id": global_id,
-                            "event_index": global_indexes[global_id],
+                            "registry_id": global_call.object_id,
+                            "event_index": global_call.index,
+                            "advertised_version": advertised_version,
                         },
                         "manager": {
                             "id": manager_id,
                             "bind_index": bind.index,
+                            "bound_version": bound_version,
                             "perceptual_intent_index": perceptual.index,
                             "done_index": done.index,
                         },
