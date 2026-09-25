@@ -52,6 +52,7 @@ outcomes, not token accounting promised by any subscription plan.
 | 2026-08-25 | Bounded validation governance and evidence-status correction | Architect: primary `gpt-5.6-sol`, high | Review of repeated Gate 2 integration failures found that failure-signature escalation alone did not cap total target-hardware executions; supplemental GitHub changes also rolled weak or absent row evidence into Gate 2/3 PASS claims | ADR-0006 limits an attempt family to an initial hardware run plus one evidence-driven correction, then requires `HOLD`, Architect review and explicit user approval. Gate 2W remains independent. External Antigravity/Gemini execution is restricted to an immutable Operator hand-off. Unsupported Gate 2/3 sign-off was withdrawn while accepted Gate 1/FBO/VAAPI/GDK rows were preserved. No GPU or duration test was run. |
 | 2026-08-25 | Intel/NVIDIA smoke oracle v2 | Architecture and evidence contract: primary `gpt-5.6-sol`, high; bounded implementation in the primary session because proactive delegation was unavailable | Replaced the historical aggregate 16-process predicate with independently selectable vendor/fixture rows and no automatic retry. An initial empty render, missing fixture, wrong media path, stale runtime, API fallback, stub, early exit, or file warning now prevents PASS. | Added path-safe loaded-media-frame evidence, pinned fixture/runtime/API/GPU/HDR checks, clean preflight, sanitized JSON plus raw-log hashes, and one-pinned-Flatpak execution for both Intel and NVIDIA. Local unit/source checks only; real laptop status remains `NOT_RUN` until an exact source commit and rebuilt Flatpak commit exist. |
 | 2026-09-23 | Flatpak GPU Next validation attempt family | Operator: target hardware (Gemini/User) | Run 1 (09:59:12 UTC): quick playback WARN on integrated iGPU (hwdec=no). Run 2 (10:10:05 UTC): GL probe on target dGPU. Run 3 (11:37:47 UTC, user authorized): quick playback WARN on target discrete GPU with opengl-next and vaapi-copy. | WARN (exit 0). Target discrete GPU render, active opengl-next, and active vaapi-copy confirmed. Physical decode GPU remains Unknown. VO drop observed growth after baseline: 0 (initial sample counter: 21). Fullscreen and multiple RPU warnings unresolved; Gate 2W and Dolby Vision validation remain open. |
+| 2026-09-24 | Target GNOME Wayland color-management trace capture (Run 2) and Gate 2W audit | Operator: target hardware (Gemini/User) | Run 1: initial passive trace under GNOME (wayland-trace-20260924-133500); Run 2: single-shot trace capture script (wayland-trace-MgsoJA) after parser fix. Two-run budget exhausted. | Offline trace parser PASS (status: PASS, ready -> set_image_description -> commit on surface #61). Active API and Session status for this capture remain Unknown (no contemporaneous Copy Report). 1514 attaches logged as client protocol calls, not confirmed presented frames. Combined renderer+submission row placed on HOLD ("нет свидетельства из той же сессии"). Gate 2W remains OPEN. Previously accepted independent rows preserved. No further hardware runs permitted without Sol proposal, Astra review, and user authorization. |
 
 ## Initial observation
 
@@ -112,3 +113,48 @@ correction and one Architect-requested fix were sufficient; no task required
 - Sol high proposal received independent Astra high conditional review; Sol medium implemented the bounded parser correction on base Git `4831fefb4f7fe8df74462286b233b39eb579cae3` under ADR-0004.
 - Focused Wayland trace tests passed 28/28; validation governance tests passed 11/11. Pure `validate_trace` replay of retained `wayland-client.raw.log` (SHA-256 `6a7f36cffd97c5a0561b6f955fab68d9153b5a5d29eb620345abfa3f5858746d`) returned parser PASS; ignored local evidence is `validation-reports/wayland-parser-offline-replay.json` with parser SHA-256 `09775ed521e0810d071950982f1dcbe4eae01b5fd52dc340df85d9d1512c9748`.
 - No playback, GPU/Wayland hardware execution, or remote operation ran. Gate 2W remains OPEN; offline parser replay does not accept a hardware evidence row.
+
+### 2026-09-24 Target GNOME Wayland trace capture and Gate 2W audit
+
+- **Environment and Provenance**:
+  - Source Git checkout HEAD: `e41fbeb1dad3b1b463c40030efba587f2341bfb7` (branch `codex/gpu-next-diagnostics`).
+  - Installed custom Flatpak candidate: app commit `8c6c861c4832346c611f95d8d1edbd3982c5c69a59dcdf114b144eca9982fc74` (built from source commit `4831fefb4f7fe8df74462286b233b39eb579cae3`), runtime commit `b1935f7a673108616d4fd84564f15cefc9f637481472a8d4d2f0945375d41f4b`.
+- **Target Hardware Execution (Run 2)**:
+  - Executed validated single-shot capture script `validation-reports/capture_wayland_trace.sh` (SHA-256 `7d7b152dc403445a9e064aaa938653ee17bb89a30ee12223b6ce860101332f67`).
+  - Traced Flatpak instance ID `248765847` within observation window `2026-09-24T13:29:47.522831Z` to `2026-09-24T13:30:47.526506Z` (60s timeout, exit code 124).
+  - Offline trace parser (`tests/parse_wayland_color_trace.py`, SHA-256 `09775ed521e0810d071950982f1dcbe4eae01b5fd52dc340df85d9d1512c9748`) on raw log `wayland-client.raw.log` (SHA-256 `ba775d0a4ba212168ec6e07dea1614a6ce0d61913a2aa251812fa497c90b3578`) evaluated status `PASS` (`wayland-trace-validation.json`, SHA-256 `bff2c74d58f1f7acd2fb4c75062368db8f27dbe314c5d8d542d040002d3f4255`):
+    - Manager `wp_color_manager_v1` advertised at v2 and bound at v1 (id 32).
+    - Image description created and received `ready` event (id 51, index 643).
+    - Toplevel surface (`wl_surface#61`, `io.github.rusmikev.CineHDR`) received `set_image_description` (index 849) followed by `commit` (index 865).
+- **Renderer Evidence and Telemetry Gap**:
+  - The capture session raw client log contains zero stdout/stderr logs certifying renderer initialization or active API (only 6 non-Wayland warnings).
+  - No contemporaneous Copy Report from Video Output Diagnostics was sampled within the capture window `[13:29:47, 13:30:47]`.
+  - Therefore, `Active API` and `Session status` for this specific trace capture remain strictly `Unknown`.
+  - The separate earlier session Copy Report (at `12:54:34 UTC`, instance `2622755033`) proved `opengl-next` only for its own process instance; under ADR-0006, evidence from a distinct session cannot be combined or correlated to claim concurrent proof.
+- **Surface Attach and Presentation Distinction**:
+  - The trace recorded 1514 non-null `attach(wl_buffer#...)` calls on `wl_surface#61`.
+  - Per ADR-0006 / GEMINI.md, this count represents client-side protocol calls, not verified video frames scanned out or presented on physical display.
+- **Process Absence and Teardown**:
+  - Instance `248765847` was confirmed absent in `flatpak ps` output at `13:33:47 UTC` (`instance_absence_check.txt` -> `CONFIRMED_ABSENT`).
+  - `KILL_TIMEOUT` in `cleanup_status.txt` was a script misclassification of the non-zero exit from `flatpak kill` (which reported `ошибка: 248765847 не запущен`).
+  - The exact termination mechanism remains unknown.
+- **Gate 2W and Attempt Budget Governance**:
+  - Gate 2W remains `OPEN`.
+  - The specific validation row requiring simultaneous proof of active `opengl-next` renderer and Wayland color-management surface submission is placed on `HOLD` with recorded reason: «нет свидетельства из той же сессии» (no evidence from the same session).
+  - Previously accepted independent evidence rows (FBO format/depth, VAAPI-copy, GDK texture publication) remain intact.
+  - ADR-0006 hardware attempt family limit for GNOME Wayland trace capture is exhausted (2/2 runs completed: Run 1 initial trace, Run 2 corrected parser capture). A third execution is strictly prohibited without a proposal from Sol (high reasoning), independent review from Astra (high reasoning), and explicit authorization from the user.
+- **Retained Local Artifacts (Private)**:
+  - Local directory: `validation-reports/wayland-trace-MgsoJA/`
+  - `instance.txt`: SHA-256 `a3778c357879eeefd4caf4c4cfe488abbef88022977f761ed60075f21330db1f`
+  - `instance_info`: SHA-256 `816d5268ab762b137fb5bf8a7f1cacdbe55ef84dbdda54df953c120bc23ba435`
+  - `sampler_status.txt`: SHA-256 `16a5d7ca2e1613a570f97007a146205c9a1e522e1459d30cbc65b87343a2ff5b`
+  - `start_time.txt`: SHA-256 `1faec2f1814afce364555f2925918b2e854a4379c8e77f8d57cfdf6584beccb6`
+  - `end_time.txt`: SHA-256 `e888c0ad85bc488853b9540c9f880c574a90a18e8ea2c2b0e4621c30f94db856`
+  - `exit_code.txt`: SHA-256 `ca2ebdf97d7469496b1f4b78958f9dc8447efdcb623953fee7b6996b762f6fff`
+  - `cleanup_status.txt`: SHA-256 `fb53801bad2f74ac95374b4c3663d8100f7d24030ee0ebfa3e7510bd83aa4c05`
+  - `instance_absence_check.txt`: SHA-256 `3471b85a1a3051eac4c9e4337536811779a6c200ba9fd8710a92cc4d85e436e5`
+  - `wayland-trace-validation.json`: SHA-256 `bff2c74d58f1f7acd2fb4c75062368db8f27dbe314c5d8d542d040002d3f4255`
+  - `session_facts.json`: SHA-256 `cbfd57433c9fdaa93d1b6e62d95b990e5988868fe4c6bc891ef751f07a581908`
+  - `wayland-client.raw.log`: SHA-256 `ba775d0a4ba212168ec6e07dea1614a6ce0d61913a2aa251812fa497c90b3578`
+  - Capture script: `validation-reports/capture_wayland_trace.sh` (SHA-256 `7d7b152dc403445a9e064aaa938653ee17bb89a30ee12223b6ce860101332f67`)
+  - Raw logs and private media paths remain strictly uncommitted.

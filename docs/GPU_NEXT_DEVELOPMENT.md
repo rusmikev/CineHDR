@@ -869,9 +869,13 @@ Current aggregate status:
 - Gate 2 is `OPEN`. Accepted FBO, VAAPI-copy, and GDK-publication rows remain
   useful independent evidence. Thresholds, dithering/workflow oracles,
   comparable performance, and resource settling require correction or evidence.
-- Gate 2W is `BLOCKED_EXTERNAL`/`UNAVAILABLE` on the recorded GTK 4.22.4 and
-  KWin 6.7.4 stack. It is not a renderer failure and must not be retried without
-  changed toolkit/compositor capability.
+- Gate 2W remains `OPEN`. On KWin 6.7.4 / GTK 4.22.4, surface submission was
+  `BLOCKED_EXTERNAL`/`UNAVAILABLE`. On GNOME (Mutter), client protocol trace
+  `wayland-trace-MgsoJA` demonstrated valid image description submission and commit
+  (`validate_trace: PASS`), but lacking a contemporaneous Copy Report, the active
+  renderer is `Unknown` and the combined row is on `HOLD` ("нет свидетельства из той же сессии").
+  Two GNOME capture runs are spent; a third run is prohibited without independent
+  architecture review and explicit user authorization. Independent Gate 1/2 rows remain intact.
 - Gate 3 is `OPEN`; Profile 5 remains disabled and Dolby Vision wording stays
   conservative.
 
@@ -903,3 +907,55 @@ Unit and source-contract tests pass locally. Real Intel/NVIDIA execution is
 matching rebuilt Flatpak commit. The later external hand-off will start with
 the single HDR10 fixture, not recreate the old 16-process matrix. See
 `docs/GPU_VENDOR_SMOKE_VALIDATION.md`.
+
+## GNOME Wayland color-management trace capture (2026-09-24)
+
+Following the offline trace parser correction for Wayland registry lifetimes in commit `e41fbeb`,
+a single-shot Wayland client trace was captured on target hardware running GNOME
+using the preflighted `validation-reports/capture_wayland_trace.sh` script
+(SHA-256 `7d7b152dc403445a9e064aaa938653ee17bb89a30ee12223b6ce860101332f67`).
+
+- **Version and Provenance**:
+  - Source checkout HEAD: `e41fbeb1dad3b1b463c40030efba587f2341bfb7` (`codex/gpu-next-diagnostics`).
+  - Installed Flatpak candidate: app commit `8c6c861c4832346c611f95d8d1edbd3982c5c69a59dcdf114b144eca9982fc74`
+    (built from source commit `4831fefb4f7fe8df74462286b233b39eb579cae3`),
+    runtime `b1935f7a673108616d4fd84564f15cefc9f637481472a8d4d2f0945375d41f4b`.
+- **Protocol Submission Trace**:
+  - Flatpak instance `248765847` was traced for 60 seconds (exit 124 timeout;
+    `2026-09-24T13:29:47.522831Z` to `2026-09-24T13:30:47.526506Z`).
+  - The offline parser (`tests/parse_wayland_color_trace.py`, SHA-256 `09775ed521e0810d071950982f1dcbe4eae01b5fd52dc340df85d9d1512c9748`)
+    evaluated `wayland-client.raw.log` (SHA-256 `ba775d0a4ba212168ec6e07dea1614a6ce0d61913a2aa251812fa497c90b3578`)
+    and reported status `PASS` (`wayland-trace-validation.json`, SHA-256 `bff2c74d58f1f7acd2fb4c75062368db8f27dbe314c5d8d542d040002d3f4255`).
+  - The client bound `wp_color_manager_v1` (id 32), created an image description that received
+    the `ready` event (id 51), and executed `set_image_description` followed by `commit` on
+    toplevel surface `wl_surface#61` (`io.github.rusmikev.CineHDR`).
+- **Evidence Gap and Adjudication**:
+  - The capture session raw client log contains no stdout/stderr records of renderer activation.
+  - No contemporaneous Copy Report from Video Output Diagnostics was recorded within the capture window.
+  - Active API and Session status for this trace capture remain `Unknown`.
+  - The separate earlier session Copy Report (12:54:34 UTC, instance 2622755033) certified `opengl-next`
+    only for its respective instance; per ADR-0006, separate session observations cannot be spliced together.
+  - The 1514 non-null buffer attaches logged on `wl_surface#61` are client-side protocol calls,
+    not evidence of frames scanned out or presented on physical display.
+  - Instance `248765847` was confirmed absent in `flatpak ps` output at `13:33:47 UTC` (`instance_absence_check.txt` -> `CONFIRMED_ABSENT`).
+  - `KILL_TIMEOUT` in `cleanup_status.txt` was a script misclassification of the non-zero exit from `flatpak kill` (`ошибка: 248765847 не запущен`).
+  - The exact termination mechanism remains unknown.
+  - **Gate Status**: Gate 2W remains `OPEN`. The row requiring simultaneous proof of active `opengl-next`
+    and Wayland color-management protocol submission is placed on `HOLD` ("нет свидетельства из той же сессии").
+    Previously accepted independent rows remain unaffected.
+  - **Hardware Budget**: The 2-attempt execution budget for GNOME Wayland trace capture is exhausted.
+    A third run is prohibited without Sol proposal, independent Astra review, and explicit user approval.
+- **Local Artifacts**:
+  Retained in `validation-reports/wayland-trace-MgsoJA/`:
+  - `instance.txt` (SHA-256 `a3778c357879eeefd4caf4c4cfe488abbef88022977f761ed60075f21330db1f`)
+  - `instance_info` (SHA-256 `816d5268ab762b137fb5bf8a7f1cacdbe55ef84dbdda54df953c120bc23ba435`)
+  - `sampler_status.txt` (SHA-256 `16a5d7ca2e1613a570f97007a146205c9a1e522e1459d30cbc65b87343a2ff5b`)
+  - `start_time.txt` (SHA-256 `1faec2f1814afce364555f2925918b2e854a4379c8e77f8d57cfdf6584beccb6`)
+  - `end_time.txt` (SHA-256 `e888c0ad85bc488853b9540c9f880c574a90a18e8ea2c2b0e4621c30f94db856`)
+  - `exit_code.txt` (SHA-256 `ca2ebdf97d7469496b1f4b78958f9dc8447efdcb623953fee7b6996b762f6fff`)
+  - `cleanup_status.txt` (SHA-256 `fb53801bad2f74ac95374b4c3663d8100f7d24030ee0ebfa3e7510bd83aa4c05`)
+  - `instance_absence_check.txt` (SHA-256 `3471b85a1a3051eac4c9e4337536811779a6c200ba9fd8710a92cc4d85e436e5`)
+  - `wayland-trace-validation.json` (SHA-256 `bff2c74d58f1f7acd2fb4c75062368db8f27dbe314c5d8d542d040002d3f4255`)
+  - `session_facts.json` (SHA-256 `cbfd57433c9fdaa93d1b6e62d95b990e5988868fe4c6bc891ef751f07a581908`)
+  - `wayland-client.raw.log` (SHA-256 `ba775d0a4ba212168ec6e07dea1614a6ce0d61913a2aa251812fa497c90b3578`)
+  Raw logs and private media paths remain strictly uncommitted.
