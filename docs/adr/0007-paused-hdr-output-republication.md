@@ -1,7 +1,7 @@
 # ADR-0007: Republish the render target after a paused HDR output change
 
-- **Status:** Accepted for implementation after independent Astra high review;
-  runtime correctness remains unverified
+- **Status:** Accepted; bounded GNOME client publication validated in Run 7
+  on Candidate v14. Physical display output remains unverified.
 - **Date:** 2026-10-10
 - **Scope:** CineHDR's libmpv Render API FBO and GDK texture on a paused SDR/HDR switch
 - **Builds on:** [ADR-0001](0001-gpu-next-render-api.md), [ADR-0004](0004-gate2-fbo-pixel-validation.md), and [ADR-0006](0006-bounded-validation-governance.md)
@@ -107,3 +107,13 @@ four-state row `HOLD` until its own evidence criteria are met.
 Remove the controller-triggered forced render and any associated property
 guard; retain the stable renderer and the Run 6 evidence. Restore the prior
 verified Flatpak bundle after confirmed absence of the test instance.
+
+## Subsequent bounded validation (2026-10-11)
+
+A single GNOME Wayland Candidate v14 launcher session passed the declared
+four-state publication and three-phase FBO pixel checks for both legacy and
+gpu-next. The sanitized decision and raw artifact hashes are recorded in
+`validation-reports/gate2w-run7-adjudication-reconciled-mesa-20261011.json`.
+This supersedes the pre-run `HOLD` for the GNOME client publication row only;
+Gate 2 and Gate 3 remain `OPEN`, and compositor scanout, per-frame presentation
+and display photometry remain unverified.

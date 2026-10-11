@@ -1,0 +1,55 @@
+{
+  "adjudicated_at_utc": "2026-10-11T11:00:00Z",
+  "adjudicator": "Gemini (offline adjudication)",
+  "app_commit": "ac423a24b0e4d26a2e2099e287dd5c2dd57f2a0b6c74815db96243ca2a181b93",
+  "candidate": "Candidate v14",
+  "claim_boundaries": {
+    "compositor_scanout_certified": false,
+    "container_session_correlated": true,
+    "display_photometry_certified": false,
+    "per_frame_presentation_correlated": false,
+    "same_process_wire_correlated": false
+  },
+  "cross_compositor_aggregate_evaluation": {
+    "rationale": "Per ADR-0006 lines 45-65, an aggregate gate roll-up is selected from {CLOSED, CONDITIONAL, OPEN, BLOCKED_EXTERNAL} on the basis of independent row reports. The GNOME composite window domain is CLOSED (PASS); the KDE/KWin domain remains UNAVAILABLE due to external toolkit/compositor limitations (retained separately per ADR-0006 line 62 and not invalidating accepted CineHDR rows). Therefore, the aggregate Gate 2W roll-up status is CONDITIONAL, not OPEN.",
+    "scope": "Multi-compositor Wayland surface submission track (GNOME Shell / Mutter + KDE / KWin)",
+    "status": "CONDITIONAL"
+  },
+  "gate2_gate3_status": {
+    "gate2_status": "OPEN",
+    "gate3_status": "OPEN",
+    "rationale": "Gate 2 (FBO pixel validation extended matrix) and Gate 3 (Dolby Vision policy & peak sweep) remain OPEN on hardware; Gate 2W client publication and protocol submission closure does not certify or close Gate 2 or Gate 3."
+  },
+  "gnome_domain_evaluation": {
+    "rationale": "Single-session Run 7 fully satisfied all normative criteria of ADR-0004, ADR-0006 (section 3), and ADR-0007 across both backends (legacy and gpu-next). Both processes published all 4 GDK states, submitted valid Wayland color management descriptions on the composite window without error, verified FBO pixel captures with observed drift delta_max <= 0.003922 <= 0.020 and HDR distinction >= 0.247 >= 0.150, ran as isolated container instances, exited 0, and terminated CLEAN. Preliminary tolerance status was an evidentiary evaluation requirement, not a row blocker. The GNOME composite window domain is fully closed.",
+    "scope": "GNOME Shell 50.5 (Mutter) on Wayland / AMD Radeon RX 9060 XT (radeonsi / Flatpak org.gnome.Platform//50 commit 0bd5091046708e64bc882e8349877cfbae713f6a1e2d0487a5f10af820a2d792; Mesa driver version unconfirmed / unmeasured in Run 7 publication report)",
+    "status": "CLOSED"
+  },
+  "raw_artifacts": {
+    "gpu_next_cleanup_sha256": "106948ccc030183682d6c1308e4fcea93b753d2021663b120af805e227a4666a",
+    "gpu_next_fbo_pixels_sha256": "b6b6a7e7359143527876abf6195e31a605987eb54f73cf217433c46475934b77",
+    "gpu_next_protocol_sha256": "6acbc6d6957cc4415be0b2da809c99ffe9418b72117d5ef47629081f10ea5976",
+    "gpu_next_publication_sha256": "1827401c730b70bdea6950440160af58297346550456debef8a274c9c6123192",
+    "legacy_cleanup_sha256": "e0d319ec09b73f6368410e84f8aca516d4b043581e4378a78786c27de79767b7",
+    "legacy_fbo_pixels_sha256": "be96c06bab51cebe889240ec12828ec7309f6a7e2078ee778a6278204cc1070e",
+    "legacy_protocol_sha256": "0e89efc405e7ab41e98f93ac3b767a87dfe8a2c3daf7a812654808d2370ecc4d",
+    "legacy_publication_sha256": "7d2ec45a4e46080fc1a2afc1dd72018a72ea498072da5a9e39bd4e489f415476",
+    "operator_dir": "validation-reports/run7-all-operator.GAFKuW",
+    "operator_log_sha256": "598eb725aef0583a7e07ae7e65d234ef967960147653ab9856c03253de50067f",
+    "session_dir": "validation-reports/wayland-publication-20261011-141712-294532",
+    "session_summary_sha256": "06864a70e132a4e2ad610ee403273806e608aa705f1c53a760be1bdd59855468"
+  },
+  "runtime_commit": "0bd5091046708e64bc882e8349877cfbae713f6a1e2d0487a5f10af820a2d792",
+  "schema": "cinehdr.gate2w.adjudication-superseding.v2",
+  "statuses": {
+    "cross_compositor_aggregate_status": "CONDITIONAL",
+    "gate2_status": "OPEN",
+    "gate3_status": "OPEN",
+    "gnome_domain_status": "CLOSED"
+  },
+  "supersedes": {
+    "path": "validation-reports/gate2w-run7-adjudication-superseding-20261011.json",
+    "reason": "Reconciliation of unconfirmed Mesa version in Run 7 scope: neither the publication report nor session facts captured a live Mesa version string. Stating Mesa 26.1.6 was an unconfirmed carryover from earlier ADRs. Per GEMINI.md evidence governance, unverified environment facts must remain unverified/unconfirmed. Retains all prior artifacts, clean container provenance, and gate statuses (GNOME domain CLOSED, cross-compositor aggregate CONDITIONAL; Gate 2 and Gate 3 remain OPEN; physical HDR, direct scanout, and per-frame presentation remain explicitly uncertified).",
+    "sha256": "e0f7c4fada6ad48314e9ef808120ba603fb0b243ff87cd5beb3be753ecfe51bf"
+  }
+}

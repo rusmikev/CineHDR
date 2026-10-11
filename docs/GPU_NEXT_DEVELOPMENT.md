@@ -519,7 +519,7 @@ OpenGL, or FBO errors. Maximum sampled A/B deltas were `0.068114519` HDR and
 The next user-run checkpoint is the changed-input HEVC/VAAPI-copy row:
 
 ```sh
-cd /home/rusmikev/Documents/Codex/2026-08-19/z-x20/work/CineHDR
+cd "$(git rev-parse --show-toplevel)"
 
 env -u LIBGL_ALWAYS_SOFTWARE -u MESA_LOADER_DRIVER_OVERRIDE \
   DRI_PRIME=pci-0000_03_00_0 \
@@ -869,30 +869,15 @@ Current aggregate status:
 - Gate 2 is `OPEN`. Accepted FBO, VAAPI-copy, and GDK-publication rows remain
   useful independent evidence. Thresholds, dithering/workflow oracles,
   comparable performance, and resource settling require correction or evidence.
-- Gate 2W remains `OPEN`. On KWin 6.7.4 / GTK 4.22.4, surface submission was
-  `BLOCKED_EXTERNAL`/`UNAVAILABLE`. On GNOME (Mutter), the narrow row requiring
-  simultaneous proof of active `opengl-next` renderer and Wayland color-management
-  protocol submission in the same session was accepted as `PASS` on Attempt 3
-  (`wayland-trace-Z4GghM`, Candidate v4, discrete GPU AMD Radeon RX 9060 XT).
-  Gate 2W as a whole remains `OPEN`: direct scanout, display photometry (physical
-  photon measurement), and per-frame client-compositor linkage are explicit non-claims,
-  not added blockers. ADR-0004 requires a separate process for each backend with
-  the manager capability burst (`perceptual`, `done`), a ready image description,
-  `set_image_description` with perceptual intent, a subsequent commit on the
-  CineHDR surface, and a passing publication report. The accepted GNOME trace
-  establishes this chain for `opengl-next`. Offline reconciliation of the
-  earlier GNOME legacy capture also finds a protocol PASS and a user Copy Report
-  showing active `opengl` within that capture's time window. Neither first-frame
-  observation supplies the same-process SDR -> HDR -> SDR -> HDR publication
-  matrix required for the complete row. The previously accepted
-  GDK publication matrix retains its separate status on its original stack.
-  The submitted surface encoding may remain compositor-preferred across SDR and
-  HDR textures.
-  Resize, fullscreen, teardown, and SDR/HDR surface-description alternation are
-  not acceptance conditions for this Gate 2W row. Gate 1/2 lifecycle and GDK
-  publication evidence remain separate accepted rows. KDE/KWin was previously
-  `UNAVAILABLE`; its capability-dependent row is still unresolved. Absence of
-  local reports does not prove zero hardware attempts.
+- Gate 2W cross-compositor aggregate is `CONDITIONAL`: the verified GNOME Shell 50.5
+  composite-window domain is `CLOSED` on Candidate v14, while the KDE/KWin domain
+  remains `UNAVAILABLE` on its previously tested stack. A single Run 7 launcher
+  session passed all four SDR/HDR GDK publication states and Wayland
+  ready -> set_image_description -> commit on the composite window for separate
+  legacy and gpu-next processes, with three FBO pixel phases per backend.
+  The sanitized [Run 7 decision](../validation-reports/gate2w-run7-adjudication-reconciled-mesa-20261011.json)
+  records the evidence hashes and corrects the unmeasured Mesa version. Physical
+  display output, direct scanout, and per-frame presentation remain unverified.
 - Gate 3 is `OPEN`; Profile 5 remains disabled and Dolby Vision wording stays
   conservative.
 
@@ -1221,7 +1206,7 @@ reset was made during this correction.
 
 **Falsifiable hypothesis and Run 4 failure signature.** Run 4 on Candidate v5 executed only `legacy`, stopping at initial SDR publication after 6.9 s. Its report recorded an active `opengl` renderer, `GdkGLTexture` 1400×788 R8G8B8A8/sRGB, `vaapi-copy`, and libplacebo `v7.360.1 (v7.360.1)`, but returned `FAIL`: the validator expected 2240×1260 from integer GDK scale 2 and rejected the tagged libplacebo version. The actual renderer used cached fractional scale 1.25 (1120×630 → 1400×788 after Python rounding); no HDR phase or `gpu-next` process ran. The process exited 0, and `cleanup_status.json` says `CLEAN`. These facts establish an oracle false rejection at this first boundary; they do **not** establish that the unobserved later phases will pass. Raw evidence: `validation-reports/wayland-publication-20261004-182917-350221/legacy/` (`SHA256SUMS` retained), report SHA-256 `5a018fdb01f5245c69e38099e92466291ffba047502fbcd33eaa9a5986ccdb47`.
 
-**Single coherent material correction.** Candidate v6 changes the publication oracle for the same first boundary: `expected_scaled_texture_dimensions()` now uses the widget's cached scale, rounding, size caps and minimum clamp; libplacebo identity is an exact allowlist of six 7.360.1 spellings, including the observed tagged string. It does not relax renderer/API, four-state publication, Wayland protocol, provenance or cleanup requirements. Local regressions reject the old 2240×1260 expectation, off-by-one dimensions and foreign/dirty libplacebo strings. Independent review of this correction: `/home/rusmikev/.gemini/antigravity/brain/61cf22b4-f7b0-4401-bd17-6c5d8f42bf5d/review_verdict_run4_oracle_correction.md`, SHA-256 `ca1a5ce87905fcfe988138451c1747b0e20491654ba0233e0819c37b80e10267`, verdict `ACCEPT` (code/test scope). Candidate v6 SDK Flatpak build completed with 13/13 Meson suites passing; host tests of the corrected oracle passed. No v6 hardware execution has occurred.
+**Single coherent material correction.** Candidate v6 changes the publication oracle for the same first boundary: `expected_scaled_texture_dimensions()` now uses the widget's cached scale, rounding, size caps and minimum clamp; libplacebo identity is an exact allowlist of six 7.360.1 spellings, including the observed tagged string. It does not relax renderer/API, four-state publication, Wayland protocol, provenance or cleanup requirements. Local regressions reject the old 2240×1260 expectation, off-by-one dimensions and foreign/dirty libplacebo strings. Independent review of this correction: a retained local review artifact, SHA-256 `ca1a5ce87905fcfe988138451c1747b0e20491654ba0233e0819c37b80e10267`, verdict `ACCEPT` (code/test scope). Candidate v6 SDK Flatpak build completed with 13/13 Meson suites passing; host tests of the corrected oracle passed. No v6 hardware execution has occurred.
 
 **Pinned target and rollback.** Candidate v6 bundle: `validation-reports/candidate-v6/io.github.rusmikev.CineHDR-candidate-v6.flatpak`, SHA-256 `b0a0e98d9eff079d6ec67155a04e696e68fe8f1a57169c094e32398b04571456`, OSTree app commit `279ea47b65b92a022f79696175d6f2f8d440a59db87e0c1532f129714c9074c1`, runtime `org.gnome.Platform//50` commit `0bd5091046708e64bc882e8349877cfbae713f6a1e2d0487a5f10af820a2d792`, source snapshot tree `0982c5dc76e6a3bf797f39ba452db6452a4d2936`. `validation-reports/candidate-v6/SHA256SUMS` covers the bundle, patch, snapshot manifest and build log. Current installed app remains Candidate v5, commit `3f2897a04bb0dffc911818d05923b1cfaf05ed81f7692bb50e4e028923bef123`. Its rollback bundle is `validation-reports/candidate-v5/io.github.rusmikev.CineHDR-candidate-v5.flatpak`, SHA-256 `a09de0b1fa0342b1d86c0d3c656cb656bdf2f80fce792f76db485b8d643716d8`. The repo HEAD `9010e5a4a473aa90ae35ef5bb22b27dacf373d6e` is a base commit, **not** the v6 source identity; the candidate was built from an isolated snapshot of uncommitted work.
 
@@ -1230,7 +1215,7 @@ reset was made during this correction.
 ```bash
 set -euo pipefail
 umask 077
-cd /home/rusmikev/.gemini/antigravity/scratch/Cine
+cd "$(git rev-parse --show-toplevel)"
 (cd validation-reports/candidate-v6 && sha256sum -c SHA256SUMS)
 printf '%s  %s\n' a09de0b1fa0342b1d86c0d3c656cb656bdf2f80fce792f76db485b8d643716d8 validation-reports/candidate-v5/io.github.rusmikev.CineHDR-candidate-v5.flatpak | sha256sum -c -
 printf '%s  %s\n' 37315fe8acd177aa91c68cb2e7bdd3d04fbd68879d5a0f51d66e3ca965c53d01 run_wayland_publication_validation.sh | sha256sum -c -
@@ -1359,3 +1344,21 @@ decision: `_on_hdr_controller_change()` queues GTK compositing but does not
 schedule a new FBO render. This is not yet a confirmed live root cause. Any
 color-pipeline or render-synchronization correction requires an ADR, independent
 review, and a new bounded validation brief under ADR-0006 before hardware use.
+
+### Gate 2W Run 7 final GNOME adjudication (2026-10-11)
+
+Candidate v14 was tested in one GNOME Wayland launcher session with separate
+`legacy` and `gpu-next` Flatpak processes. Both passed the four-state GDK
+publication matrix, the composite-window Wayland color-management submission
+oracle, and the three-phase FBO pixel oracle; both exited 0 with clean cleanup.
+Observed repeat-SDR maximum deltas were 0.003922 and 0.000000, respectively,
+below the predeclared 0.020 bound. This accepts the bounded GNOME client path;
+it does not certify physical HDR output or individual presented frames.
+
+The original decision and its first superseding record remain in
+`validation-reports/` as audit history. The current, sanitized
+`gate2w-run7-adjudication-reconciled-mesa-20261011.json` (SHA-256
+`70f8e5f1b658f174439826f378ec93254e17f279e917c35577c4b844f0758a94`)
+sets GNOME `CLOSED`, cross-compositor Gate 2W `CONDITIONAL`, and Gate 2 and
+Gate 3 `OPEN`. It records that the Mesa release was not captured in Run 7.
+Raw traces and media fixtures remain local and are not published.
