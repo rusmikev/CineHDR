@@ -16,12 +16,15 @@ by the validator.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import ctypes
 from gettext import gettext as _
 import glob
 import gi
+import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import time
@@ -31,7 +34,13 @@ gi.require_version("Gdk", "4.0")
 
 from gi.repository import Gdk, GLib
 
-from .gl_bindings import get_gl_error_count
+from .gl_bindings import (
+    get_gl_error_count,
+    glReadPixels,
+    GL_RGBA,
+    GL_FLOAT,
+    GL_UNSIGNED_BYTE,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -54,9 +63,85 @@ PUBLICATION_SDR_SHA256 = (
 )
 PUBLICATION_MPV_VERSION = "mpv v0.41.0-dev-g97179bce7"
 PUBLICATION_LIBPLACEBO_VERSION = "7.360.1"
+PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS = frozenset(
+    {
+        PUBLICATION_LIBPLACEBO_VERSION,
+        f"v{PUBLICATION_LIBPLACEBO_VERSION}",
+        f"v{PUBLICATION_LIBPLACEBO_VERSION} (v{PUBLICATION_LIBPLACEBO_VERSION})",
+        f"{PUBLICATION_LIBPLACEBO_VERSION} (v{PUBLICATION_LIBPLACEBO_VERSION})",
+        f"v{PUBLICATION_LIBPLACEBO_VERSION} ({PUBLICATION_LIBPLACEBO_VERSION})",
+        f"{PUBLICATION_LIBPLACEBO_VERSION} ({PUBLICATION_LIBPLACEBO_VERSION})",
+    }
+)
 PUBLICATION_FFMPEG_VERSION = "8.1.2"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HOST_LIBMPV_DIR = REPO_ROOT.parent / "mpv-gpu-next-prefix" / "lib64"
+FLATPAK_LIBMPV_DIR = Path("/app/lib")
 PUBLICATION_LIBMPV_PREFIX_SUFFIX = "/mpv-gpu-next-prefix/lib64/"
 PUBLICATION_LIBMPV_BASENAMES = ("libmpv.so.2", "libmpv.so.2.5.0")
+
+
+def is_verified_flatpak_container(
+    flatpak_info_path: Path | None = None,
+    app_dir: Path | None = None,
+    mounts_path: Path | None = None,
+) -> bool:
+    """Verify that execution is inside a genuine CineHDR Flatpak container.
+
+    Requires:
+    1. /.flatpak-info is readable and parseable as keyfile.
+    2. [Application] section has name == 'io.github.rusmikev.CineHDR'.
+    3. /app directory exists, is a directory, and is mounted read-only (ro).
+    """
+    target = flatpak_info_path or Path("/.flatpak-info")
+    if not target.is_file():
+        return False
+    import configparser
+
+    cp = configparser.ConfigParser()
+    try:
+        cp.read(target, encoding="utf-8")
+        if not cp.has_section("Application"):
+            return False
+        app_name = cp.get("Application", "name", fallback="").strip()
+        if app_name != "io.github.rusmikev.CineHDR":
+            return False
+    except Exception:
+        return False
+
+    target_app = app_dir if app_dir is not None else Path("/app")
+    if not target_app.is_dir():
+        return False
+
+    mounts_file = mounts_path if mounts_path is not None else Path("/proc/mounts")
+    if not mounts_file.is_file():
+        return False
+
+    target_str = str(target_app)
+    last_opts: list[str] | None = None
+    try:
+        for line in mounts_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split()
+            if len(parts) >= 4:
+                m_point = parts[1].replace(r"\040", " ").replace(r"\011", "\t")
+                if m_point == target_str:
+                    last_opts = parts[3].split(",")
+    except Exception:
+        return False
+
+    if last_opts is None or "ro" not in last_opts:
+        return False
+
+    if mounts_path is None:
+        import os
+        try:
+            vfs = os.statvfs(target_app)
+            if not (vfs.f_flag & os.ST_RDONLY):
+                return False
+        except OSError:
+            return False
+
+    return True
 
 VALIDATION_MODES = (
     "quick", "soak", "sdr-soak", "lifecycle", "transition", "publication",
@@ -90,6 +175,521 @@ class ValidationStep:
     action: str
     wait_seconds: int
     value: object = None
+
+
+CANONICAL_PATCH_NAMES: tuple[str, ...] = (
+    "black",
+    "near_black",
+    "reference_white",
+    "peak_white",
+    "red_primary",
+    "green_primary",
+    "blue_primary",
+    "neutral_gradient",
+)
+
+# Calibrated tolerances per ADR-0007 / ADR-0004:
+# Format precision: 1 LSB in 8-bit SDR GL_RGBA8 is 1/255 ≈ 0.00392.
+# Measured deterministic repeat variability:
+# Offline decoding of the lossless HEVC fixture is bit-identical across runs (0 LSBs).
+# Hardware OpenGL/libplacebo FBO renders for solid canonical color patches exhibit
+# zero repeat variability across identical paused frames, with potential shader or
+# dither jitter bounded by <= 1 LSB (0.00392).
+# Fixing repeat tolerance to 0.020 (approx 5.1 LSBs) bounds format precision and
+# any driver repeat jitter, while remaining vastly separated from the required
+# minimum HDR distinction (0.150, approx 38.3 LSBs), guaranteeing distinction.
+DEFAULT_SDR_REPEAT_TOLERANCE = 0.020
+
+# HDR Rec.2100 PQ highlight scaling differs from sRGB reference by > 0.20 across
+# reference_white (203 nits) and peak_white (1000 nits). Setting minimum distinction
+# to 0.15 guarantees distinguishing HDR PQ from sRGB without false positives.
+DEFAULT_MIN_HDR_DISTINCTION = 0.150
+DEFAULT_PIXEL_TOLERANCE = DEFAULT_SDR_REPEAT_TOLERANCE
+
+
+def compute_patch_centers(width: int, height: int) -> dict[str, tuple[int, int]]:
+    """Return GL readback coordinates for the eight named fixture patches.
+
+    With mpv's current ``flip_y=False`` FBO render, the fixture's top image
+    row appears at low GL y. Run 7 v12's measured primaries at high y and the
+    decoded fixture's top-row grayscale establish this mapping. Keep the
+    names tied to fixture content, rather than to assumed GL orientation.
+    """
+    patch_w = max(width // 4, 1)
+    patch_h = max(height // 2, 1)
+    return {
+        "black": (0 * patch_w + patch_w // 2, 0 * patch_h + patch_h // 2),
+        "near_black": (1 * patch_w + patch_w // 2, 0 * patch_h + patch_h // 2),
+        "reference_white": (2 * patch_w + patch_w // 2, 0 * patch_h + patch_h // 2),
+        "peak_white": (3 * patch_w + patch_w // 2, 0 * patch_h + patch_h // 2),
+        "red_primary": (0 * patch_w + patch_w // 2, 1 * patch_h + patch_h // 2),
+        "green_primary": (1 * patch_w + patch_w // 2, 1 * patch_h + patch_h // 2),
+        "blue_primary": (2 * patch_w + patch_w // 2, 1 * patch_h + patch_h // 2),
+        "neutral_gradient": (3 * patch_w + patch_w // 2, 1 * patch_h + patch_h // 2),
+    }
+
+
+def compute_samples_hash(samples: Mapping[str, tuple[float, ...]]) -> str:
+    """Compute deterministic SHA-256 of canonical patch samples."""
+    parts = []
+    for name in CANONICAL_PATCH_NAMES:
+        if name in samples:
+            vals_str = ",".join(f"{v:.6f}" for v in samples[name])
+            parts.append(f"{name}:{vals_str}")
+    payload = ";".join(parts).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def read_fbo_patch_samples(
+    width: int,
+    height: int,
+    is_float: bool,
+) -> dict[str, tuple[float, float, float, float]]:
+    """Read the 8 canonical patch center pixels from currently bound GL_FRAMEBUFFER using glReadPixels.
+
+    Returns dict mapping patch name to (r, g, b, a) normalized float tuple.
+    """
+    if not glReadPixels:
+        raise RuntimeError("glReadPixels binding is unavailable")
+
+    coords = compute_patch_centers(width, height)
+    samples: dict[str, tuple[float, float, float, float]] = {}
+
+    if is_float:
+        buf = (ctypes.c_float * 4)()
+        buf_ptr = ctypes.cast(buf, ctypes.c_void_p)
+        for name in CANONICAL_PATCH_NAMES:
+            x, y = coords[name]
+            glReadPixels(x, y, 1, 1, GL_RGBA, GL_FLOAT, buf_ptr)
+            samples[name] = (
+                float(buf[0]),
+                float(buf[1]),
+                float(buf[2]),
+                float(buf[3]),
+            )
+    else:
+        buf = (ctypes.c_uint8 * 4)()
+        buf_ptr = ctypes.cast(buf, ctypes.c_void_p)
+        for name in CANONICAL_PATCH_NAMES:
+            x, y = coords[name]
+            glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, buf_ptr)
+            samples[name] = (
+                float(buf[0]) / 255.0,
+                float(buf[1]) / 255.0,
+                float(buf[2]) / 255.0,
+                float(buf[3]) / 255.0,
+            )
+    return samples
+
+
+@dataclass(frozen=True)
+class FboPixelCapture:
+    """Provenance and pixel sample record of an FBO slot per ADR-0007."""
+    phase: str
+    slot_id: int
+    epoch: int | None
+    frame_generation: int
+    fbo_format: str
+    is_float: bool
+    width: int
+    height: int
+    target_properties: Mapping[str, Any]
+    fixture_hash: str
+    patch_samples: Mapping[str, tuple[float, ...]]
+    captured_at: float = field(default_factory=time.monotonic)
+    raw_samples_hash: str | None = None
+    media_path: str = ""
+
+
+class PausedTransitionPixelOracle:
+    """Caller-owned FBO readback oracle for the paused HDR/SDR transition (ADR-0007)."""
+
+    def __init__(
+        self,
+        *,
+        tolerance: float = DEFAULT_SDR_REPEAT_TOLERANCE,
+        min_hdr_distinction: float = DEFAULT_MIN_HDR_DISTINCTION,
+        expected_sdr_hash: str | None = None,
+        expected_hdr_hash: str | None = None,
+        tolerance_status: str = "preliminary",
+    ) -> None:
+        self.tolerance = tolerance
+        self.min_hdr_distinction = min_hdr_distinction
+        self.expected_sdr_hash = expected_sdr_hash
+        self.expected_hdr_hash = expected_hdr_hash
+        self.tolerance_status = tolerance_status
+        self.captures: dict[str, FboPixelCapture] = {}
+        self.readback_errors: list[str] = []
+        self.provenance_errors: list[str] = []
+
+    def record_capture(self, capture: FboPixelCapture) -> None:
+        if capture.phase not in ("initial_sdr", "hdr", "return_sdr"):
+            self.provenance_errors.append(f"invalid capture phase: '{capture.phase}'")
+            return
+        if capture.phase in self.captures:
+            self.provenance_errors.append(
+                f"attempt to overwrite accepted capture for phase '{capture.phase}'"
+            )
+            return
+        self.captures[capture.phase] = capture
+
+    def record_readback_error(self, error: str) -> None:
+        if not hasattr(self, "readback_errors"):
+            self.readback_errors = []
+        self.readback_errors.append(error)
+
+    def get_capture(self, phase: str) -> FboPixelCapture | None:
+        return self.captures.get(phase)
+
+    def evaluate(
+        self,
+        *,
+        substitute_negative_hdr_pixels: bool = False,
+    ) -> tuple[str, list[str]]:
+        """Evaluate the paused transition captures against ADR-0007 oracle criteria.
+
+        Returns (status, reasons) where status is 'PASS', 'FAIL', or 'UNVERIFIED'.
+        """
+        if getattr(self, "readback_errors", None):
+            return "FAIL", [f"FBO pixel readback error occurred: {'; '.join(self.readback_errors)}"]
+
+        if getattr(self, "provenance_errors", None):
+            return "FAIL", [f"FBO capture provenance error: {'; '.join(self.provenance_errors)}"]
+
+        initial_sdr = self.captures.get("initial_sdr")
+        hdr = self.captures.get("hdr")
+        return_sdr = self.captures.get("return_sdr")
+
+        if initial_sdr is None or hdr is None or return_sdr is None:
+            missing = []
+            if initial_sdr is None:
+                missing.append("initial_sdr")
+            if hdr is None:
+                missing.append("hdr")
+            if return_sdr is None:
+                missing.append("return_sdr")
+            return "UNVERIFIED", [f"missing required capture(s): {', '.join(missing)}"]
+
+        # Check for empty patch sample mappings
+        if not initial_sdr.patch_samples or not hdr.patch_samples or not return_sdr.patch_samples:
+            return "UNVERIFIED", ["one or more captures missing patch samples"]
+
+        # Check for unknown provenance -> UNVERIFIED
+        for cap in (initial_sdr, hdr, return_sdr):
+            if not cap.fixture_hash or str(cap.fixture_hash).strip().lower() in ("none", "unknown", ""):
+                return "UNVERIFIED", [f"{cap.phase} has unknown fixture hash provenance: {cap.fixture_hash!r}"]
+            if cap.epoch is None:
+                return "UNVERIFIED", [f"{cap.phase} has unknown epoch provenance (epoch is None)"]
+
+        reasons: list[str] = []
+
+        # 1. Strict Provenance, Geometry and Format Verification
+        for cap in (initial_sdr, hdr, return_sdr):
+            if cap.width <= 0 or cap.height <= 0:
+                reasons.append(f"{cap.phase} has invalid dimensions {cap.width}x{cap.height}")
+
+        if (
+            initial_sdr.width != hdr.width or initial_sdr.width != return_sdr.width
+            or initial_sdr.height != hdr.height or initial_sdr.height != return_sdr.height
+        ):
+            reasons.append(
+                f"capture dimension mismatch: initial_sdr={initial_sdr.width}x{initial_sdr.height}, "
+                f"hdr={hdr.width}x{hdr.height}, return_sdr={return_sdr.width}x{return_sdr.height}"
+            )
+
+        if initial_sdr.fbo_format != "GL_RGBA8" or initial_sdr.is_float is not False:
+            reasons.append(
+                f"initial_sdr format error: expected GL_RGBA8/non-float, got {initial_sdr.fbo_format}/{initial_sdr.is_float}"
+            )
+        if hdr.fbo_format != "GL_RGBA16F" or hdr.is_float is not True:
+            reasons.append(
+                f"hdr format error: expected GL_RGBA16F/float, got {hdr.fbo_format}/{hdr.is_float}"
+            )
+        if return_sdr.fbo_format != "GL_RGBA8" or return_sdr.is_float is not False:
+            reasons.append(
+                f"return_sdr format error: expected GL_RGBA8/non-float, got {return_sdr.fbo_format}/{return_sdr.is_float}"
+            )
+
+        # Fixture hash validation
+        if initial_sdr.fixture_hash != return_sdr.fixture_hash:
+            reasons.append(
+                f"SDR reference fixture mismatch: initial={initial_sdr.fixture_hash} vs return={return_sdr.fixture_hash}"
+            )
+        if hdr.fixture_hash == initial_sdr.fixture_hash:
+            reasons.append(
+                f"HDR fixture hash cannot match SDR fixture hash: {hdr.fixture_hash}"
+            )
+        if self.expected_sdr_hash and initial_sdr.fixture_hash != self.expected_sdr_hash:
+            reasons.append(
+                f"initial_sdr fixture hash {initial_sdr.fixture_hash} does not match expected {self.expected_sdr_hash}"
+            )
+        if self.expected_sdr_hash and return_sdr.fixture_hash != self.expected_sdr_hash:
+            reasons.append(
+                f"return_sdr fixture hash {return_sdr.fixture_hash} does not match expected {self.expected_sdr_hash}"
+            )
+        if self.expected_hdr_hash and hdr.fixture_hash != self.expected_hdr_hash:
+            reasons.append(
+                f"hdr fixture hash {hdr.fixture_hash} does not match expected {self.expected_hdr_hash}"
+            )
+
+        # Media path consistency validation
+        if initial_sdr.media_path and return_sdr.media_path:
+            if initial_sdr.media_path != return_sdr.media_path:
+                reasons.append(
+                    f"return_sdr media_path '{return_sdr.media_path}' does not match initial_sdr media_path '{initial_sdr.media_path}'"
+                )
+        if initial_sdr.media_path and hdr.media_path:
+            if hdr.media_path == initial_sdr.media_path:
+                reasons.append(
+                    f"HDR capture media_path cannot match SDR media_path: '{hdr.media_path}'"
+                )
+
+        # Monotonically advancing epoch
+        if hdr.epoch <= initial_sdr.epoch:
+            reasons.append(
+                f"stale or non-advancing epoch for hdr: hdr epoch {hdr.epoch} <= initial_sdr epoch {initial_sdr.epoch}"
+            )
+        if return_sdr.epoch <= hdr.epoch:
+            reasons.append(
+                f"stale or non-advancing epoch for return_sdr: return_sdr epoch {return_sdr.epoch} <= hdr epoch {hdr.epoch}"
+            )
+
+        # Confirmed target properties validation
+        for cap in (initial_sdr, hdr, return_sdr):
+            if not cap.target_properties:
+                reasons.append(f"{cap.phase} has empty target_properties")
+            else:
+                trc = cap.target_properties.get("target-trc")
+                prim = cap.target_properties.get("target-prim")
+                peak = cap.target_properties.get("target-peak")
+                if not trc or not prim or not peak or any(str(v).strip().lower() in ("unknown", "none", "") for v in (trc, prim, peak)):
+                    reasons.append(
+                        f"{cap.phase} has unconfirmed or empty target properties: {cap.target_properties}"
+                    )
+                elif cap.phase in ("initial_sdr", "return_sdr"):
+                    if str(trc).strip().lower() not in ("auto", "srgb", "bt.1886"):
+                        reasons.append(f"{cap.phase} has unexpected target-trc for SDR: {trc!r}")
+                    if str(prim).strip().lower() not in ("auto", "bt.709"):
+                        reasons.append(f"{cap.phase} has unexpected target-prim for SDR: {prim!r}")
+                elif cap.phase == "hdr":
+                    if str(trc).strip().lower() not in ("pq", "hlg"):
+                        reasons.append(f"hdr has unexpected target-trc for HDR: {trc!r}")
+                    if str(prim).strip().lower() not in ("bt.2020", "bt.2100"):
+                        reasons.append(f"hdr has unexpected target-prim for HDR: {prim!r}")
+
+        # 2. Strict Canonical 8 Patches & Channel Length Check
+        canonical_set = set(CANONICAL_PATCH_NAMES)
+        for cap in (initial_sdr, hdr, return_sdr):
+            cap_set = set(cap.patch_samples.keys())
+            if cap_set != canonical_set:
+                missing = sorted(canonical_set - cap_set)
+                extra = sorted(cap_set - canonical_set)
+                reasons.append(
+                    f"{cap.phase} does not have the exact 8 canonical patches; missing={missing}, extra={extra}"
+                )
+            for name, vals in cap.patch_samples.items():
+                if len(vals) != 4:
+                    reasons.append(f"{cap.phase} patch '{name}' channel length is {len(vals)}, expected 4")
+                elif not all(isinstance(v, (int, float)) and math.isfinite(v) for v in vals):
+                    reasons.append(f"{cap.phase} patch '{name}' contains non-finite channel values: {vals}")
+
+            if cap.raw_samples_hash:
+                expected_hash = compute_samples_hash(cap.patch_samples)
+                if cap.raw_samples_hash != expected_hash:
+                    reasons.append(f"{cap.phase} raw_samples_hash mismatch: expected {expected_hash}, got {cap.raw_samples_hash}")
+
+        if reasons:
+            return "FAIL", reasons
+
+        # 3. HDR Distinction Requirement (ADR-0007 / ADR-0004)
+        max_hdr_diff = 0.0
+        for name in CANONICAL_PATCH_NAMES:
+            sdr_vals = initial_sdr.patch_samples[name]
+            hdr_vals = hdr.patch_samples[name]
+            for c in range(4):
+                diff = abs(sdr_vals[c] - hdr_vals[c])
+                if diff > max_hdr_diff:
+                    max_hdr_diff = diff
+
+        if max_hdr_diff < self.min_hdr_distinction:
+            reasons.append(
+                f"HDR capture is not distinguishable from SDR reference (max diff across all 8 canonical patches {max_hdr_diff:.4f} < {self.min_hdr_distinction})"
+            )
+
+        # 4. Returned SDR Fidelity vs Initial SDR Reference
+        eval_return_samples = hdr.patch_samples if substitute_negative_hdr_pixels else return_sdr.patch_samples
+
+        for name in CANONICAL_PATCH_NAMES:
+            init_vals = initial_sdr.patch_samples[name]
+            ret_vals = eval_return_samples[name]
+            for c in range(4):
+                diff = abs(init_vals[c] - ret_vals[c])
+                if diff > self.tolerance:
+                    reasons.append(
+                        f"returned SDR patch '{name}' channel {c} delta {diff:.4f} exceeds calibrated tolerance {self.tolerance}"
+                    )
+
+        if reasons:
+            return "FAIL", reasons
+
+        return "PASS", []
+
+
+def serialize_fbo_pixel_measurements(
+    oracle: PausedTransitionPixelOracle | None,
+    *,
+    backend: str = "legacy",
+    session_id: str = "none",
+    overall_result: str = "UNVERIFIED",
+) -> dict[str, Any]:
+    """Serialize all canonical patch RGBA measurements and provenance across phases into a machine-readable dict."""
+    phases_dict: dict[str, Any] = {}
+    captures = getattr(oracle, "captures", {}) if oracle is not None else {}
+    for phase in ("initial_sdr", "hdr", "return_sdr"):
+        cap = captures.get(phase)
+        if cap is not None:
+            samples_dict: dict[str, list[float]] = {}
+            for name in CANONICAL_PATCH_NAMES:
+                if name in cap.patch_samples:
+                    samples_dict[name] = [float(c) for c in cap.patch_samples[name]]
+            phases_dict[phase] = {
+                "status": "CAPTURED",
+                "phase": cap.phase,
+                "slot_id": cap.slot_id,
+                "epoch": cap.epoch,
+                "frame_generation": cap.frame_generation,
+                "target_properties": dict(cap.target_properties),
+                "fbo_format": cap.fbo_format,
+                "is_float": cap.is_float,
+                "width": cap.width,
+                "height": cap.height,
+                "fixture_hash": cap.fixture_hash,
+                "raw_samples_hash": cap.raw_samples_hash,
+                "patch_samples": samples_dict,
+            }
+        else:
+            phases_dict[phase] = {
+                "status": "MISSING",
+                "phase": phase,
+                "slot_id": None,
+                "epoch": None,
+                "frame_generation": None,
+                "target_properties": None,
+                "fbo_format": None,
+                "is_float": None,
+                "width": None,
+                "height": None,
+                "fixture_hash": None,
+                "raw_samples_hash": None,
+                "patch_samples": None,
+            }
+
+    tolerance = getattr(oracle, "tolerance", DEFAULT_SDR_REPEAT_TOLERANCE)
+    tolerance_status = getattr(oracle, "tolerance_status", "preliminary")
+    min_distinction = getattr(oracle, "min_hdr_distinction", DEFAULT_MIN_HDR_DISTINCTION)
+    readback_errors = list(getattr(oracle, "readback_errors", []))
+    provenance_errors = list(getattr(oracle, "provenance_errors", []))
+
+    return {
+        "schema": "cinehdr.gate2w.fbo-pixel-measurements.v1",
+        "backend": backend,
+        "session_id": session_id,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+        "overall_result": overall_result,
+        "tolerance": float(tolerance),
+        "tolerance_status": str(tolerance_status),
+        "min_hdr_distinction": float(min_distinction),
+        "readback_errors": readback_errors,
+        "provenance_errors": provenance_errors,
+        "phases": phases_dict,
+    }
+
+
+def verify_fbo_pixel_measurements_artifact(
+    data: Mapping[str, Any],
+) -> tuple[bool, str]:
+    """Verify that a serialized FBO pixel measurements artifact is complete and mathematically consistent."""
+    if not isinstance(data, Mapping):
+        return False, "artifact root is not a valid mapping"
+
+    schema = data.get("schema")
+    if schema != "cinehdr.gate2w.fbo-pixel-measurements.v1":
+        return False, f"unsupported or missing schema: {schema!r}"
+
+    phases = data.get("phases")
+    if not isinstance(phases, Mapping):
+        return False, "missing or invalid 'phases' mapping"
+
+    required_phases = ("initial_sdr", "hdr", "return_sdr")
+    for phase_name in required_phases:
+        if phase_name not in phases:
+            return False, f"mandatory phase '{phase_name}' missing from artifact"
+        phase_data = phases[phase_name]
+        if not isinstance(phase_data, Mapping):
+            return False, f"phase '{phase_name}' data is not a mapping"
+        if phase_data.get("status") != "CAPTURED":
+            return False, f"phase '{phase_name}' is not marked CAPTURED (status: {phase_data.get('status')!r})"
+        slot_id = phase_data.get("slot_id")
+        if isinstance(slot_id, bool) or not isinstance(slot_id, int) or slot_id < 0:
+            return False, f"phase '{phase_name}' has missing or invalid slot_id: {slot_id!r}"
+        if phase_data.get("epoch") is None:
+            return False, f"phase '{phase_name}' has null epoch"
+        if not isinstance(phase_data.get("frame_generation"), int) or phase_data["frame_generation"] < 1:
+            return False, f"phase '{phase_name}' has invalid frame_generation: {phase_data.get('frame_generation')!r}"
+        if not phase_data.get("fbo_format"):
+            return False, f"phase '{phase_name}' has missing fbo_format"
+        if not isinstance(phase_data.get("width"), int) or phase_data["width"] <= 0:
+            return False, f"phase '{phase_name}' has invalid width: {phase_data.get('width')!r}"
+        if not isinstance(phase_data.get("height"), int) or phase_data["height"] <= 0:
+            return False, f"phase '{phase_name}' has invalid height: {phase_data.get('height')!r}"
+        if not phase_data.get("fixture_hash"):
+            return False, f"phase '{phase_name}' has missing fixture_hash"
+
+        target_properties = phase_data.get("target_properties")
+        if not isinstance(target_properties, Mapping):
+            return False, f"phase '{phase_name}' has missing target_properties"
+        for property_name in ("target-trc", "target-prim", "target-peak"):
+            value = target_properties.get(property_name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (str, int, float))
+                or str(value).strip().lower() in ("", "none", "unknown")
+                or (isinstance(value, float) and not math.isfinite(value))
+            ):
+                return False, f"phase '{phase_name}' has missing or invalid target_properties[{property_name!r}]: {value!r}"
+
+        raw_hash = phase_data.get("raw_samples_hash")
+        if not raw_hash or not isinstance(raw_hash, str) or len(raw_hash) != 64:
+            return False, f"phase '{phase_name}' has missing or malformed raw_samples_hash: {raw_hash!r}"
+
+        patch_samples = phase_data.get("patch_samples")
+        if not isinstance(patch_samples, Mapping):
+            return False, f"phase '{phase_name}' has missing or non-mapping patch_samples"
+
+        samples_for_hash: dict[str, tuple[float, ...]] = {}
+        for patch_name in CANONICAL_PATCH_NAMES:
+            if patch_name not in patch_samples:
+                return False, f"phase '{phase_name}' missing canonical patch '{patch_name}'"
+            rgba = patch_samples[patch_name]
+            if not isinstance(rgba, (list, tuple)) or len(rgba) != 4:
+                return False, f"phase '{phase_name}' patch '{patch_name}' is not a 4-element RGBA vector"
+            try:
+                float_rgba = tuple(float(c) for c in rgba)
+            except (ValueError, TypeError):
+                return False, f"phase '{phase_name}' patch '{patch_name}' contains non-numeric components"
+            for c in float_rgba:
+                if not math.isfinite(c):
+                    return False, f"phase '{phase_name}' patch '{patch_name}' contains non-finite component (NaN or Inf): {c!r}"
+            samples_for_hash[patch_name] = float_rgba
+
+        recomputed_hash = compute_samples_hash(samples_for_hash)
+        if recomputed_hash != raw_hash:
+            return False, (
+                f"raw_samples_hash mismatch for phase '{phase_name}': "
+                f"stored '{raw_hash}', recomputed '{recomputed_hash}'"
+            )
+
+    return True, "OK"
 
 
 def validation_expected_playlist_count(mode: str) -> int | None:
@@ -140,6 +740,11 @@ def validation_config_from_env(
                 f"got {value!r}"
             )
         publication_values[name] = value
+    if raw_mode == "publication" and source.get("CINEHDR_FORCE_SURFACE_SUBMISSION") != "1":
+        raise ValueError(
+            "publication validation requires CINEHDR_FORCE_SURFACE_SUBMISSION=1 "
+            "in the isolated test process; this override is not Wayland submission proof"
+        )
     return GpuValidationConfig(
         raw_mode,
         report_dir,
@@ -536,6 +1141,30 @@ def _memory_format_symbol(value: object) -> str:
     return str(value)
 
 
+def expected_scaled_texture_dimensions(video_area) -> tuple[int, int]:
+    """Calculate the expected GDK texture dimensions matching MpvVideoWidget._render_pending_frame()."""
+    w = int(video_area.get_width())
+    h = int(video_area.get_height())
+    scale = float(
+        getattr(
+            video_area,
+            "_cached_scale",
+            float(getattr(video_area.props, "scale_factor", 1.0))
+            if hasattr(video_area, "props") and hasattr(video_area.props, "scale_factor")
+            else 1.0,
+        )
+    )
+    scaled_w = int(round(w * scale))
+    scaled_h = int(round(h * scale))
+    max_w = int(getattr(video_area, "_cached_max_width", 0) or 0)
+    max_h = int(getattr(video_area, "_cached_max_height", 0) or 0)
+    if max_w > 0:
+        scaled_w = min(scaled_w, max_w)
+    if max_h > 0:
+        scaled_h = min(scaled_h, max_h)
+    return max(1, scaled_w), max(1, scaled_h)
+
+
 def publication_texture_evidence(video_area) -> dict[str, object]:
     """Read the actual published GDK object required by the publication ADR.
 
@@ -581,13 +1210,9 @@ def publication_texture_evidence(video_area) -> dict[str, object]:
         if not callable(color_equal):
             raise AttributeError("Gdk.ColorState.equal is unavailable")
         # Match MpvVideoWidget._render_pending_frame(): the builder's size is
-        # based on the widget allocation, not the child Gtk.GLArea allocation.
-        expected_width = int(video_area.get_width()) * int(
-            video_area.props.scale_factor
-        )
-        expected_height = int(video_area.get_height()) * int(
-            video_area.props.scale_factor
-        )
+        # based on the widget allocation, scale (including fractional monitor scale),
+        # rounding, and monitor geometry constraints.
+        expected_width, expected_height = expected_scaled_texture_dimensions(video_area)
         native = video_area.get_native()
         surface = native.get_surface()
         display = surface.get_display()
@@ -617,24 +1242,65 @@ def publication_texture_evidence(video_area) -> dict[str, object]:
     return evidence
 
 
-def publication_runtime_errors(runtime: object) -> tuple[str, ...]:
-    """Return strict pinned-runtime identity failures for fixed-fixture modes."""
+def publication_runtime_errors(
+    runtime: object,
+    *,
+    is_flatpak_context: bool | None = None,
+    host_prefix: Path | None = None,
+    flatpak_prefix: Path | None = None,
+) -> tuple[str, ...]:
+    """Return strict pinned-runtime identity failures for fixed-fixture modes.
+
+    Accepts libmpv only from exact canonical paths:
+    - in verified Flatpak container: /app/lib/libmpv.so.2 or /app/lib/libmpv.so.2.5.0
+    - on host dev checkouts: repo_root.parent / 'mpv-gpu-next-prefix' / 'lib64' / ('libmpv.so.2' | 'libmpv.so.2.5.0')
+    Loose suffix matching is prohibited.
+    """
     if not isinstance(runtime, Mapping):
         return ("render runtime evidence was unavailable",)
     errors: list[str] = []
     libmpv_path = runtime.get("libmpv_path")
-    if not isinstance(libmpv_path, str) or not any(
-        libmpv_path.endswith(PUBLICATION_LIBMPV_PREFIX_SUFFIX + basename)
-        for basename in PUBLICATION_LIBMPV_BASENAMES
-    ):
+    if not isinstance(libmpv_path, str) or not libmpv_path.strip():
         errors.append("libmpv was not loaded from the pinned GPU Next prefix")
+    else:
+        in_container = (
+            is_flatpak_context
+            if is_flatpak_context is not None
+            else is_verified_flatpak_container()
+        )
+        resolved = Path(libmpv_path.strip()).resolve()
+        if in_container:
+            base_flatpak_dir = (
+                flatpak_prefix.resolve()
+                if flatpak_prefix is not None
+                else FLATPAK_LIBMPV_DIR.resolve()
+            )
+            valid_container_paths = {
+                (base_flatpak_dir / "libmpv.so.2").resolve(),
+                (base_flatpak_dir / "libmpv.so.2.5.0").resolve(),
+            }
+            if resolved not in valid_container_paths:
+                errors.append("libmpv was not loaded from the pinned GPU Next prefix")
+        else:
+            base_dir = (
+                host_prefix.resolve()
+                if host_prefix is not None
+                else HOST_LIBMPV_DIR.resolve()
+            )
+            valid_host_paths = {
+                (base_dir / "libmpv.so.2").resolve(),
+                (base_dir / "libmpv.so.2.5.0").resolve(),
+            }
+            if resolved not in valid_host_paths:
+                errors.append("libmpv was not loaded from the pinned GPU Next prefix")
+
     if runtime.get("mpv_version") != PUBLICATION_MPV_VERSION:
         errors.append("mpv runtime identity was not the accepted g97179bce7 build")
     raw_placebo = runtime.get("libplacebo_version")
-    canonical_placebo = (
-        raw_placebo[1:] if isinstance(raw_placebo, str) and raw_placebo.startswith("v") else raw_placebo
-    )
-    if canonical_placebo != PUBLICATION_LIBPLACEBO_VERSION:
+    if (
+        not isinstance(raw_placebo, str)
+        or raw_placebo not in PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS
+    ):
         errors.append("libplacebo runtime identity was not 7.360.1")
     if runtime.get("ffmpeg_version") != PUBLICATION_FFMPEG_VERSION:
         errors.append("FFmpeg runtime identity was not 8.1.2")
@@ -710,6 +1376,7 @@ def evaluate_publication_validation(
     state_sequence: tuple[tuple[int, str, str], ...],
     failure_reason: str | None,
     isolation_failures: tuple[str, ...],
+    pixel_oracle_result: tuple[str, list[str]] | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     """Publication has no warning path: all required evidence is a PASS gate."""
     errors: list[str] = []
@@ -737,6 +1404,13 @@ def evaluate_publication_validation(
     if str(final.get("hwdec", "")).lower() != "vaapi-copy":
         errors.append("active hardware decode was not vaapi-copy")
     errors.extend(publication_runtime_errors(final.get("render_runtime")))
+    if pixel_oracle_result is not None:
+        pixel_status, pixel_reasons = pixel_oracle_result
+        if pixel_status != "PASS":
+            if pixel_reasons:
+                errors.append(f"FBO pixel validation failed ({pixel_status}): {'; '.join(pixel_reasons)}")
+            else:
+                errors.append(f"FBO pixel validation status was {pixel_status}")
     return ("FAIL", tuple(errors)) if errors else ("PASS", ())
 
 
@@ -951,6 +1625,14 @@ class GpuValidationSession:
         self._ready_stable_since: float | None = None
         self._ready_last_playlist_count: int | None = None
 
+        self.pixel_oracle: PausedTransitionPixelOracle | None = None
+        if self.config.mode == "publication":
+            self.pixel_oracle = PausedTransitionPixelOracle()
+            if hasattr(self.video_area, "_fbo_pixel_oracle_cb"):
+                self.video_area._fbo_pixel_oracle_cb = self._on_fbo_pixel_capture
+            if hasattr(self.video_area, "_fbo_pixel_oracle_error_cb"):
+                self.video_area._fbo_pixel_oracle_error_cb = self._on_fbo_pixel_readback_error
+
     def start(self):
         logger.info("Starting %s GPU validation session", self.config.mode)
         toast = {
@@ -1078,9 +1760,28 @@ class GpuValidationSession:
                 self._expected_playlist_count,
             )
         self._ready_last_playlist_count = playlist_count
+
+        raw_playlist_pos = _mpv_property(self.player, "playlist-pos")
+        playlist_pos = int(_number(raw_playlist_pos, -1))
+        is_paused = bool(_mpv_property(self.player, "pause", False))
+
         now = time.monotonic()
         first_frame = bool(getattr(self.video_area, "_first_frame_logged", False))
         if _uses_publication_fixture_contract(self.config.mode):
+            if playlist_ready:
+                if playlist_pos > 0:
+                    self.ready_timer_id = None
+                    self._finish(
+                        f"initial fixture contract violated: playlist position is {playlist_pos}, expected 0"
+                    )
+                    return GLib.SOURCE_REMOVE
+                if not is_paused:
+                    self.ready_timer_id = None
+                    self._finish(
+                        "initial fixture contract violated: initial playback is not paused"
+                    )
+                    return GLib.SOURCE_REMOVE
+
             # One-second paused fixtures are valid publication inputs. Do not
             # apply the normal playback-duration/position-settling heuristic.
             renderer_ready = (
@@ -1088,6 +1789,8 @@ class GpuValidationSession:
                 and session_status == "active"
                 and first_frame
                 and playlist_ready
+                and playlist_pos == 0
+                and is_paused
                 and bool(self._metrics_snapshot()["publication_texture"].get("available"))
             )
         else:
@@ -1177,12 +1880,21 @@ class GpuValidationSession:
                     "timed out waiting for exactly "
                     f"{self._expected_playlist_count} playlist entries"
                 )
+            elif _uses_publication_fixture_contract(self.config.mode):
+                if playlist_pos != 0:
+                    self._finish(
+                        f"timed out waiting for initial SDR fixture: playlist position was {playlist_pos}, expected 0"
+                    )
+                elif not is_paused:
+                    self._finish(
+                        "timed out waiting for initial SDR fixture: player was not paused"
+                    )
+                elif not first_frame:
+                    self._finish("timed out waiting for first rendered frame")
+                else:
+                    self._finish("timed out waiting for published initial SDR Gdk.GLTexture")
             else:
-                self._finish(
-                    "timed out waiting for the first fixed-fixture texture"
-                    if _uses_publication_fixture_contract(self.config.mode)
-                    else "timed out waiting for the first GPU Next video frame"
-                )
+                self._finish("timed out waiting for the first GPU Next video frame")
             return GLib.SOURCE_REMOVE
         return GLib.SOURCE_CONTINUE
 
@@ -1305,6 +2017,10 @@ class GpuValidationSession:
             self._pending_render_frame_generation = int(
                 getattr(self.video_area, "render_frame_generation", 0)
             )
+            if step.action == "publication-state":
+                # Readiness was proved by an earlier texture. The paused fixture
+                # may never render again unless step zero requests a new frame.
+                self.video_area._schedule_render(force_redraw=True)
         elif step.action == "switch-media":
             playlist_index, _expected_signal = step.value
             self._pending_render_frame_generation = int(
@@ -1343,6 +2059,135 @@ class GpuValidationSession:
     def _request_window_size(self, width: int, height: int):
         self.window.set_default_size(width, height)
         return GLib.SOURCE_REMOVE
+
+    def _current_publication_phase(self) -> tuple[str, str, int, str]:
+        """Return (phase, fixture_hash, expected_playlist_index, expected_signal)."""
+        if self.step_index <= 0:
+            return "initial_sdr", getattr(self.config, "fixture_sdr_sha256", "") or "", 0, "sdr"
+        elif self.step_index == 1:
+            return "hdr", getattr(self.config, "fixture_hdr_sha256", "") or "", 1, "hdr"
+        elif self.step_index == 2:
+            return "return_sdr", getattr(self.config, "fixture_sdr_sha256", "") or "", 0, "sdr"
+        else:
+            return "return_hdr", getattr(self.config, "fixture_hdr_sha256", "") or "", 1, "hdr"
+
+    def _on_fbo_pixel_capture(
+        self,
+        slot: Any,
+        epoch: int | None,
+        frame_generation: int,
+        fbo_format: str,
+        is_float: bool,
+        width: int,
+        height: int,
+        patch_samples: Mapping[str, tuple[float, ...]],
+    ) -> None:
+        if getattr(self, "pixel_oracle", None) is None:
+            return
+        if not hasattr(self, "steps") or not (0 <= self.step_index < len(self.steps)):
+            return
+
+        phase, fixture_hash, expected_index, expected_signal = self._current_publication_phase()
+        if phase not in ("initial_sdr", "hdr", "return_sdr"):
+            return
+
+        # 1. Do not overwrite already accepted captures
+        if self.pixel_oracle.get_capture(phase) is not None:
+            return
+
+        # 2. Check controller and committed output state
+        controller = getattr(self.video_area, "hdr_controller", None)
+        if controller is None:
+            return
+
+        committed = getattr(controller, "committed_output_state", None)
+        if committed is not None:
+            # Drop frames rendered while publication is pending or suppressed
+            if getattr(controller, "is_publication_pending", False) or getattr(
+                controller, "is_publication_suppressed", False
+            ):
+                return
+            # Epoch must match committed epoch exactly
+            if epoch is None or epoch != committed.epoch:
+                return
+            target_properties = {
+                "target-trc": committed.target_trc,
+                "target-prim": committed.target_prim,
+                "target-peak": committed.target_peak,
+            }
+            if fbo_format != committed.fbo_format or is_float != committed.is_float:
+                return
+            if expected_signal == "hdr" and not committed.is_hdr:
+                return
+            if expected_signal == "sdr" and committed.is_hdr:
+                return
+        else:
+            # Fallback for mock controller environments without full CommittedOutputState
+            target_properties = {
+                "target-trc": getattr(controller, "target_trc", ""),
+                "target-prim": getattr(controller, "target_prim", ""),
+                "target-peak": getattr(controller, "target_peak", ""),
+            }
+            if expected_signal == "hdr" and (not is_float or fbo_format != "GL_RGBA16F"):
+                return
+            if expected_signal == "sdr" and (is_float or fbo_format != "GL_RGBA8"):
+                return
+
+        # 3. Check playlist position and media path
+        current_pos = int(_number(_mpv_property(self.player, "playlist-pos"), -1))
+        if current_pos != expected_index:
+            return
+        media_path = str(_mpv_property(self.player, "path") or "")
+
+        # 4. Check that this exact FBO was successfully published by video_area
+        widget_gen = int(getattr(self.video_area, "render_frame_generation", 0))
+        if widget_gen < frame_generation:
+            return
+        if getattr(self.video_area, "current_texture", None) is None:
+            return
+
+        # 5. Check frame generation freshness on step switches
+        if (
+            hasattr(self, "_pending_render_frame_generation")
+            and frame_generation <= self._pending_render_frame_generation
+        ):
+            return
+
+        # 5. Strictly advancing epoch verification vs prior accepted captures
+        if phase == "hdr":
+            prev = self.pixel_oracle.get_capture("initial_sdr")
+            if prev is not None and prev.epoch is not None and epoch is not None and epoch <= prev.epoch:
+                return
+        elif phase == "return_sdr":
+            prev = self.pixel_oracle.get_capture("hdr")
+            if prev is not None and prev.epoch is not None and epoch is not None and epoch <= prev.epoch:
+                return
+
+        slot_id = getattr(slot, "index", getattr(slot, "slot_id", None))
+        if isinstance(slot_id, bool) or not isinstance(slot_id, int) or slot_id < 0:
+            self.pixel_oracle.record_readback_error("FBO slot identity is unavailable")
+            return
+
+        capture = FboPixelCapture(
+            phase=phase,
+            slot_id=slot_id,
+            epoch=epoch,
+            frame_generation=frame_generation,
+            fbo_format=fbo_format,
+            is_float=is_float,
+            width=width,
+            height=height,
+            target_properties=target_properties,
+            fixture_hash=fixture_hash,
+            patch_samples=patch_samples,
+            raw_samples_hash=compute_samples_hash(patch_samples),
+            media_path=media_path,
+        )
+        self.pixel_oracle.record_capture(capture)
+
+    def _on_fbo_pixel_readback_error(self, error: str) -> None:
+        if getattr(self, "pixel_oracle", None) is not None:
+            self.pixel_oracle.record_readback_error(error)
 
     def _realize_validation_gl_area(self, gl_area):
         self.lifecycle_timer_id = None
@@ -1446,6 +2291,10 @@ class GpuValidationSession:
             "publication-state", "switch-media"
         ):
             expected_index, expected_signal = step.value
+            if step.action == "publication-state" and int(
+                after["render_frame_generation"]
+            ) <= self._pending_render_frame_generation:
+                return "FAIL", "no newer frame was published for the initial SDR capture"
             if step.action == "switch-media" and int(
                 after["render_frame_generation"]
             ) <= self._pending_render_frame_generation:
@@ -2117,6 +2966,10 @@ class GpuValidationSession:
             if isinstance(result.get("expected_state"), tuple)
             and len(result["expected_state"]) == 2
         )
+        pixel_oracle_result = None
+        if getattr(self, "pixel_oracle", None) is not None:
+            pixel_oracle_result = self.pixel_oracle.evaluate()
+
         overall, failures = evaluate_publication_validation(
             active_api=active_api,
             session_status=session_status,
@@ -2126,6 +2979,7 @@ class GpuValidationSession:
             state_sequence=state_sequence,
             failure_reason=failure_reason,
             isolation_failures=isolation_failures,
+            pixel_oracle_result=pixel_oracle_result,
         )
         runtime = final.get("render_runtime", {})
         if not isinstance(runtime, Mapping):
@@ -2134,16 +2988,74 @@ class GpuValidationSession:
         if not isinstance(texture, Mapping):
             texture = {}
 
+        session_id = os.environ.get("CINEHDR_DIAGNOSTICS_SESSION_ID", "").strip() or "none"
+        process_id = os.getpid()
+        flatpak_info_path = Path("/.flatpak-info")
+        flatpak_instance_id = "none"
+        flatpak_app_commit = "none"
+        flatpak_runtime_commit = "none"
+        if flatpak_info_path.is_file():
+            import configparser
+            try:
+                cp = configparser.ConfigParser()
+                cp.read(flatpak_info_path, encoding="utf-8")
+                flatpak_instance_id = cp.get("Instance", "instance-id", fallback="none").strip() or "none"
+                flatpak_app_commit = cp.get("Instance", "app-commit", fallback="none").strip() or "none"
+                flatpak_runtime_commit = cp.get("Instance", "runtime-commit", fallback="none").strip() or "none"
+            except Exception:
+                pass
+
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        self.config.report_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write private machine-readable FBO pixel measurements artifact
+        pixel_artifact_path = None
+        pixel_artifact_sha = None
+        artifact_ok = False
+        artifact_reason = "not evaluated"
+        if self.config.mode == "publication":
+            measurements_data = serialize_fbo_pixel_measurements(
+                getattr(self, "pixel_oracle", None),
+                backend=self.config.expected_backend,
+                session_id=session_id,
+                overall_result=overall,
+            )
+            pixel_artifact_path = self.config.report_dir / (
+                f"gate2-wayland-fbo-pixels-{self.config.expected_backend}-{stamp}.json"
+            )
+            pixel_artifact_text = json.dumps(measurements_data, indent=2, sort_keys=True) + "\n"
+            pixel_artifact_path.write_text(pixel_artifact_text, encoding="utf-8")
+            pixel_artifact_sha = hashlib.sha256(pixel_artifact_text.encode("utf-8")).hexdigest()
+
+            artifact_ok, artifact_reason = verify_fbo_pixel_measurements_artifact(measurements_data)
+            if not artifact_ok:
+                if overall == "PASS":
+                    overall = "FAIL"
+                failures = (*failures, f"mandatory FBO pixel measurements artifact failed verification: {artifact_reason}")
+                if measurements_data["overall_result"] != overall:
+                    measurements_data["overall_result"] = overall
+                    pixel_artifact_text = json.dumps(measurements_data, indent=2, sort_keys=True) + "\n"
+                    pixel_artifact_path.write_text(pixel_artifact_text, encoding="utf-8")
+                    pixel_artifact_sha = hashlib.sha256(pixel_artifact_text.encode("utf-8")).hexdigest()
+
         elapsed = time.monotonic() - self.started_at
         lines = [
             "CineHDR Gate 2 Wayland GDK Publication Validation Report",
             "",
             f"Overall result: {overall}",
             "Mode: publication",
+            f"Session ID: {session_id}",
+            f"Process ID: {process_id}",
+            f"Flatpak instance ID: {flatpak_instance_id}",
+            f"Flatpak app commit: {flatpak_app_commit}",
+            f"Flatpak runtime commit: {flatpak_runtime_commit}",
             f"Elapsed: {elapsed:.1f} seconds",
             "Media path: omitted",
             "Saved-position/session/watch-later/playlist writes: disabled",
             "Validation HDR mode: auto (temporary; saved preference unchanged)",
+            "Surface submission test override: "
+            + ("enabled" if os.environ.get("CINEHDR_FORCE_SURFACE_SUBMISSION") == "1" else "disabled"),
+            "Override scope: test setup; not proof of Wayland submission or normal auto-mode behavior",
             f"Fixture profile: {self.config.fixture_profile}",
             f"Fixture revision: {self.config.fixture_revision}",
             f"Fixture SDR SHA-256: {self.config.fixture_sdr_sha256}",
@@ -2200,6 +3112,46 @@ class GpuValidationSession:
                 f"GDK surface GType: {texture.get('surface_gtype', 'unavailable')}",
                 f"GDK evidence error: {texture.get('error', 'none')}",
                 "",
+            ]
+        )
+        if getattr(self, "pixel_oracle", None) is not None or pixel_artifact_path is not None:
+            pix_status, pix_reasons = (
+                pixel_oracle_result if pixel_oracle_result else ("UNVERIFIED", ["no evaluation"])
+            )
+            oracle_obj = getattr(self, "pixel_oracle", None)
+            lines.extend(
+                [
+                    "[Paused transition FBO pixel validation]",
+                    f"FBO pixel oracle status: {pix_status}",
+                    f"FBO pixel artifact: {pixel_artifact_path.name if pixel_artifact_path else 'none'}",
+                    f"FBO pixel artifact SHA-256: {pixel_artifact_sha or 'none'}",
+                    f"FBO pixel artifact verified: {artifact_ok}",
+                    f"Tolerance (repeat SDR): {oracle_obj.tolerance:.3f} ({getattr(oracle_obj, 'tolerance_status', 'preliminary')})" if oracle_obj is not None else "Tolerance (repeat SDR): unavailable",
+                    f"Min HDR distinction: {oracle_obj.min_hdr_distinction:.3f}" if oracle_obj is not None else "Min HDR distinction: unavailable",
+                    f"Readback errors count: {len(getattr(oracle_obj, 'readback_errors', []))}" if oracle_obj is not None else "Readback errors count: 0",
+                    f"Captures count: {len(getattr(oracle_obj, 'captures', {}))}" if oracle_obj is not None else "Captures count: 0",
+                ]
+            )
+            for phase_name in ("initial_sdr", "hdr", "return_sdr"):
+                cap = oracle_obj.get_capture(phase_name) if oracle_obj is not None else None
+                if cap is not None:
+                    lines.append(
+                        f"  capture[{phase_name}]: epoch={cap.epoch} fbo={cap.fbo_format} "
+                        f"is_float={cap.is_float} dims={cap.width}x{cap.height} "
+                        f"samples_hash={cap.raw_samples_hash}"
+                    )
+                else:
+                    lines.append(f"  capture[{phase_name}]: MISSING")
+            if pix_reasons:
+                lines.append("Oracle evaluation findings:")
+                for r in pix_reasons:
+                    lines.append(f"- {r}")
+            if not artifact_ok and self.config.mode == "publication":
+                lines.append(f"Artifact verification findings: {artifact_reason}")
+            lines.append("")
+
+        lines.extend(
+            [
                 "[Failures]",
                 *(f"- {failure}" for failure in failures),
                 *( [f"- session: {failure_reason}"] if failure_reason and failure_reason not in failures else [] ),
@@ -2207,11 +3159,10 @@ class GpuValidationSession:
                 "",
                 "[Scope]",
                 "PASS validates live GTK/GDK object publication in a Wayland client only.",
+                "The test override does not certify normal auto-mode behavior or Wayland submission.",
                 "It does not certify compositor image-description acceptance, display transformation, or color output.",
             ]
         )
-        self.config.report_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
         report_path = self.config.report_dir / (
             f"gate2-wayland-publication-{self.config.expected_backend}-{stamp}.txt"
         )
@@ -2222,6 +3173,10 @@ class GpuValidationSession:
         if self.finished:
             return
         self.finished = True
+        if hasattr(self.video_area, "_fbo_pixel_oracle_cb"):
+            self.video_area._fbo_pixel_oracle_cb = None
+        if hasattr(self.video_area, "_fbo_pixel_oracle_error_cb"):
+            self.video_area._fbo_pixel_oracle_error_cb = None
         for source_id in (
             self.ready_timer_id,
             self.sample_timer_id,

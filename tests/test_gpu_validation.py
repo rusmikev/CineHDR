@@ -12,6 +12,60 @@ import types
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
+import shutil
+import atexit
+
+temp_schema_dir = None
+try:
+    temp_schema_dir = tempfile.mkdtemp()
+    schema_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data"))
+    shutil.copy(
+        os.path.join(schema_src, "io.github.rusmikev.CineHDR.gschema.xml"),
+        os.path.join(temp_schema_dir, "io.github.rusmikev.CineHDR.gschema.xml"),
+    )
+    subprocess.run(["glib-compile-schemas", temp_schema_dir], check=True)
+    os.environ["GSETTINGS_SCHEMA_DIR"] = temp_schema_dir
+except Exception:
+    os.environ["GSETTINGS_SCHEMA_DIR"] = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../data")
+    )
+    if temp_schema_dir:
+        try:
+            shutil.rmtree(temp_schema_dir)
+        except Exception:
+            pass
+        temp_schema_dir = None
+
+os.environ["GSETTINGS_BACKEND"] = "memory"
+
+
+def cleanup_temp_schemas():
+    if temp_schema_dir:
+        try:
+            shutil.rmtree(temp_schema_dir)
+        except Exception:
+            pass
+
+
+atexit.register(cleanup_temp_schemas)
+
+try:
+    from gi.repository import Gio
+    _candidates = [
+        os.environ.get("CINEHDR_GRESOURCE"),
+        os.path.join(os.path.dirname(__file__), "..", "_flatpak_build", "src", "cinehdr.gresource"),
+        os.path.join(os.path.dirname(__file__), "..", "build", "src", "cinehdr.gresource"),
+        os.path.join(os.path.dirname(__file__), "..", "_build", "src", "cinehdr.gresource"),
+        os.path.join(os.path.dirname(__file__), "..", "src", "cinehdr.gresource"),
+        "/app/share/cinehdr/cinehdr.gresource",
+    ]
+    for _p in _candidates:
+        if _p and os.path.exists(_p):
+            _res = Gio.Resource.load(_p)
+            Gio.resources_register(_res)
+            break
+except Exception:
+    pass
 
 from src.gpu_validation import (
     GpuValidationSession,
@@ -20,8 +74,11 @@ from src.gpu_validation import (
     PUBLICATION_FIXTURE_REVISION,
     PUBLICATION_HDR_SHA256,
     PUBLICATION_LIBMPV_PREFIX_SUFFIX,
+    PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS,
     PUBLICATION_MPV_VERSION,
     PUBLICATION_SDR_SHA256,
+    FLATPAK_LIBMPV_DIR,
+    HOST_LIBMPV_DIR,
     SETTLING_COOLDOWN_SECONDS,
     SETTLING_REVISION,
     SETTLING_SCHEMA,
@@ -30,6 +87,8 @@ from src.gpu_validation import (
     evaluate_publication_validation,
     evaluate_resource_settling_validation,
     evaluate_validation,
+    expected_scaled_texture_dimensions,
+    is_verified_flatpak_container,
     position_sample_is_stable,
     prepare_validation_player,
     publication_expected_api,
@@ -41,6 +100,13 @@ from src.gpu_validation import (
     validation_config_from_env,
     validation_expected_playlist_count,
     validation_steps,
+    CANONICAL_PATCH_NAMES,
+    DEFAULT_MIN_HDR_DISTINCTION,
+    DEFAULT_SDR_REPEAT_TOLERANCE,
+    FboPixelCapture,
+    PausedTransitionPixelOracle,
+    compute_patch_centers,
+    compute_samples_hash,
 )
 from src.hdr_controller import is_tone_mapping_active
 
@@ -51,6 +117,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def publication_environment(**overrides):
     environment = {
         "CINEHDR_GPU_VALIDATION": "publication",
+        "CINEHDR_FORCE_SURFACE_SUBMISSION": "1",
         "CINEHDR_PUBLICATION_EXPECTED_BACKEND": "gpu-next",
         "CINEHDR_PUBLICATION_FIXTURE_PROFILE": PUBLICATION_FIXTURE_PROFILE,
         "CINEHDR_PUBLICATION_FIXTURE_REVISION": PUBLICATION_FIXTURE_REVISION,
@@ -67,9 +134,13 @@ def settling_environment(**overrides):
     return environment
 
 
-def pinned_publication_runtime():
+def pinned_publication_runtime(*, is_flatpak: bool | None = None):
+    in_container = (
+        is_flatpak if is_flatpak is not None else is_verified_flatpak_container()
+    )
+    base = FLATPAK_LIBMPV_DIR if in_container else HOST_LIBMPV_DIR
     return {
-        "libmpv_path": f"/work{PUBLICATION_LIBMPV_PREFIX_SUFFIX}libmpv.so.2.5.0",
+        "libmpv_path": str((base / "libmpv.so.2.5.0").resolve()),
         "mpv_version": PUBLICATION_MPV_VERSION,
         "libplacebo_version": "v7.360.1",
         "ffmpeg_version": PUBLICATION_FFMPEG_VERSION,
@@ -211,6 +282,19 @@ class ValidationConfigTests(unittest.TestCase):
         self.assertEqual(config.fixture_revision, PUBLICATION_FIXTURE_REVISION)
         self.assertEqual(config.fixture_hdr_sha256, PUBLICATION_HDR_SHA256)
         self.assertEqual(config.fixture_sdr_sha256, PUBLICATION_SDR_SHA256)
+
+    def test_publication_requires_exact_isolated_surface_override(self):
+        for value in (None, "0", "true"):
+            environment = publication_environment()
+            if value is None:
+                environment.pop("CINEHDR_FORCE_SURFACE_SUBMISSION")
+            else:
+                environment["CINEHDR_FORCE_SURFACE_SUBMISSION"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "CINEHDR_FORCE_SURFACE_SUBMISSION=1"
+            ):
+                validation_config_from_env(environment)
+        self.assertEqual(validation_config_from_env(publication_environment()).mode, "publication")
 
     def test_publication_rejects_missing_backend_or_fixture_hash(self):
         missing_backend = publication_environment()
@@ -765,6 +849,177 @@ class PublicationEvidenceTests(unittest.TestCase):
             mismatched = publication_texture_evidence(area)
         self.assertFalse(mismatched["dimensions_match"])
 
+    def test_expected_scaled_texture_dimensions_formula(self):
+        # 1. Fractional scaling (e.g. 125% scale on Wayland: 1120x630 * 1.25 -> 1400x787.5 -> 1400x788)
+        area_frac = SimpleNamespace(
+            get_width=lambda: 1120,
+            get_height=lambda: 630,
+            props=SimpleNamespace(scale_factor=2),
+            _cached_scale=1.25,
+            _cached_max_width=0,
+            _cached_max_height=0,
+        )
+        self.assertEqual(expected_scaled_texture_dimensions(area_frac), (1400, 788))
+
+        # 2. Integer scaling (scale_factor=2 without _cached_scale)
+        area_int = SimpleNamespace(
+            get_width=lambda: 640,
+            get_height=lambda: 360,
+            props=SimpleNamespace(scale_factor=2),
+        )
+        self.assertEqual(expected_scaled_texture_dimensions(area_int), (1280, 720))
+
+        # 3. Monitor geometry maximum constraints (clamping)
+        area_clamped = SimpleNamespace(
+            get_width=lambda: 1120,
+            get_height=lambda: 630,
+            _cached_scale=1.25,
+            _cached_max_width=1200,
+            _cached_max_height=700,
+        )
+        self.assertEqual(expected_scaled_texture_dimensions(area_clamped), (1200, 700))
+
+        # 4. Minimum 1x1 clamp on 0 dimensions
+        area_zero = SimpleNamespace(
+            get_width=lambda: 0,
+            get_height=lambda: 0,
+            _cached_scale=1.25,
+        )
+        self.assertEqual(expected_scaled_texture_dimensions(area_zero), (1, 1))
+
+        # 5. Default 1.0 when neither _cached_scale nor props.scale_factor is present
+        area_plain = SimpleNamespace(
+            get_width=lambda: 800,
+            get_height=lambda: 600,
+        )
+        self.assertEqual(expected_scaled_texture_dimensions(area_plain), (800, 600))
+
+    def test_publication_texture_evidence_fractional_scale_matching_run4(self):
+        class FakeTexture:
+            __gtype__ = SimpleNamespace(name="GdkGLTexture")
+
+            def __init__(self, w=1400, h=788):
+                self._w = w
+                self._h = h
+
+            def get_width(self):
+                return self._w
+
+            def get_height(self):
+                return self._h
+
+            def get_format(self):
+                return "R8G8B8A8"
+
+            def get_color_state(self):
+                return SimpleNamespace(equal=lambda cs: True)
+
+        fake_gdk = SimpleNamespace(
+            GLTexture=FakeTexture,
+            MemoryFormat=SimpleNamespace(R8G8B8A8="R8G8B8A8", R16G16B16A16_FLOAT="R16G16B16A16_FLOAT"),
+            ColorState=SimpleNamespace(get_srgb=lambda: "srgb", get_rec2100_pq=lambda: "rec2100_pq"),
+        )
+        display = SimpleNamespace(__gtype__=SimpleNamespace(name="GdkWaylandDisplay"))
+        surface = SimpleNamespace(
+            __gtype__=SimpleNamespace(name="GdkWaylandToplevel"),
+            get_display=lambda: display,
+        )
+
+        # Positive control: Run 4 allocation 1120x630 @ 1.25 scale produces exact 1400x788 texture
+        area = SimpleNamespace(
+            current_texture=FakeTexture(1400, 788),
+            get_width=lambda: 1120,
+            get_height=lambda: 630,
+            props=SimpleNamespace(scale_factor=2),
+            _cached_scale=1.25,
+            _cached_max_width=0,
+            _cached_max_height=0,
+            get_native=lambda: SimpleNamespace(get_surface=lambda: surface),
+        )
+        with patch("src.gpu_validation.Gdk", fake_gdk):
+            ev = publication_texture_evidence(area)
+        self.assertTrue(ev["available"])
+        self.assertEqual(ev["width"], 1400)
+        self.assertEqual(ev["height"], 788)
+        self.assertEqual(ev["expected_width"], 1400)
+        self.assertEqual(ev["expected_height"], 788)
+        self.assertTrue(ev["dimensions_match"])
+
+        # Negative control 1: 1-pixel width mismatch (1401x788)
+        area.current_texture = FakeTexture(1401, 788)
+        with patch("src.gpu_validation.Gdk", fake_gdk):
+            ev_bad_w = publication_texture_evidence(area)
+        self.assertFalse(ev_bad_w["dimensions_match"])
+
+        # Negative control 2: 1-pixel height rounding mismatch (1400x787)
+        area.current_texture = FakeTexture(1400, 787)
+        with patch("src.gpu_validation.Gdk", fake_gdk):
+            ev_bad_h = publication_texture_evidence(area)
+        self.assertFalse(ev_bad_h["dimensions_match"])
+
+        # Negative control 3: Old unscaled integer multiplication assumption (2240x1260)
+        area.current_texture = FakeTexture(2240, 1260)
+        with patch("src.gpu_validation.Gdk", fake_gdk):
+            ev_old_bug = publication_texture_evidence(area)
+        self.assertFalse(ev_old_bug["dimensions_match"])
+
+        # Negative control 4: Texture exceeding clamped max geometry
+        area_clamp = SimpleNamespace(
+            current_texture=FakeTexture(1400, 788),
+            get_width=lambda: 1120,
+            get_height=lambda: 630,
+            props=SimpleNamespace(scale_factor=2),
+            _cached_scale=1.25,
+            _cached_max_width=1200,
+            _cached_max_height=700,
+            get_native=lambda: SimpleNamespace(get_surface=lambda: surface),
+        )
+        with patch("src.gpu_validation.Gdk", fake_gdk):
+            ev_clamp = publication_texture_evidence(area_clamp)
+        self.assertFalse(ev_clamp["dimensions_match"])
+        self.assertEqual(ev_clamp["expected_width"], 1200)
+        self.assertEqual(ev_clamp["expected_height"], 700)
+
+    def test_publication_libplacebo_version_strict_formats(self):
+        def make_runtime(placebo_val):
+            rt = dict(pinned_publication_runtime())
+            rt["libplacebo_version"] = placebo_val
+            return rt
+
+        # Positive controls: All accepted exact formats pass without libplacebo error
+        for accepted in PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS:
+            with self.subTest(accepted=accepted):
+                errs = publication_runtime_errors(make_runtime(accepted))
+                self.assertEqual(errs, (), f"Unexpected rejection of accepted format: {accepted}")
+
+        # Specifically verify the exact string seen in Run 4 Flatpak container
+        run4_container_version = "v7.360.1 (v7.360.1)"
+        errs_run4 = publication_runtime_errors(make_runtime(run4_container_version))
+        self.assertEqual(errs_run4, ())
+
+        # Negative controls: Variations and invalid formats must be rejected without free substring search
+        rejected_versions = (
+            "v7.360.1-dirty",
+            "v7.360.1-1-gabcdef",
+            "v7.359.0",
+            "v7.361.0",
+            "v7.360.19",
+            "7.360.19",
+            "libplacebo v7.360.1",
+            "v7.360.1 (v7.359.0)",
+            "v7.360.1 (v7.360.2)",
+            "",
+            None,
+            123,
+        )
+        for rejected in rejected_versions:
+            with self.subTest(rejected=rejected):
+                errs = publication_runtime_errors(make_runtime(rejected))
+                self.assertTrue(
+                    any("libplacebo runtime identity was not 7.360.1" in e for e in errs),
+                    f"Expected rejection of invalid libplacebo version format: {rejected!r}",
+                )
+
     def test_missing_actual_texture_getter_is_unavailable_not_intended_state(self):
         class FakeTexture:
             __gtype__ = SimpleNamespace(name="GdkGLTexture")
@@ -825,19 +1080,176 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertTrue(any("vaapi-copy" in error for error in errors))
 
     def test_runtime_identity_is_strict_only_for_publication(self):
-        self.assertEqual(publication_runtime_errors(pinned_publication_runtime()), ())
-        soname_link = pinned_publication_runtime()
-        soname_link["libmpv_path"] = (
-            f"/work{PUBLICATION_LIBMPV_PREFIX_SUFFIX}libmpv.so.2"
+        self.assertEqual(
+            publication_runtime_errors(
+                pinned_publication_runtime(is_flatpak=False), is_flatpak_context=False
+            ),
+            (),
         )
-        self.assertEqual(publication_runtime_errors(soname_link), ())
-        bad = pinned_publication_runtime()
+        soname_link = pinned_publication_runtime(is_flatpak=False)
+        soname_link["libmpv_path"] = str((HOST_LIBMPV_DIR / "libmpv.so.2").resolve())
+        self.assertEqual(publication_runtime_errors(soname_link, is_flatpak_context=False), ())
+        loose_suffix = pinned_publication_runtime(is_flatpak=False)
+        loose_suffix["libmpv_path"] = f"/work{PUBLICATION_LIBMPV_PREFIX_SUFFIX}libmpv.so.2"
+        errors_loose = publication_runtime_errors(loose_suffix, is_flatpak_context=False)
+        self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_loose))
+        bad = pinned_publication_runtime(is_flatpak=False)
         bad["libmpv_path"] = "/usr/lib/libmpv.so.2"
         bad["mpv_version"] = "mpv v0.41.0"
         bad["ffmpeg_version"] = "8.1.1"
-        errors = publication_runtime_errors(bad)
+        errors = publication_runtime_errors(bad, is_flatpak_context=False)
         self.assertEqual(len(errors), 3)
         self.assertTrue(any("pinned GPU Next prefix" in error for error in errors))
+
+    def test_flatpak_candidate_libmpv_path_and_foreign_substitution(self):
+        """Candidate in Flatpak container loads /app/lib/libmpv.so.2.5.0, verified canonically."""
+        # 1. Candidate in verified Flatpak container: /app/lib/libmpv.so.2.5.0 -> ACCEPTED
+        flatpak_runtime = pinned_publication_runtime()
+        flatpak_runtime["libmpv_path"] = "/app/lib/libmpv.so.2.5.0"
+        errors = publication_runtime_errors(flatpak_runtime, is_flatpak_context=True)
+        self.assertEqual(errors, ())
+
+        # Also with soname symlink /app/lib/libmpv.so.2 -> ACCEPTED
+        flatpak_symlink = pinned_publication_runtime()
+        flatpak_symlink["libmpv_path"] = "/app/lib/libmpv.so.2"
+        errors_sym = publication_runtime_errors(flatpak_symlink, is_flatpak_context=True)
+        self.assertEqual(errors_sym, ())
+
+        # 2. Outside container context (on host): /app/lib/ is strictly REJECTED
+        errors_on_host = publication_runtime_errors(flatpak_runtime, is_flatpak_context=False)
+        self.assertEqual(len(errors_on_host), 1)
+        self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_on_host[0])
+
+        # 3. Foreign library substitution: /usr/lib/libmpv.so.2 in container -> REJECTED
+        foreign_usr = pinned_publication_runtime()
+        foreign_usr["libmpv_path"] = "/usr/lib/libmpv.so.2"
+        errors_usr = publication_runtime_errors(foreign_usr, is_flatpak_context=True)
+        self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_usr)
+
+        # 4. Foreign library substitution: arbitrary /tmp in container -> REJECTED
+        foreign_tmp = pinned_publication_runtime()
+        foreign_tmp["libmpv_path"] = "/tmp/malicious/libmpv.so.2"
+        errors_tmp = publication_runtime_errors(foreign_tmp, is_flatpak_context=True)
+        self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_tmp)
+
+        # 6. Path normalization: redundant slashes and relative segments within /app/lib/
+        norm_slashes = pinned_publication_runtime()
+        norm_slashes["libmpv_path"] = "/app//lib///libmpv.so.2.5.0"
+        self.assertEqual(publication_runtime_errors(norm_slashes, is_flatpak_context=True), ())
+
+        norm_dots = pinned_publication_runtime()
+        norm_dots["libmpv_path"] = "/app/lib/../lib/libmpv.so.2"
+        self.assertEqual(publication_runtime_errors(norm_dots, is_flatpak_context=True), ())
+
+        norm_spaces = pinned_publication_runtime()
+        norm_spaces["libmpv_path"] = "  /app/lib/libmpv.so.2.5.0  \n"
+        self.assertEqual(publication_runtime_errors(norm_spaces, is_flatpak_context=True), ())
+
+        # 7. Path traversal escaping /app/lib/ is strictly rejected
+        escaping_dots = pinned_publication_runtime()
+        escaping_dots["libmpv_path"] = "/app/lib/../../usr/lib/libmpv.so.2"
+        errors_escape = publication_runtime_errors(escaping_dots, is_flatpak_context=True)
+        self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_escape))
+
+        subpath = pinned_publication_runtime()
+        subpath["libmpv_path"] = "/app/lib/subdir/libmpv.so.2"
+        errors_subpath = publication_runtime_errors(subpath, is_flatpak_context=True)
+        self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_subpath))
+
+        # 8. Real filesystem symlink resolution with custom flatpak_prefix
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            mock_lib = Path(td) / "app" / "lib"
+            mock_lib.mkdir(parents=True)
+            real_lib = mock_lib / "libmpv.so.2.5.0"
+            real_lib.write_bytes(b"mock_mpv_binary")
+            symlink_lib = mock_lib / "libmpv.so.2"
+            symlink_lib.symlink_to("libmpv.so.2.5.0")
+
+            # Symlink resolves to real file within flatpak_prefix -> accepted
+            rt_sym = pinned_publication_runtime()
+            rt_sym["libmpv_path"] = str(symlink_lib)
+            self.assertEqual(publication_runtime_errors(rt_sym, is_flatpak_context=True, flatpak_prefix=mock_lib), ())
+
+            # Canonical target within flatpak_prefix -> accepted
+            rt_real = pinned_publication_runtime()
+            rt_real["libmpv_path"] = str(real_lib)
+            self.assertEqual(publication_runtime_errors(rt_real, is_flatpak_context=True, flatpak_prefix=mock_lib), ())
+
+            # Symlink pointing outside flatpak_prefix -> rejected
+            outside_target = Path(td) / "outside" / "libmpv.so.2.5.0"
+            outside_target.parent.mkdir()
+            outside_target.write_bytes(b"outside_binary")
+            bad_sym = mock_lib / "bad_symlink.so"
+            bad_sym.symlink_to(outside_target)
+            rt_bad_sym = pinned_publication_runtime()
+            rt_bad_sym["libmpv_path"] = str(bad_sym)
+            errors_bad_sym = publication_runtime_errors(rt_bad_sym, is_flatpak_context=True, flatpak_prefix=mock_lib)
+            self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_bad_sym))
+
+    def test_is_verified_flatpak_container_facts(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            # 1. Non-existent file -> False
+            self.assertFalse(is_verified_flatpak_container(tdp / "nonexistent"))
+
+            # 2. Valid keyfile with [Application] name = io.github.rusmikev.CineHDR, app dir, and ro mount -> True
+            app_dir = tdp / "app"
+            app_dir.mkdir()
+            info_file = tdp / "flatpak-info"
+            info_file.write_text("[Application]\nname=io.github.rusmikev.CineHDR\n", encoding="utf-8")
+            mounts_ro = tdp / "mounts-ro"
+            mounts_ro.write_text(f"rofiles-fuse {app_dir} fuse.rofiles-fuse ro,nosuid,nodev,relatime 0 0\n", encoding="utf-8")
+            self.assertTrue(is_verified_flatpak_container(info_file, app_dir=app_dir, mounts_path=mounts_ro))
+
+            # 3. Read-write (rw) mount -> False (MANDATORY strict read-only requirement)
+            mounts_rw = tdp / "mounts-rw"
+            mounts_rw.write_text(f"/dev/sda1 {app_dir} ext4 rw,relatime 0 0\n", encoding="utf-8")
+            self.assertFalse(is_verified_flatpak_container(info_file, app_dir=app_dir, mounts_path=mounts_rw))
+
+            # 4. App directory not in mounts table -> False
+            mounts_other = tdp / "mounts-other"
+            mounts_other.write_text("tmpfs /tmp tmpfs rw 0 0\n", encoding="utf-8")
+            self.assertFalse(is_verified_flatpak_container(info_file, app_dir=app_dir, mounts_path=mounts_other))
+
+            # 5. Missing mounts file -> False
+            self.assertFalse(is_verified_flatpak_container(info_file, app_dir=app_dir, mounts_path=tdp / "no-mounts"))
+
+            # 6. Wrong app name -> False
+            info_wrong = tdp / "flatpak-info-wrong"
+            info_wrong.write_text("[Application]\nname=org.other.App\n", encoding="utf-8")
+            self.assertFalse(is_verified_flatpak_container(info_wrong, app_dir=app_dir, mounts_path=mounts_ro))
+
+            # 7. Missing Application section -> False
+            info_nosec = tdp / "flatpak-info-nosec"
+            info_nosec.write_text("[Instance]\ninstance-id=123\n", encoding="utf-8")
+            self.assertFalse(is_verified_flatpak_container(info_nosec, app_dir=app_dir, mounts_path=mounts_ro))
+
+            # 8. Missing app directory -> False
+            self.assertFalse(is_verified_flatpak_container(info_file, app_dir=tdp / "no-such-app", mounts_path=mounts_ro))
+
+    def test_publication_report_discloses_actual_override_scope(self):
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        with tempfile.TemporaryDirectory() as report_dir:
+            session.config = validation_config_from_env(
+                publication_environment(CINEHDR_GPU_VALIDATION_REPORT_DIR=report_dir)
+            )
+            session.window = SimpleNamespace(app=SimpleNamespace(_gpu_validation_setup_failures=()))
+            session.step_results = []
+            session.started_at = time.monotonic()
+            session._metrics_snapshot = lambda: publication_metrics("hdr")
+            session._renderer_facts = lambda: ("opengl-next", "active")
+            session._expected_active_api = lambda: "opengl-next"
+            with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "1"}):
+                report_path, _ = session._write_publication_report("offline probe")
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("Surface submission test override: enabled", report)
+            self.assertIn(
+                "Override scope: test setup; not proof of Wayland submission or normal auto-mode behavior",
+                report,
+            )
 
     def test_publication_evaluation_rejects_backend_fallback_and_runtime_drift(self):
         final = publication_metrics("hdr")
@@ -1229,55 +1641,47 @@ class ValidationIntegrationTests(unittest.TestCase):
         launcher = launcher_path.read_text(encoding="utf-8")
         self.assertTrue(launcher_path.stat().st_mode & 0o111)
         self.assertIn("set -euo pipefail", launcher)
-        self.assertIn('if [[ $# -eq 1 && "$1" == "--protocol-trace" ]]', launcher)
-        self.assertIn('echo "Usage: $0 [--protocol-trace]"', launcher)
-        self.assertIn('mktemp -d /tmp/cinehdr-wayland-publication-fixtures.XXXXXX', launcher)
+        self.assertIn('app_id="io.github.rusmikev.CineHDR"', launcher)
+        self.assertIn(
+            'candidate_v4_commit="8ed86c0b54694b75d1aaa9be75956d1d3a9d075901d90695e4e0d3d144970813"',
+            launcher,
+        )
+        self.assertIn('expected_app_commit="${EXPECTED_APP_COMMIT:-}"', launcher)
+        self.assertIn(
+            'expected_runtime_commit="${EXPECTED_RUNTIME_COMMIT:-0bd5091046708e64bc882e8349877cfbae713f6a1e2d0487a5f10af820a2d792}"',
+            launcher,
+        )
         self.assertIn('fixture_profile="hevc-main10-yuv420p10-lossless"', launcher)
         self.assertIn('fixture_revision="hevc-main10-yuv420p10-mp4-v2"', launcher)
         self.assertIn(PUBLICATION_HDR_SHA256, launcher)
         self.assertIn(PUBLICATION_SDR_SHA256, launcher)
-        self.assertIn('tests/generate_patterns.py', launcher)
-        self.assertIn('--fixture-profile "${fixture_profile}"', launcher)
-        self.assertIn('fixture.get("metadata_path", "")', launcher)
-        self.assertIn('media.suffix != ".mp4"', launcher)
-        self.assertIn('hashlib.sha256(media.read_bytes()).hexdigest()', launcher)
-        self.assertIn('sha256sum -- "${sdr_media}"', launcher)
-        self.assertIn('sha256sum -- "${hdr_media}"', launcher)
-        self.assertIn('mapfile -t fixture_paths', launcher)
-        self.assertIn('"CINEHDR_RENDER_BACKEND=${backend}"', launcher)
-        self.assertIn('"CINEHDR_GPU_VALIDATION=publication"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_EXPECTED_BACKEND=${backend}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_FIXTURE_PROFILE=${fixture_profile}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_FIXTURE_REVISION=${fixture_revision}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_HDR_SHA256=${hdr_sha256}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_SDR_SHA256=${sdr_sha256}"', launcher)
-        self.assertIn('python3 "${script_dir}/run_dev.py" "${sdr_media}" "${hdr_media}"', launcher)
+        self.assertIn("check_flatpak_preflight", launcher)
+        self.assertIn("cleanup_instance", launcher)
+        self.assertIn("cleanup_handler", launcher)
+        self.assertIn("cleanup_status.json", launcher)
+        self.assertIn("user_instances", launcher)
+        self.assertIn("--instance-id-fd=3", launcher)
+        self.assertIn(".flatpak/${test_instance_id}/info", launcher)
+        self.assertIn("CINEHDR_RENDER_BACKEND=${backend}", launcher)
+        self.assertIn("CINEHDR_GPU_VALIDATION=publication", launcher)
+        self.assertIn('        --env="CINEHDR_FORCE_SURFACE_SUBMISSION=1"', launcher)
+        self.assertIn('if "Surface submission test override: enabled" not in report_lines:', launcher)
+        self.assertIn("CINEHDR_PUBLICATION_EXPECTED_BACKEND=${backend}", launcher)
+        self.assertIn("CINEHDR_PUBLICATION_FIXTURE_PROFILE=${fixture_profile}", launcher)
+        self.assertIn("CINEHDR_PUBLICATION_FIXTURE_REVISION=${fixture_revision}", launcher)
+        self.assertIn("CINEHDR_PUBLICATION_HDR_SHA256=${hdr_sha256}", launcher)
+        self.assertIn("CINEHDR_PUBLICATION_SDR_SHA256=${sdr_sha256}", launcher)
         self.assertLess(launcher.index("run_backend legacy"), launcher.index("run_backend gpu-next"))
-        self.assertIn('tee "${log_path}"', launcher)
-        self.assertIn('application_status="${PIPESTATUS[0]}"', launcher)
         self.assertIn('gate2-wayland-publication-${backend}-*.txt', launcher)
         self.assertIn('-newer "${marker}"', launcher)
-        self.assertIn('[[ ${#reports[@]} -ne 1 ]]', launcher)
-        self.assertIn('grep -Fxq "Overall result: PASS"', launcher)
-        self.assertIn('process_env+=("WAYLAND_DEBUG=client")', launcher)
-        self.assertIn('process_env+=("GDK_DEBUG=color-mgmt")', launcher)
-        self.assertIn('process_env+=("GDK_DEBUG=${GDK_DEBUG}:color-mgmt")', launcher)
-        self.assertIn('case ":${GDK_DEBUG:-}:" in', launcher)
-        self.assertNotIn('export GDK_DEBUG', launcher)
-        self.assertIn('if [[ "${protocol_trace}" == true ]]; then', launcher)
-        self.assertIn('tests/parse_wayland_color_trace.py', launcher)
-        self.assertIn('--backend "${backend}"', launcher)
-        self.assertIn('gate2-wayland-color-management-${backend}-${run_stamp}.json', launcher)
-        self.assertIn('gate2-wayland-color-management-${backend}-*.json', launcher)
-        self.assertIn('protocol_reports[@]} -ne 1', launcher)
-        self.assertIn('"status") != "PASS"', launcher)
-        self.assertIn('evidence.get("backend") != backend', launcher)
-        trace_condition = launcher.index('if [[ "${protocol_trace}" == true ]]; then')
-        parser = launcher.index('tests/parse_wayland_color_trace.py')
-        self.assertLess(trace_condition, parser)
-        self.assertLess(trace_condition, launcher.index('GDK_DEBUG=color-mgmt'))
-        self.assertEqual(launcher.count('GDK_DEBUG=color-mgmt'), 1)
-        self.assertNotIn("flatpak", launcher.lower())
+        self.assertIn('Overall result: PASS', launcher)
+        self.assertIn("WAYLAND_DEBUG=client", launcher)
+        self.assertIn("GDK_DEBUG=color-mgmt", launcher)
+        self.assertIn("from tests.parse_wayland_color_trace import create_evidence_report", launcher)
+        self.assertIn('create_evidence_report(trace_path, report_path, backend, oracle="primary_composite")', launcher)
+        self.assertIn("write_gate2w_summary", launcher)
+        self.assertIn('gate2w_summary.json', launcher)
+        self.assertIn('gate2-wayland-color-management-{backend}.json', launcher)
         self.assertNotIn("/dev/dri", launcher)
         self.assertNotIn("--device", launcher)
         self.assertNotIn("DRI_PRIME=", launcher)
@@ -1839,6 +2243,970 @@ class FlatpakLauncherBootstrapExecutionTests(unittest.TestCase):
             finally:
                 validation_logger.removeHandler(capture_handler)
                 validation_logger.setLevel(old_level)
+
+
+class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
+    """Verifies the complete pipeline from publication mode start, FBO capture wiring,
+    strict pixel oracle evaluation, to the saved report artifact."""
+
+    def _canonical_samples(self, is_hdr: bool, jitter: float = 0.0) -> dict[str, tuple[float, ...]]:
+        ref = 0.5807 if is_hdr else 1.0000
+        val = max(0.0, min(1.0, ref + jitter))
+        return {
+            "black": (0.0, 0.0, 0.0, 1.0),
+            "near_black": (0.05, 0.05, 0.05, 1.0),
+            "reference_white": (val, val, val, 1.0),
+            "peak_white": (val, val, val, 1.0),
+            "red_primary": (val, 0.0, 0.0, 1.0),
+            "green_primary": (0.0, val, 0.0, 1.0),
+            "blue_primary": (0.0, 0.0, val, 1.0),
+            "neutral_gradient": (val * 0.5, val * 0.5, val * 0.5, 1.0),
+        }
+
+    def test_fbo_patch_centers_match_live_fixture_row_orientation(self):
+        # Run 7 v12 measured red/green/blue at high GL y despite those
+        # patches occupying the bottom image row in the decoded fixture.
+        centers = compute_patch_centers(320, 180)
+        self.assertEqual(centers["black"], (40, 45))
+        self.assertEqual(centers["near_black"], (120, 45))
+        self.assertEqual(centers["reference_white"], (200, 45))
+        self.assertEqual(centers["peak_white"], (280, 45))
+        self.assertEqual(centers["red_primary"], (40, 135))
+        self.assertEqual(centers["green_primary"], (120, 135))
+        self.assertEqual(centers["blue_primary"], (200, 135))
+        self.assertEqual(centers["neutral_gradient"], (280, 135))
+
+    def test_initial_paused_publication_requests_and_requires_fresh_frame(self):
+        """Readiness can be reached by a frame rendered before step zero starts."""
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.config = SimpleNamespace(mode="publication")
+        session.step_index = 0
+        session._publication_context_generation = None
+        session.player = MagicMock()
+        session.player.get_property.return_value = None
+        session.window = SimpleNamespace(get_width=lambda: 1400, get_height=lambda: 788)
+        session.video_area = SimpleNamespace(
+            render_frame_generation=3,
+            _schedule_render=MagicMock(),
+        )
+        step = ValidationStep("actual initial SDR publication", "publication-state", 6, (0, "sdr"))
+        session.steps = [step]
+        session._apply_step(step)
+        self.assertEqual(session._pending_render_frame_generation, 3)
+        session.video_area._schedule_render.assert_called_once_with(force_redraw=True)
+
+        session._renderer_facts = lambda: ("opengl", "active")
+        session._expected_active_api = lambda: "opengl"
+        with patch("src.gpu_validation.publication_state_errors", return_value=()):
+            status, reason = session._verify_step(step, {"render_frame_generation": 3})
+            self.assertEqual((status, reason), ("FAIL", "no newer frame was published for the initial SDR capture"))
+            status, _ = session._verify_step(step, {"render_frame_generation": 4})
+            self.assertEqual(status, "PASS")
+
+        from src.hdr_controller import CommittedOutputState
+        session.config.fixture_sdr_sha256 = "sdr_hash_123"
+        session.pixel_oracle = PausedTransitionPixelOracle()
+        session.video_area.hdr_controller = SimpleNamespace(
+            committed_output_state=CommittedOutputState(
+                epoch=1, target_trc="auto", target_prim="auto", target_peak="auto",
+                fbo_format="GL_RGBA8", gdk_color_state="srgb", is_float=False, is_hdr=False,
+            ),
+            is_publication_pending=False,
+            is_publication_suppressed=False,
+        )
+        session.video_area.current_texture = object()
+        properties = {"playlist-pos": 0, "path": "/path/to/sdr.mp4"}
+        session.player._get_property.side_effect = properties.get
+        session.player.get_property.side_effect = properties.get
+        sample_args = dict(
+            slot=SimpleNamespace(slot_id=101), epoch=1, fbo_format="GL_RGBA8",
+            is_float=False, width=1400, height=788,
+            patch_samples=self._canonical_samples(is_hdr=False),
+        )
+        session._on_fbo_pixel_capture(frame_generation=3, **sample_args)
+        self.assertIsNone(session.pixel_oracle.get_capture("initial_sdr"))
+        session.video_area.render_frame_generation = 4
+        session._on_fbo_pixel_capture(frame_generation=4, **sample_args)
+        self.assertIsNotNone(session.pixel_oracle.get_capture("initial_sdr"))
+
+        session.pixel_oracle = PausedTransitionPixelOracle()
+        session._on_fbo_pixel_capture(
+            frame_generation=4, **{**sample_args, "slot": SimpleNamespace(index=0)}
+        )
+        self.assertEqual(session.pixel_oracle.get_capture("initial_sdr").slot_id, 0)
+        session.pixel_oracle = PausedTransitionPixelOracle()
+        session._on_fbo_pixel_capture(
+            frame_generation=4, **{**sample_args, "slot": SimpleNamespace()}
+        )
+        self.assertIsNone(session.pixel_oracle.get_capture("initial_sdr"))
+        self.assertIn("FBO slot identity is unavailable", session.pixel_oracle.readback_errors)
+
+    def test_publication_mode_wires_oracle_and_writes_artifact(self):
+        """End-to-end test: publication session wires _fbo_pixel_oracle_cb, pipes real
+        samples via FboPixelCapture, and produces saved artifact with pixel section."""
+        written_reports = {}
+
+        def mock_write_text(path_obj, content, *args, **kwargs):
+            key = path_obj.name if hasattr(path_obj, "name") else str(path_obj)
+            written_reports[key] = content
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.player = MagicMock()
+        session.player.pause = False
+        session.config = SimpleNamespace(
+            mode="publication",
+            expected_backend="gpu-next",
+            fixture_profile="hevc",
+            fixture_revision="rev1",
+            fixture_sdr_sha256="sdr_hash_123",
+            fixture_hdr_sha256="hdr_hash_456",
+            timeout_seconds=60,
+            report_dir=Path("/tmp/test_reports"),
+        )
+        session._renderer_facts = lambda: ("opengl-next", "active")
+        session._expected_active_api = lambda: "opengl-next"
+        session.started_at = time.monotonic()
+        session.finished = False
+        session.step_index = 0
+        session.steps = [
+            ValidationStep("actual initial SDR publication", "publication-state", 6, (0, "sdr")),
+            ValidationStep("switch SDR to HDR publication", "switch-media", 6, (1, "hdr")),
+            ValidationStep("switch HDR to SDR publication", "switch-media", 6, (0, "sdr")),
+            ValidationStep("switch SDR to HDR publication again", "switch-media", 6, (1, "hdr")),
+        ]
+        session.step_results = [
+            {"step": session.steps[0], "status": "PASS", "detail": "sdr ok", "expected_state": (0, "sdr"), "metric": {}},
+            {"step": session.steps[1], "status": "PASS", "detail": "hdr ok", "expected_state": (1, "hdr"), "metric": {}},
+            {"step": session.steps[2], "status": "PASS", "detail": "sdr ok", "expected_state": (0, "sdr"), "metric": {}},
+            {"step": session.steps[3], "status": "PASS", "detail": "hdr ok", "expected_state": (1, "hdr"), "metric": {}},
+        ]
+        session.samples = []
+        session.ready_timer_id = None
+        session.sample_timer_id = None
+        session.step_timer_id = None
+        session.lifecycle_timer_id = None
+        session.window = SimpleNamespace(
+            app=SimpleNamespace(_gpu_validation_setup_failures=()),
+            show_toast=lambda *a: None,
+            connect=lambda *a: 1,
+            close=lambda: None,
+        )
+        from src.hdr_controller import CommittedOutputState
+
+        player_props = {"playlist-pos": 0, "path": "/path/to/sdr.mp4"}
+        session.player._get_property = lambda name: player_props.get(name)
+        session.player.get_property = lambda name: player_props.get(name)
+
+        controller = SimpleNamespace(
+            committed_output_state=CommittedOutputState(
+                epoch=1,
+                target_trc="auto",
+                target_prim="auto",
+                target_peak="auto",
+                fbo_format="GL_RGBA8",
+                gdk_color_state="srgb",
+                is_float=False,
+                is_hdr=False,
+            ),
+            is_publication_pending=False,
+            is_publication_suppressed=False,
+        )
+        video_area = SimpleNamespace(
+            render_backend_active="opengl-next",
+            render_session_status="active",
+            render_target_format="GL_RGBA8",
+            render_color_state="srgb",
+            hdr_controller=controller,
+            _fbo_pixel_oracle_cb=None,
+            _fbo_pixel_oracle_error_cb=None,
+            fbo_pool=SimpleNamespace(dropped_frames=0, allocation_failures=0),
+            current_texture=MagicMock(),
+            render_frame_generation=1,
+        )
+        session.video_area = video_area
+
+        # Initialize session state for publication
+        session.pixel_oracle = PausedTransitionPixelOracle(
+            tolerance=DEFAULT_SDR_REPEAT_TOLERANCE,
+            min_hdr_distinction=DEFAULT_MIN_HDR_DISTINCTION,
+        )
+        video_area._fbo_pixel_oracle_cb = session._on_fbo_pixel_capture
+        video_area._fbo_pixel_oracle_error_cb = session._on_fbo_pixel_readback_error
+
+        self.assertTrue(callable(video_area._fbo_pixel_oracle_cb))
+        self.assertTrue(callable(video_area._fbo_pixel_oracle_error_cb))
+
+        # Deliver step 0: initial_sdr
+        sdr_samples1 = self._canonical_samples(is_hdr=False)
+        video_area._fbo_pixel_oracle_cb(
+            slot=SimpleNamespace(slot_id=101),
+            epoch=1,
+            frame_generation=1,
+            fbo_format="GL_RGBA8",
+            is_float=False,
+            width=1920,
+            height=1080,
+            patch_samples=sdr_samples1,
+        )
+
+        # Deliver step 1: hdr
+        session.step_index = 1
+        video_area.render_frame_generation = 2
+        player_props["playlist-pos"] = 1
+        player_props["path"] = "/path/to/hdr.mp4"
+        controller.committed_output_state = CommittedOutputState(
+            epoch=2,
+            target_trc="pq",
+            target_prim="bt.2020",
+            target_peak="1000",
+            fbo_format="GL_RGBA16F",
+            gdk_color_state="rec2100-pq",
+            is_float=True,
+            is_hdr=True,
+        )
+        hdr_samples = self._canonical_samples(is_hdr=True)
+        video_area._fbo_pixel_oracle_cb(
+            slot=SimpleNamespace(slot_id=102),
+            epoch=2,
+            frame_generation=2,
+            fbo_format="GL_RGBA16F",
+            is_float=True,
+            width=1920,
+            height=1080,
+            patch_samples=hdr_samples,
+        )
+
+        # Deliver step 2: return_sdr (repeat within tolerance: jitter=0.003 < 0.020)
+        session.step_index = 2
+        video_area.render_frame_generation = 3
+        player_props["playlist-pos"] = 0
+        player_props["path"] = "/path/to/sdr.mp4"
+        controller.committed_output_state = CommittedOutputState(
+            epoch=3,
+            target_trc="auto",
+            target_prim="auto",
+            target_peak="auto",
+            fbo_format="GL_RGBA8",
+            gdk_color_state="srgb",
+            is_float=False,
+            is_hdr=False,
+        )
+        sdr_samples2 = self._canonical_samples(is_hdr=False, jitter=0.003)
+        video_area._fbo_pixel_oracle_cb(
+            slot=SimpleNamespace(slot_id=103),
+            epoch=3,
+            frame_generation=3,
+            fbo_format="GL_RGBA8",
+            is_float=False,
+            width=1920,
+            height=1080,
+            patch_samples=sdr_samples2,
+        )
+
+        final_metric = publication_metrics("hdr")
+        session.step_results[-1]["metric"] = final_metric
+        session._metrics_snapshot = lambda: final_metric
+
+        with patch.object(Path, "write_text", autospec=True, side_effect=mock_write_text):
+            session._finish(None)
+
+        # Oracle evaluation must PASS
+        self.assertEqual(len(session.pixel_oracle.captures), 3)
+        status, reasons = session.pixel_oracle.evaluate()
+        self.assertEqual(status, "PASS")
+        self.assertEqual(reasons, [])
+
+        # Callbacks must be cleaned up on finish
+        self.assertIsNone(video_area._fbo_pixel_oracle_cb)
+        self.assertIsNone(video_area._fbo_pixel_oracle_error_cb)
+
+        # Saved report artifacts: exactly 1 txt publication report + 1 json pixel measurements artifact
+        self.assertEqual(len(written_reports), 2)
+        txt_files = [k for k in written_reports if k.endswith(".txt")]
+        json_files = [k for k in written_reports if k.endswith(".json")]
+        self.assertEqual(len(txt_files), 1)
+        self.assertEqual(len(json_files), 1)
+
+        report_text = written_reports[txt_files[0]]
+        self.assertIn("Overall result: PASS", report_text)
+        self.assertIn("[Paused transition FBO pixel validation]", report_text)
+        self.assertIn("FBO pixel oracle status: PASS", report_text)
+        self.assertIn(f"FBO pixel artifact: {json_files[0]}", report_text)
+        self.assertIn("FBO pixel artifact verified: True", report_text)
+        self.assertIn("Tolerance (repeat SDR): 0.020", report_text)
+        self.assertIn("Min HDR distinction: 0.150", report_text)
+        self.assertIn("capture[initial_sdr]:", report_text)
+        self.assertIn("capture[hdr]:", report_text)
+        self.assertIn("capture[return_sdr]:", report_text)
+        self.assertIn("samples_hash=", report_text)
+
+        # Verify JSON pixel measurements artifact content and schema
+        json_data = json.loads(written_reports[json_files[0]])
+        self.assertEqual(json_data["schema"], "cinehdr.gate2w.fbo-pixel-measurements.v1")
+        self.assertEqual(json_data["overall_result"], "PASS")
+        self.assertEqual(json_data["tolerance_status"], "preliminary")
+        self.assertEqual(json_data["tolerance"], 0.020)
+        self.assertEqual(json_data["min_hdr_distinction"], 0.150)
+        for ph in ("initial_sdr", "hdr", "return_sdr"):
+            self.assertEqual(json_data["phases"][ph]["status"], "CAPTURED")
+            self.assertEqual(len(json_data["phases"][ph]["patch_samples"]), 8)
+            for pt in CANONICAL_PATCH_NAMES:
+                self.assertEqual(len(json_data["phases"][ph]["patch_samples"][pt]), 4)
+
+    def test_strict_rejection_when_samples_missing_or_incomplete_phases(self):
+        """Forbids pixel PASS when captures are missing or incomplete (< 3 phases)."""
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        # Empty captures
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "UNVERIFIED")
+        self.assertTrue(any("missing required capture" in r for r in reasons))
+
+        # Only 2 phases (missing return_sdr)
+        sdr_samples = self._canonical_samples(is_hdr=False)
+        hdr_samples = self._canonical_samples(is_hdr=True)
+        oracle.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=1, epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={}, fixture_hash="sdr", patch_samples=sdr_samples,
+            raw_samples_hash=compute_samples_hash(sdr_samples),
+        ))
+        oracle.record_capture(FboPixelCapture(
+            phase="hdr", slot_id=2, epoch=2, frame_generation=2,
+            fbo_format="GL_RGBA16F", is_float=True, width=1920, height=1080,
+            target_properties={}, fixture_hash="hdr", patch_samples=hdr_samples,
+            raw_samples_hash=compute_samples_hash(hdr_samples),
+        ))
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "UNVERIFIED")
+        self.assertTrue(any("missing required capture" in r for r in reasons))
+
+        # evaluate_publication_validation must force overall FAIL when status != PASS
+        res, errors = evaluate_publication_validation(
+            active_api="opengl-next",
+            session_status="active",
+            expected_api="opengl-next",
+            final={},
+            step_statuses=("PASS", "PASS", "PASS", "PASS"),
+            state_sequence=((0, "sdr", "PASS"), (1, "hdr", "PASS"), (0, "sdr", "PASS"), (1, "hdr", "PASS")),
+            failure_reason=None,
+            isolation_failures=(),
+            pixel_oracle_result=(status, reasons),
+        )
+        self.assertEqual(res, "FAIL")
+        self.assertTrue(any("FBO pixel validation failed (UNVERIFIED)" in e for e in errors))
+
+    def test_strict_rejection_on_readback_error(self):
+        """Forbids pixel PASS when any readback error is recorded."""
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        sdr1 = self._canonical_samples(is_hdr=False)
+        hdr = self._canonical_samples(is_hdr=True)
+        sdr2 = self._canonical_samples(is_hdr=False)
+
+        oracle.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=1, epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={}, fixture_hash="sdr", patch_samples=sdr1,
+            raw_samples_hash=compute_samples_hash(sdr1),
+        ))
+        oracle.record_capture(FboPixelCapture(
+            phase="hdr", slot_id=2, epoch=2, frame_generation=2,
+            fbo_format="GL_RGBA16F", is_float=True, width=1920, height=1080,
+            target_properties={}, fixture_hash="hdr", patch_samples=hdr,
+            raw_samples_hash=compute_samples_hash(hdr),
+        ))
+        oracle.record_capture(FboPixelCapture(
+            phase="return_sdr", slot_id=3, epoch=3, frame_generation=3,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={}, fixture_hash="sdr", patch_samples=sdr2,
+            raw_samples_hash=compute_samples_hash(sdr2),
+        ))
+
+        # Record error
+        oracle.record_readback_error("glReadPixels failed with GL_OUT_OF_MEMORY")
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("readback error" in r.lower() for r in reasons))
+
+        # evaluate_publication_validation must fail
+        res, errors = evaluate_publication_validation(
+            active_api="opengl-next",
+            session_status="active",
+            expected_api="opengl-next",
+            final={},
+            step_statuses=("PASS", "PASS", "PASS", "PASS"),
+            state_sequence=((0, "sdr", "PASS"), (1, "hdr", "PASS"), (0, "sdr", "PASS"), (1, "hdr", "PASS")),
+            failure_reason=None,
+            isolation_failures=(),
+            pixel_oracle_result=(status, reasons),
+        )
+        self.assertEqual(res, "FAIL")
+        self.assertTrue(any("FBO pixel validation failed (FAIL)" in e for e in errors))
+
+    def test_strict_rejection_on_negative_control_mismatch(self):
+        """Negative control: returned SDR FBO contains stale HDR pixels -> must FAIL."""
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        sdr_ref = self._canonical_samples(is_hdr=False)
+        hdr_ref = self._canonical_samples(is_hdr=True)
+
+        oracle.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=1, epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="sdr", patch_samples=sdr_ref,
+            raw_samples_hash=compute_samples_hash(sdr_ref),
+        ))
+        oracle.record_capture(FboPixelCapture(
+            phase="hdr", slot_id=2, epoch=2, frame_generation=2,
+            fbo_format="GL_RGBA16F", is_float=True, width=1920, height=1080,
+            target_properties={"target-trc": "pq", "target-prim": "bt.2020", "target-peak": "1000"},
+            fixture_hash="hdr", patch_samples=hdr_ref,
+            raw_samples_hash=compute_samples_hash(hdr_ref),
+        ))
+        # Negative control: stale HDR pixels in return_sdr FBO
+        oracle.record_capture(FboPixelCapture(
+            phase="return_sdr", slot_id=3, epoch=3, frame_generation=3,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="sdr", patch_samples=hdr_ref,
+            raw_samples_hash=compute_samples_hash(hdr_ref),
+        ))
+
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("exceeds calibrated tolerance" in r for r in reasons))
+
+    def test_empirical_fbo_repeatability_and_tolerance_grounding(self):
+        """Verifies empirical repeat variability grounding:
+        - Deterministic decode across identical lossless HEVC frames yields 0 LSB delta.
+        - Quantization noise in 8-bit GL_RGBA8 is bounded by 1 LSB (1/255 ≈ 0.00392).
+        - Tolerance of 0.020 provides a >5x safety margin above 1 LSB while remaining
+        well below the minimal HDR vs SDR separation (0.150).
+        """
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        self.assertEqual(oracle.tolerance, 0.020)
+        self.assertEqual(oracle.min_hdr_distinction, 0.150)
+
+        # 1 LSB in normalized 8-bit
+        one_lsb = 1.0 / 255.0
+        self.assertAlmostEqual(one_lsb, 0.00392157, places=5)
+        # Tolerance 0.020 is strictly greater than 5 LSBs (5 * 1/255 ≈ 0.0196)
+        self.assertGreater(oracle.tolerance, 5 * one_lsb)
+        # Tolerance is strictly less than 1/7 of min HDR distinction
+        self.assertLess(oracle.tolerance, oracle.min_hdr_distinction / 7.0)
+
+        # Clean 0 LSB delta (identical decode): passes with flying colors
+        sdr_clean = self._canonical_samples(is_hdr=False, jitter=0.0)
+        hdr_clean = self._canonical_samples(is_hdr=True, jitter=0.0)
+        oracle.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=1, epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="sdr_h", patch_samples=sdr_clean,
+            raw_samples_hash=compute_samples_hash(sdr_clean),
+        ))
+        oracle.record_capture(FboPixelCapture(
+            phase="hdr", slot_id=2, epoch=2, frame_generation=2,
+            fbo_format="GL_RGBA16F", is_float=True, width=1920, height=1080,
+            target_properties={"target-trc": "pq", "target-prim": "bt.2020", "target-peak": "1000"},
+            fixture_hash="hdr_h", patch_samples=hdr_clean,
+            raw_samples_hash=compute_samples_hash(hdr_clean),
+        ))
+        oracle.record_capture(FboPixelCapture(
+            phase="return_sdr", slot_id=3, epoch=3, frame_generation=3,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="sdr_h", patch_samples=sdr_clean,
+            raw_samples_hash=compute_samples_hash(sdr_clean),
+        ))
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "PASS")
+        self.assertEqual(reasons, [])
+
+    def test_fbo_pixel_measurements_serialization_complete(self):
+        """Verifies full serialization of all 8 canonical patch RGBA vectors across all 3 phases."""
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        sdr_samples1 = self._canonical_samples(is_hdr=False)
+        hdr_samples = self._canonical_samples(is_hdr=True)
+        sdr_samples2 = self._canonical_samples(is_hdr=False, jitter=0.005)
+
+        oracle.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=1, epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"}, fixture_hash="sdr_h",
+            patch_samples=sdr_samples1, raw_samples_hash=compute_samples_hash(sdr_samples1),
+        ))
+        oracle.record_capture(FboPixelCapture(
+            phase="hdr", slot_id=2, epoch=2, frame_generation=2,
+            fbo_format="GL_RGBA16F", is_float=True, width=1920, height=1080,
+            target_properties={"target-trc": "pq", "target-prim": "bt.2020", "target-peak": 1000}, fixture_hash="hdr_h",
+            patch_samples=hdr_samples, raw_samples_hash=compute_samples_hash(hdr_samples),
+        ))
+        oracle.record_capture(FboPixelCapture(
+            phase="return_sdr", slot_id=3, epoch=3, frame_generation=3,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"}, fixture_hash="sdr_h",
+            patch_samples=sdr_samples2, raw_samples_hash=compute_samples_hash(sdr_samples2),
+        ))
+
+        from src.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
+        data = serialize_fbo_pixel_measurements(
+            oracle, backend="gpu-next", session_id="test-session-99", overall_result="PASS"
+        )
+        self.assertEqual(data["schema"], "cinehdr.gate2w.fbo-pixel-measurements.v1")
+        self.assertEqual(data["backend"], "gpu-next")
+        self.assertEqual(data["session_id"], "test-session-99")
+        self.assertEqual(data["overall_result"], "PASS")
+        self.assertEqual(data["tolerance"], 0.020)
+        self.assertEqual(data["tolerance_status"], "preliminary")
+        self.assertEqual(data["min_hdr_distinction"], 0.150)
+        self.assertEqual(data["readback_errors"], [])
+        self.assertEqual(data["provenance_errors"], [])
+
+        for phase in ("initial_sdr", "hdr", "return_sdr"):
+            p_data = data["phases"][phase]
+            self.assertEqual(p_data["status"], "CAPTURED")
+            self.assertEqual(p_data["slot_id"], {"initial_sdr": 1, "hdr": 2, "return_sdr": 3}[phase])
+            self.assertEqual(set(p_data["target_properties"]), {"target-trc", "target-prim", "target-peak"})
+            self.assertIsNotNone(p_data["epoch"])
+            self.assertGreaterEqual(p_data["frame_generation"], 1)
+            self.assertIn("GL_RGBA", p_data["fbo_format"])
+            self.assertEqual(p_data["width"], 1920)
+            self.assertEqual(p_data["height"], 1080)
+            self.assertEqual(len(p_data["patch_samples"]), 8)
+            for patch_name, rgba in p_data["patch_samples"].items():
+                self.assertEqual(len(rgba), 4)
+
+        ok, msg = verify_fbo_pixel_measurements_artifact(data)
+        self.assertTrue(ok, f"Verification failed: {msg}")
+        self.assertEqual(msg, "OK")
+
+    def test_fbo_pixel_measurements_serialization_on_fail_preserves_partial_data(self):
+        """Preserves available data on failure; missing phases are recorded with status MISSING and null fields."""
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        sdr_samples = self._canonical_samples(is_hdr=False)
+        oracle.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=1, epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"}, fixture_hash="sdr_h",
+            patch_samples=sdr_samples, raw_samples_hash=compute_samples_hash(sdr_samples),
+        ))
+        # Phases 'hdr' and 'return_sdr' were never captured
+        from src.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
+        data = serialize_fbo_pixel_measurements(
+            oracle, backend="legacy", session_id="test-session-fail", overall_result="FAIL"
+        )
+        self.assertEqual(data["overall_result"], "FAIL")
+        self.assertEqual(data["phases"]["initial_sdr"]["status"], "CAPTURED")
+        self.assertEqual(data["phases"]["hdr"]["status"], "MISSING")
+        self.assertIsNone(data["phases"]["hdr"]["epoch"])
+        self.assertIsNone(data["phases"]["hdr"]["slot_id"])
+        self.assertIsNone(data["phases"]["hdr"]["target_properties"])
+        self.assertIsNone(data["phases"]["hdr"]["patch_samples"])
+        self.assertEqual(data["phases"]["return_sdr"]["status"], "MISSING")
+        self.assertIsNone(data["phases"]["return_sdr"]["epoch"])
+        self.assertIsNone(data["phases"]["return_sdr"]["patch_samples"])
+
+        # Verification must reject incomplete artifact
+        ok, msg = verify_fbo_pixel_measurements_artifact(data)
+        self.assertFalse(ok)
+        self.assertIn("hdr", msg)
+        self.assertIn("not marked CAPTURED", msg)
+
+    def test_verify_fbo_pixel_measurements_negative_cases(self):
+        """Negative tests for verify_fbo_pixel_measurements_artifact: tampering, truncation, invalid schema."""
+        from src.gpu_validation import (
+            serialize_fbo_pixel_measurements,
+            verify_fbo_pixel_measurements_artifact,
+            compute_samples_hash,
+        )
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        sdr = self._canonical_samples(is_hdr=False)
+        hdr = self._canonical_samples(is_hdr=True)
+        for ph, smp in (("initial_sdr", sdr), ("hdr", hdr), ("return_sdr", sdr)):
+            oracle.record_capture(FboPixelCapture(
+                phase=ph, slot_id=1, epoch=1, frame_generation=1,
+                fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+                target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"}, fixture_hash="h",
+                patch_samples=smp, raw_samples_hash=compute_samples_hash(smp),
+            ))
+
+        base_data = serialize_fbo_pixel_measurements(oracle, backend="legacy", session_id="s1", overall_result="PASS")
+        ok, _ = verify_fbo_pixel_measurements_artifact(base_data)
+        self.assertTrue(ok)
+
+        for missing_field in ("slot_id", "target_properties"):
+            tampered = json.loads(json.dumps(base_data))
+            del tampered["phases"]["initial_sdr"][missing_field]
+            ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+            self.assertFalse(ok, missing_field)
+            self.assertIn(missing_field, msg)
+
+        # 1. Non-dict root
+        self.assertFalse(verify_fbo_pixel_measurements_artifact("not a mapping")[0])
+
+        # 2. Schema mismatch
+        tampered = json.loads(json.dumps(base_data))
+        tampered["schema"] = "wrong.schema.v2"
+        ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+        self.assertFalse(ok)
+        self.assertIn("unsupported or missing schema", msg)
+
+        # 3. Missing phase
+        tampered = json.loads(json.dumps(base_data))
+        del tampered["phases"]["return_sdr"]
+        ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+        self.assertFalse(ok)
+        self.assertIn("mandatory phase 'return_sdr' missing", msg)
+
+        # 4. Null epoch
+        tampered = json.loads(json.dumps(base_data))
+        tampered["phases"]["hdr"]["epoch"] = None
+        ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+        self.assertFalse(ok)
+        self.assertIn("null epoch", msg)
+
+        # 5. Invalid frame generation (< 1)
+        tampered = json.loads(json.dumps(base_data))
+        tampered["phases"]["hdr"]["frame_generation"] = 0
+        ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+        self.assertFalse(ok)
+        self.assertIn("invalid frame_generation", msg)
+
+        # 6. Missing canonical patch
+        tampered = json.loads(json.dumps(base_data))
+        del tampered["phases"]["initial_sdr"]["patch_samples"]["neutral_gradient"]
+        ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+        self.assertFalse(ok)
+        self.assertIn("missing canonical patch 'neutral_gradient'", msg)
+
+        # 7. Non-RGBA vector (3 components)
+        tampered = json.loads(json.dumps(base_data))
+        tampered["phases"]["initial_sdr"]["patch_samples"]["black"] = [0.0, 0.0, 0.0]
+        ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+        self.assertFalse(ok)
+        self.assertIn("not a 4-element RGBA vector", msg)
+
+        # 8. Tampered pixel value (hash mismatch)
+        tampered = json.loads(json.dumps(base_data))
+        tampered["phases"]["hdr"]["patch_samples"]["reference_white"][0] += 0.05
+        ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+        self.assertFalse(ok)
+        self.assertIn("raw_samples_hash mismatch", msg)
+
+        # 9. Tampered raw_samples_hash
+        tampered = json.loads(json.dumps(base_data))
+        tampered["phases"]["hdr"]["raw_samples_hash"] = "0" * 64
+        ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+        self.assertFalse(ok)
+        self.assertIn("raw_samples_hash mismatch", msg)
+
+        # 10. Non-finite components: NaN and Infinity
+        for non_finite in (float("nan"), float("inf"), float("-inf")):
+            tampered = json.loads(json.dumps(base_data))
+            tampered["phases"]["hdr"]["patch_samples"]["reference_white"][0] = non_finite
+            ok, msg = verify_fbo_pixel_measurements_artifact(tampered)
+            self.assertFalse(ok)
+            self.assertIn("contains non-finite component (NaN or Inf)", msg)
+
+    def test_negative_session_write_report_fails_when_artifact_corrupted(self):
+        """If FBO pixel measurements artifact verification fails during _write_report, overall result is forced to FAIL."""
+        written_reports = {}
+        def mock_write(path_obj, content, *args, **kwargs):
+            written_reports[str(path_obj.name if hasattr(path_obj, "name") else path_obj)] = content
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.player = MagicMock()
+        session.player.pause = False
+        session.config = SimpleNamespace(
+            mode="publication",
+            expected_backend="legacy",
+            fixture_profile="hevc",
+            fixture_revision="rev1",
+            fixture_sdr_sha256="sdr_h",
+            fixture_hdr_sha256="hdr_h",
+            timeout_seconds=60,
+            report_dir=Path("/tmp/test_reports"),
+        )
+        session._renderer_facts = lambda: ("opengl", "active")
+        session._expected_active_api = lambda: "opengl"
+        session.started_at = time.monotonic()
+        session.finished = False
+        session.step_index = 0
+        session.steps = [
+            ValidationStep("actual initial SDR publication", "publication-state", 6, (0, "sdr")),
+        ]
+        session.step_results = [
+            {"step": session.steps[0], "status": "PASS", "detail": "sdr ok", "expected_state": (0, "sdr"), "metric": {}},
+        ]
+        session.samples = []
+        session.ready_timer_id = None
+        session.sample_timer_id = None
+        session.step_timer_id = None
+        session.lifecycle_timer_id = None
+        session.window = SimpleNamespace(
+            app=SimpleNamespace(_gpu_validation_setup_failures=()),
+            show_toast=lambda *a: None,
+            connect=lambda *a: 1,
+            close=lambda: None,
+        )
+        session.video_area = SimpleNamespace(
+            render_backend_active="opengl",
+            render_session_status="active",
+            render_target_format="GL_RGBA8",
+            render_color_state="srgb",
+            hdr_controller=SimpleNamespace(
+                committed_output_state=None,
+                is_publication_pending=False,
+                is_publication_suppressed=False,
+            ),
+            _fbo_pixel_oracle_cb=None,
+            _fbo_pixel_oracle_error_cb=None,
+            fbo_pool=SimpleNamespace(dropped_frames=0, allocation_failures=0),
+            current_texture=MagicMock(),
+            render_frame_generation=1,
+        )
+        session._metrics_snapshot = lambda: {}
+        session.pixel_oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        session.pixel_oracle.evaluate = lambda: ("PASS", [])
+
+        # Mock verify_fbo_pixel_measurements_artifact to fail
+        with patch("src.gpu_validation.verify_fbo_pixel_measurements_artifact", return_value=(False, "simulated tampering")), \
+             patch.object(Path, "write_text", autospec=True, side_effect=mock_write):
+            session._finish(None)
+
+        txt_files = [k for k in written_reports if k.endswith(".txt")]
+        self.assertEqual(len(txt_files), 1)
+        report_text = written_reports[txt_files[0]]
+        self.assertIn("Overall result: FAIL", report_text)
+        self.assertIn("mandatory FBO pixel measurements artifact failed verification: simulated tampering", report_text)
+        self.assertIn("FBO pixel artifact verified: False", report_text)
+
+
+class TestStartupFixtureContract(unittest.TestCase):
+    def test_do_open_preserves_publication_pause_contract(self):
+        """do_open must not clear the pause established for publication/settling fixtures."""
+        from src.main import CineApplication
+        from src.gpu_validation import GpuValidationConfig
+
+        app = CineApplication.__new__(CineApplication)
+        app.gpu_validation_config = GpuValidationConfig(
+            mode="publication", report_dir=Path("/tmp/test")
+        )
+        app._gpu_validation_session = None
+
+        mock_win = MagicMock()
+        mock_win.mpv = MagicMock()
+        mock_win.mpv.pause = None
+
+        def fake_prepare(player, mode):
+            player.pause = True
+            return ()
+
+        with patch("src.main.CineWindow", return_value=mock_win), \
+             patch("src.gpu_validation.prepare_validation_player", side_effect=fake_prepare):
+            app.props = MagicMock()
+            app.props.active_window = None
+            app.get_windows = MagicMock(return_value=[mock_win])
+            app.find_first_file = MagicMock(return_value=None)
+            app.hide_ui_timeout = MagicMock()
+
+            gfile = MagicMock()
+            gfile.get_path.return_value = "/dummy/sdr.mp4"
+
+            app.do_open([gfile], 1, None)
+
+        self.assertTrue(mock_win.mpv.pause, "do_open must preserve publication pause")
+
+    def test_do_open_normal_playback_unpauses_and_pauses_other_windows(self):
+        """Normal file opening unpauses the active window and pauses previous windows."""
+        from src.main import CineApplication
+
+        app = CineApplication.__new__(CineApplication)
+        app.gpu_validation_config = None
+        app._gpu_validation_session = None
+
+        active_win = MagicMock()
+        active_win.mpv = MagicMock()
+        active_win.mpv.pause = True
+
+        prev_win = MagicMock()
+        prev_win.mpv = MagicMock()
+        prev_win.mpv.pause = False
+
+        with patch("src.main.CineWindow", return_value=active_win):
+            app.props = MagicMock()
+            app.props.active_window = None
+            app.get_windows = MagicMock(return_value=[prev_win, active_win])
+            app.find_first_file = MagicMock(return_value=None)
+            app.hide_ui_timeout = MagicMock()
+
+            gfile = MagicMock()
+            gfile.get_path.return_value = "/dummy/video.mp4"
+
+            app.do_open([gfile], 1, None)
+
+        self.assertFalse(active_win.mpv.pause, "Active window must unpause on normal open")
+        self.assertTrue(prev_win.mpv.pause, "Previous window must be paused on normal open")
+
+    def test_wait_until_ready_rejects_playlist_pos_not_zero(self):
+        """_wait_until_ready must reject readiness and terminate when playlist-pos is not 0."""
+        from src.gpu_validation import GpuValidationConfig
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.config = GpuValidationConfig(
+            mode="publication", report_dir=Path("/tmp/test"), expected_backend="legacy"
+        )
+        session._expected_playlist_count = 2
+        session._ready_last_playlist_count = None
+        session._ready_stable_since = None
+        session._ready_last_position = None
+        session._ready_last_sample_at = None
+        session.ready_deadline = time.monotonic() + 100.0
+        session.finished = False
+
+        props = {
+            "duration": 1.0,
+            "time-pos": 0.0,
+            "seeking": False,
+            "playlist-count": 2,
+            "playlist-pos": 1,
+            "pause": True,
+        }
+        session.player = MagicMock()
+        session.player._get_property.side_effect = lambda k, default=None: props.get(k, default)
+        session.player.get_property.side_effect = lambda k, default=None: props.get(k, default)
+
+        session.video_area = MagicMock()
+        session.video_area._first_frame_logged = True
+        session.video_area.render_session_status = "active"
+        session.video_area.render_backend_active = "opengl"
+
+        session.memory_samples = []
+        session.vram_samples = []
+        session.drm_vram_samples = []
+        session.drm_gtt_samples = []
+        session.resource_samples = []
+        session.window = MagicMock()
+        session.video_area.render_context_generation = 1
+        session.video_area.render_frame_generation = 3
+
+        session._metrics_snapshot = lambda: {"publication_texture": {"available": True}, "sample_at": time.monotonic()}
+        session._advance_step = MagicMock()
+        session._finish = MagicMock()
+
+        session._wait_until_ready()
+
+        self.assertFalse(session._advance_step.called, "Must not advance to step 0 when playlist-pos=1")
+        session._finish.assert_called_once()
+        finish_reason = session._finish.call_args[0][0]
+        self.assertIn("playlist position is 1, expected 0", finish_reason)
+
+    def test_wait_until_ready_rejects_unpaused_initial_playback(self):
+        """_wait_until_ready must reject readiness and terminate when initial fixture is not paused."""
+        from src.gpu_validation import GpuValidationConfig
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.config = GpuValidationConfig(
+            mode="publication", report_dir=Path("/tmp/test"), expected_backend="legacy"
+        )
+        session._expected_playlist_count = 2
+        session._ready_last_playlist_count = None
+        session._ready_stable_since = None
+        session._ready_last_position = None
+        session._ready_last_sample_at = None
+        session.ready_deadline = time.monotonic() + 100.0
+        session.finished = False
+
+        props = {
+            "duration": 1.0,
+            "time-pos": 0.0,
+            "seeking": False,
+            "playlist-count": 2,
+            "playlist-pos": 0,
+            "pause": False,
+        }
+        session.player = MagicMock()
+        session.player._get_property.side_effect = lambda k, default=None: props.get(k, default)
+        session.player.get_property.side_effect = lambda k, default=None: props.get(k, default)
+
+        session.video_area = MagicMock()
+        session.video_area._first_frame_logged = True
+        session.video_area.render_session_status = "active"
+        session.video_area.render_backend_active = "opengl"
+        session.video_area.render_context_generation = 1
+        session.video_area.render_frame_generation = 3
+
+        session.memory_samples = []
+        session.vram_samples = []
+        session.drm_vram_samples = []
+        session.drm_gtt_samples = []
+        session.resource_samples = []
+        session.window = MagicMock()
+
+        session._metrics_snapshot = lambda: {"publication_texture": {"available": True}, "sample_at": time.monotonic()}
+        session._advance_step = MagicMock()
+        session._finish = MagicMock()
+
+        session._wait_until_ready()
+
+        self.assertFalse(session._advance_step.called, "Must not advance to step 0 when initial playback is not paused")
+        session._finish.assert_called_once()
+        finish_reason = session._finish.call_args[0][0]
+        self.assertIn("initial playback is not paused", finish_reason)
+
+    def test_wait_until_ready_accepts_paused_position_zero(self):
+        """_wait_until_ready accepts readiness when playlist count is 2, pos is 0, and paused."""
+        from src.gpu_validation import GpuValidationConfig
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.config = GpuValidationConfig(
+            mode="publication", report_dir=Path("/tmp/test"), expected_backend="legacy"
+        )
+        session._expected_playlist_count = 2
+        session._ready_last_playlist_count = None
+        session._ready_stable_since = None
+        session._ready_last_position = None
+        session._ready_last_sample_at = None
+        session.ready_deadline = time.monotonic() + 100.0
+        session.finished = False
+        session.memory_samples = []
+        session.vram_samples = []
+        session.drm_vram_samples = []
+        session.drm_gtt_samples = []
+        session.resource_samples = []
+
+        props = {
+            "duration": 1.0,
+            "time-pos": 0.0,
+            "seeking": False,
+            "playlist-count": 2,
+            "playlist-pos": 0,
+            "pause": True,
+        }
+        session.player = MagicMock()
+        session.player._get_property.side_effect = lambda k, default=None: props.get(k, default)
+        session.player.get_property.side_effect = lambda k, default=None: props.get(k, default)
+
+        session.video_area = MagicMock()
+        session.video_area._first_frame_logged = True
+        session.video_area.render_session_status = "active"
+        session.video_area.render_backend_active = "opengl"
+        session.video_area.render_context_generation = 1
+        session.video_area.render_frame_generation = 3
+
+        session._metrics_snapshot = lambda: {
+            "publication_texture": {"available": True},
+            "sample_at": time.monotonic(),
+        }
+        session._sample_memory = MagicMock()
+        session._advance_step = MagicMock()
+        session._finish = MagicMock()
+        session.window = MagicMock()
+
+        session._wait_until_ready()
+
+        self.assertTrue(session._advance_step.called, "Must advance to step 0 when paused at position 0")
+        self.assertFalse(session._finish.called, "Must not finish on valid readiness")
 
 
 if __name__ == "__main__":

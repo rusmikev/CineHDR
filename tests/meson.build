@@ -26,8 +26,11 @@ test('gpu_validation_tests', python3,
     meson.current_source_dir() / 'test_gpu_validation.py'
   ],
   env: [
+    'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
     'PYTHONPATH=' + meson.project_source_root()
-  ]
+  ],
+  depends: [cinehdr_resources]
 )
 
 test('wayland_color_trace_tests', python3,
@@ -78,4 +81,16 @@ test('vendor_smoke_tests', python3,
   env: [
     'PYTHONPATH=' + meson.project_source_root()
   ]
+)
+
+test('diagnostics_export_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_diagnostics_export.py'
+  ],
+  env: [
+    'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
+    'PYTHONPATH=' + meson.project_source_root()
+  ],
+  depends: [cinehdr_resources]
 )
