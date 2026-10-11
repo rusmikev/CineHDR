@@ -1519,7 +1519,7 @@ class TestMonitorHdrGate(unittest.TestCase):
         props = {}
         mock_mpv = MagicMock()
         mock_mpv.__setitem__ = lambda _self, k, v: props.__setitem__(k, v)
-        mock_mpv.__getitem__ = MagicMock(side_effect=KeyError)
+        mock_mpv.__getitem__ = lambda _self, k: props[k]
         mock_mpv.property_observer = lambda name: (lambda fn: fn)
         return mock_mpv, props
 
@@ -1571,6 +1571,30 @@ class TestMonitorHdrGate(unittest.TestCase):
                 self.assertTrue(controller.is_hdr_active)
                 controller.apply_hdr_settings()
                 self.assertEqual(props.get("target-trc"), "pq")
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_publication_override_only_removes_surface_proof_gate(self, _sup):
+        from src.hdr_controller import HdrController
+
+        mock_mpv, _ = self._make_mock_mpv()
+        with patch("src.hdr_controller.get_monitor_hdr_state", return_value=True):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "0"}):
+                self.assertFalse(controller.is_hdr_active)
+            with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "1"}):
+                self.assertTrue(controller.is_hdr_active)
+                controller._is_hdr_content = False
+                self.assertFalse(controller.is_hdr_active)
+                controller._is_hdr_content = True
+                controller._dovi_info = {"unsupported": True}
+                self.assertFalse(controller.is_hdr_active)
+                controller._dovi_info = {"unsupported": False}
+                with patch("src.hdr_controller.get_monitor_hdr_state", return_value=False):
+                    self.assertFalse(controller.is_hdr_active)
+                with patch("src.hdr_controller.check_hdr_support", return_value=False):
+                    self.assertFalse(controller.is_hdr_active)
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_output_hint_is_forwarded_and_triggers_reapply(self, _sup):
@@ -2354,6 +2378,17 @@ class TestHwdecDiagnosticsReporting(unittest.TestCase):
         self.assertEqual(sub, "Unknown")
 
 
+class TestMpvFileErrorLogging(unittest.TestCase):
+    def test_label_kept_without_media_path(self):
+        from src.window import safe_mpv_file_error_label
+
+        self.assertEqual(safe_mpv_file_error_label(b"loading failed"), "loading failed")
+        self.assertEqual(safe_mpv_file_error_label(-13), "-13")
+        self.assertEqual(safe_mpv_file_error_label(None), "unavailable")
+        self.assertEqual(safe_mpv_file_error_label(b"/private/media/file.mkv"), "unavailable")
+        self.assertEqual(safe_mpv_file_error_label(b"bad\npath"), "unavailable")
+
+
 class TestDoviRpuWarningDiagnostics(unittest.TestCase):
     """Tests for Dolby Vision RPU log warning tracking and diagnostics reporting."""
 
@@ -2735,6 +2770,1077 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
         self.assertEqual(diag._sampled_active_decoder, "unknown")
         report_3 = diag._copy_report()
         self.assertIn("Active decoder: unknown", report_3)
+
+
+# ──────────────────────────────────────────────────────────────
+# ADR-0007 Paused HDR Output Republication & Pixel Oracle Tests
+# ──────────────────────────────────────────────────────────────
+
+class TestPausedHdrOutputRepublication(unittest.TestCase):
+    """Regressions for ADR-0007: paused HDR/SDR transition republication."""
+
+    def _create_widget_mock(self, controller=None):
+        from src.video_widget import MpvVideoWidget
+        widget = MpvVideoWidget.__new__(MpvVideoWidget)
+        widget.mpv_ctx = MagicMock()
+        widget.mpv = getattr(controller, "mpv", MagicMock())
+        widget._shutting_down = False
+        widget._render_failed = False
+        widget._force_redraw_pending = False
+        widget._render_pending = False
+        widget.get_width = MagicMock(return_value=1920)
+        widget.get_height = MagicMock(return_value=1080)
+        widget._cached_scale = 1.0
+        widget.gl_area = MagicMock()
+        slot = MagicMock()
+        slot.resource.fbo_id.value = 1
+        slot.resource.texture_id.value = 2
+        slot.fence = None
+        widget.fbo_pool = MagicMock()
+        widget.fbo_pool.acquire.return_value = slot
+        widget.queue_draw = MagicMock()
+        widget.render_backend_active = "gpu-next"
+        widget.render_frame_generation = 0
+        widget._first_frame_logged = True
+        widget._first_media_frame_exported = True
+        widget._first_media_frame_logged = True
+        widget._fallback_slot = None
+        widget._cached_hdr_support = True
+        widget._cached_hdr_support_valid = True
+        widget._committed_render_epoch = None
+        widget.hdr_controller = controller
+        return widget, slot
+
+    @patch("src.video_widget.should_render_frame", return_value=True)
+    @patch("src.video_widget.glBindFramebuffer")
+    @patch("src.video_widget.Gdk.GLTextureBuilder")
+    def test_event_order_frame_rendered_then_state_change_sdr(
+        self, mock_builder_cls, _mock_bind_fbo, _mock_should_render
+    ):
+        """Sequence: HDR frame rendered -> next mpv update arrives -> SDR video-params arrives.
+        Forced render must republish GL_RGBA8/sRGB and advance frame generation."""
+        from src.hdr_controller import HdrController
+
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        props = {}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
+        mock_mpv.__getitem__ = lambda _s, k: props.get(k)
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+
+        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+             patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
+             patch("src.hdr_controller.check_hdr_support", return_value=True), \
+             patch("src.hdr_controller.has_float_format_support", return_value=True):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            controller.apply_hdr_settings()
+
+            widget, slot = self._create_widget_mock(controller)
+            controller.on_change_cb = widget._on_hdr_controller_change
+
+            # 1. Widget renders HDR paused frame under current HDR epoch
+            hdr_epoch = controller.output_epoch
+            widget._force_redraw_pending = True
+            widget._render_pending_frame()
+            self.assertEqual(widget.render_frame_generation, 1)
+            self.assertEqual(widget.render_target_format, "GL_RGBA16F")
+            self.assertEqual(widget.render_color_state, "rec2100-pq")
+            self.assertEqual(widget._committed_render_epoch, hdr_epoch)
+
+            # 2. Next libmpv update arrives before SDR video-params (playback paused, flags may be 0 or small)
+            widget._schedule_render()
+            # Still HDR because video-params hasn't changed yet
+            self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA16F")
+
+            # 3. SDR video-params arrives at controller
+            controller._is_hdr_content = False
+            controller.apply_hdr_settings()
+
+            # Controller should now have committed new epoch for SDR
+            sdr_epoch = hdr_epoch + 1
+            self.assertEqual(controller.output_epoch, sdr_epoch)
+            self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA8")
+            self.assertEqual(controller.committed_output_state.gdk_color_state, "srgb")
+            self.assertFalse(controller.is_publication_suppressed)
+
+            # Widget must have scheduled a forced redraw because committed epoch != rendered epoch
+            self.assertTrue(widget._force_redraw_pending)
+
+            # 4. Forced render executes
+            widget._render_pending_frame()
+            self.assertEqual(widget.render_frame_generation, 2)
+            self.assertEqual(widget.render_target_format, "GL_RGBA8")
+            self.assertEqual(widget.render_color_state, "srgb")
+            self.assertEqual(widget._committed_render_epoch, sdr_epoch)
+            self.assertEqual(props.get("target-trc"), "auto")
+            self.assertEqual(props.get("target-prim"), "auto")
+
+    @patch("src.video_widget.should_render_frame", return_value=True)
+    @patch("src.video_widget.glBindFramebuffer")
+    @patch("src.video_widget.Gdk.GLTextureBuilder")
+    def test_event_order_reverse_direction_sdr_to_hdr(
+        self, mock_builder_cls, _mock_bind_fbo, _mock_should_render
+    ):
+        """Sequence: SDR frame rendered -> HDR video-params arrives.
+        Forced render republishes GL_RGBA16F/rec2100-pq and advances generation."""
+        from src.hdr_controller import HdrController
+
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        props = {}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
+        mock_mpv.__getitem__ = lambda _s, k: props.get(k)
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+
+        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+             patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
+             patch("src.hdr_controller.check_hdr_support", return_value=True), \
+             patch("src.hdr_controller.has_float_format_support", return_value=True):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = False
+            controller.apply_hdr_settings()
+
+            widget, slot = self._create_widget_mock(controller)
+            controller.on_change_cb = widget._on_hdr_controller_change
+
+            # 1. Render SDR under epoch 1
+            widget._force_redraw_pending = True
+            widget._render_pending_frame()
+            self.assertEqual(widget.render_frame_generation, 1)
+            self.assertEqual(widget.render_target_format, "GL_RGBA8")
+            self.assertEqual(widget._committed_render_epoch, 1)
+
+            # 2. HDR video-params arrives
+            controller._is_hdr_content = True
+            controller.apply_hdr_settings()
+
+            self.assertEqual(controller.output_epoch, 2)
+            self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA16F")
+            self.assertEqual(controller.committed_output_state.gdk_color_state, "rec2100-pq")
+            self.assertTrue(widget._force_redraw_pending)
+
+            # 3. Forced render executes
+            widget._render_pending_frame()
+            self.assertEqual(widget.render_frame_generation, 2)
+            self.assertEqual(widget.render_target_format, "GL_RGBA16F")
+            self.assertEqual(widget.render_color_state, "rec2100-pq")
+            self.assertEqual(widget._committed_render_epoch, 2)
+
+    @patch("src.video_widget.should_render_frame", side_effect=lambda flags, force_redraw=False: bool(flags) or force_redraw)
+    @patch("src.video_widget.glBindFramebuffer")
+    @patch("src.video_widget.Gdk.GLTextureBuilder")
+    def test_controlled_sequence_pause_sdr_hdr_sdr_full_cycle(
+        self, mock_builder_cls, _mock_bind_fbo, _mock_should_render
+    ):
+        """Full controlled sequence: pause -> SDR -> HDR -> SDR with early updates,
+        update_flags == 0, epoch transitions, and window teardown."""
+        from src.hdr_controller import HdrController
+        from gi.repository import GLib
+
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        props = {"pause": True}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
+        mock_mpv.__getitem__ = lambda _s, k: props.get(k)
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+
+        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+             patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
+             patch("src.hdr_controller.check_hdr_support", return_value=True), \
+             patch("src.hdr_controller.has_float_format_support", return_value=True):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = False
+            controller.apply_hdr_settings()
+
+            widget, slot = self._create_widget_mock(controller)
+            controller.on_change_cb = widget._on_hdr_controller_change
+
+            # Phase 1: Paused SDR initial render
+            self.assertEqual(controller.output_epoch, 1)
+            self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA8")
+            self.assertEqual(controller.committed_output_state.gdk_color_state, "srgb")
+            widget._force_redraw_pending = True
+            widget._render_pending_frame()
+            self.assertEqual(widget.render_frame_generation, 1)
+            self.assertEqual(widget.render_target_format, "GL_RGBA8")
+            self.assertEqual(widget.render_color_state, "srgb")
+            self.assertEqual(widget._committed_render_epoch, 1)
+
+            # Early libmpv update with flags == 0 while epoch unchanged
+            self.assertFalse(widget._force_redraw_pending)
+            from src.video_widget import should_render_frame
+            self.assertFalse(should_render_frame(0, force_redraw=widget._force_redraw_pending))
+
+            # Phase 2: Transition to HDR while paused
+            controller._is_hdr_content = True
+            controller.apply_hdr_settings()
+            self.assertEqual(controller.output_epoch, 2)
+            self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA16F")
+            self.assertEqual(controller.committed_output_state.gdk_color_state, "rec2100-pq")
+            self.assertTrue(widget._force_redraw_pending)
+
+            # libmpv update arrives with update_flags == 0; forced redraw ensures render proceeds
+            self.assertTrue(should_render_frame(0, force_redraw=widget._force_redraw_pending))
+            widget._render_pending_frame()
+            self.assertEqual(widget.render_frame_generation, 2)
+            self.assertEqual(widget.render_target_format, "GL_RGBA16F")
+            self.assertEqual(widget.render_color_state, "rec2100-pq")
+            self.assertEqual(widget._committed_render_epoch, 2)
+
+            # Phase 3: Transition return to SDR while paused (Defect scenario of Run 6)
+            controller._is_hdr_content = False
+            controller.apply_hdr_settings()
+            self.assertEqual(controller.output_epoch, 3)
+            self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA8")
+            self.assertEqual(controller.committed_output_state.gdk_color_state, "srgb")
+            # Forced redraw MUST be scheduled despite paused playback
+            self.assertTrue(widget._force_redraw_pending)
+
+            # Render executes despite flags == 0, updating FBO format and color state back to SDR
+            widget._render_pending_frame()
+            self.assertEqual(widget.render_frame_generation, 3)
+            self.assertEqual(widget.render_target_format, "GL_RGBA8")
+            self.assertEqual(widget.render_color_state, "srgb")
+            self.assertEqual(widget._committed_render_epoch, 3)
+
+            # Phase 4: Window teardown / shutdown safety
+            widget._shutting_down = True
+            controller.disconnect()
+            self.assertTrue(controller._shutting_down)
+            widget._force_redraw_pending = True
+            res = widget._render_pending_frame()
+            self.assertEqual(res, GLib.SOURCE_REMOVE)
+
+    def test_zero_mpv_update_flags_forces_render_when_scheduled(self):
+        """When paused playback produces zero mpv update flags, forced redraw still renders."""
+        from src.video_widget import should_render_frame
+        # Zero flags without forced redraw drops render
+        self.assertFalse(should_render_frame(0, force_redraw=False))
+        # Zero flags with forced redraw triggers render
+        self.assertTrue(should_render_frame(0, force_redraw=True))
+
+    def test_partial_setter_failure_suppresses_publication(self):
+        """If mpv property setter fails partially, publication is suppressed and gap recorded."""
+        from src.hdr_controller import HdrController
+
+        props = {}
+        mock_mpv = MagicMock()
+        def fail_on_peak(_s, k, v):
+            if k == "target-peak":
+                raise RuntimeError("simulated setter failure on target-peak")
+            props[k] = v
+        mock_mpv.__setitem__ = fail_on_peak
+        mock_mpv.__getitem__ = lambda _s, k: props.get(k)
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+
+        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+             patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
+             patch("src.hdr_controller.check_hdr_support", return_value=True):
+            controller = HdrController(mock_mpv)
+            widget, _ = self._create_widget_mock(controller)
+            controller.on_change_cb = widget._on_hdr_controller_change
+
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            controller._hdr_target_peak = "400"
+            controller.apply_hdr_settings()
+
+            self.assertTrue(controller.is_publication_suppressed)
+            self.assertIn("partial setter failure", str(controller.state_gap_reason))
+            # Widget must NOT schedule forced render when publication is suppressed
+            self.assertFalse(widget._force_redraw_pending)
+
+    def test_mismatched_readback_suppresses_publication(self):
+        """If readback value does not match expected target, publication is suppressed."""
+        from src.hdr_controller import HdrController
+
+        props = {}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
+        # Readback returns stale value "auto" instead of set "pq"
+        mock_mpv.__getitem__ = lambda _s, k: "auto" if k == "target-trc" else props.get(k)
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+
+        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+             patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
+             patch("src.hdr_controller.check_hdr_support", return_value=True):
+            controller = HdrController(mock_mpv)
+            widget, _ = self._create_widget_mock(controller)
+            controller.on_change_cb = widget._on_hdr_controller_change
+
+            controller._hdr_mode = "auto"
+            controller._is_hdr_content = True
+            controller.apply_hdr_settings(readback_timeout_sec=0.0)
+
+            self.assertTrue(controller.is_publication_suppressed)
+            self.assertIn("mismatched readback", str(controller.state_gap_reason))
+            self.assertFalse(widget._force_redraw_pending)
+
+            from src.diagnostics_report import generate_video_output_report
+            report = generate_video_output_report(MagicMock(), gl_area=widget, mpv=mock_mpv)
+            self.assertIn("Publication State Gap", report)
+            self.assertIn("Publication suppressed", report)
+
+    @patch("src.video_widget.should_render_frame", return_value=True)
+    @patch("src.video_widget.glBindFramebuffer")
+    @patch("src.video_widget.Gdk.GLTextureBuilder")
+    def test_superseded_epoch_discards_render(
+        self, mock_builder_cls, _mock_bind_fbo, _mock_should_render
+    ):
+        """If a newer epoch is committed while render is in flight, the old frame is discarded."""
+        from src.hdr_controller import CommittedOutputState
+
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        widget, slot = self._create_widget_mock()
+        controller = MagicMock()
+        controller.is_publication_suppressed = False
+        controller.is_publication_pending = False
+        controller._shutting_down = False
+
+        state_epoch_1 = CommittedOutputState(
+            epoch=1, target_trc="pq", target_prim="bt.2020", target_peak="auto",
+            fbo_format="GL_RGBA16F", gdk_color_state="rec2100-pq", is_float=True, is_hdr=True
+        )
+        state_epoch_2 = CommittedOutputState(
+            epoch=2, target_trc="auto", target_prim="auto", target_peak="auto",
+            fbo_format="GL_RGBA8", gdk_color_state="srgb", is_float=False, is_hdr=False
+        )
+
+        controller.committed_output_state = state_epoch_1
+        widget.hdr_controller = controller
+
+        # Simulate newer epoch arriving right after mpv_ctx.render()
+        def on_render(*args, **kwargs):
+            controller.committed_output_state = state_epoch_2
+
+        widget.mpv_ctx.render.side_effect = on_render
+        widget._force_redraw_pending = True
+
+        widget._render_pending_frame()
+
+        # Build was discarded: slot released back to pool, generation not advanced
+        widget.fbo_pool.release_buffer.assert_called_with(slot)
+        mock_builder.build.assert_not_called()
+        self.assertEqual(widget.render_frame_generation, 0)
+        self.assertIsNone(widget._committed_render_epoch)
+
+    def test_repeated_notifications_do_not_cause_duplicate_render(self):
+        """Equivalent notifications for the same committed epoch do not force redundant renders."""
+        from src.hdr_controller import CommittedOutputState
+
+        widget, _ = self._create_widget_mock()
+        state = CommittedOutputState(
+            epoch=1, target_trc="auto", target_prim="auto", target_peak="auto",
+            fbo_format="GL_RGBA8", gdk_color_state="srgb", is_float=False, is_hdr=False
+        )
+        controller = MagicMock()
+        controller.is_publication_suppressed = False
+        controller.committed_output_state = state
+        widget.hdr_controller = controller
+        widget._committed_render_epoch = 1
+
+        # Notifying widget when render epoch is already 1 must NOT set _force_redraw_pending
+        widget._force_redraw_pending = False
+        widget._on_hdr_controller_change()
+        self.assertFalse(widget._force_redraw_pending)
+
+    def test_shutdown_cancels_pending_and_suppresses_publication(self):
+        """Shutdown drops pending render immediately and controller disconnect suppresses."""
+        from src.hdr_controller import HdrController
+
+        props = {}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
+        mock_mpv.__getitem__ = lambda _s, k: props.get(k)
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+
+        controller = HdrController(mock_mpv)
+        widget, _ = self._create_widget_mock(controller)
+
+        # Disconnecting controller marks shutting down
+        controller.disconnect()
+        self.assertTrue(controller._shutting_down)
+
+        widget._shutting_down = True
+        widget._force_redraw_pending = True
+        res = widget._render_pending_frame()
+        from gi.repository import GLib
+        self.assertEqual(res, GLib.SOURCE_REMOVE)
+        widget.fbo_pool.acquire.assert_not_called()
+
+
+class TestPausedTransitionPixelOracle(unittest.TestCase):
+    """Tests for PausedTransitionPixelOracle and FboPixelCapture per ADR-0007."""
+
+    def _sample_patches(self, *, is_hdr: bool = False, delta: float = 0.0):
+        if is_hdr:
+            # Calibrated Rec.2100 PQ values (1000 nits peak, 203 nits reference white)
+            return {
+                "black": (0.0, 0.0, 0.0, 1.0),
+                "near_black": (0.08, 0.08, 0.08, 1.0),
+                "reference_white": (0.5807, 0.5807, 0.5807, 1.0),
+                "peak_white": (0.7518, 0.7518, 0.7518, 1.0),
+                "red_primary": (0.7518, 0.0, 0.0, 1.0),
+                "green_primary": (0.0, 0.7518, 0.0, 1.0),
+                "blue_primary": (0.0, 0.0, 0.7518, 1.0),
+                "neutral_gradient": (0.50, 0.50, 0.50, 1.0),
+            }
+        # Calibrated sRGB SDR values (BT.709 primaries, sRGB transfer)
+        return {
+            "black": (0.0 + delta, 0.0 + delta, 0.0 + delta, 1.0),
+            "near_black": (1.0 / 255.0 + delta, 1.0 / 255.0 + delta, 1.0 / 255.0 + delta, 1.0),
+            "reference_white": (1.0 + delta, 1.0 + delta, 1.0 + delta, 1.0),
+            "peak_white": (1.0 + delta, 1.0 + delta, 1.0 + delta, 1.0),
+            "red_primary": (1.0 + delta, 0.0 + delta, 0.0 + delta, 1.0),
+            "green_primary": (0.0 + delta, 1.0 + delta, 0.0 + delta, 1.0),
+            "blue_primary": (0.0 + delta, 0.0 + delta, 1.0 + delta, 1.0),
+            "neutral_gradient": (0.5 + delta, 0.5 + delta, 0.5 + delta, 1.0),
+        }
+
+    def _make_capture(self, phase: str, *, is_hdr: bool = False, delta: float = 0.0, patches: dict = None, epoch: int | None = None):
+        from src.gpu_validation import FboPixelCapture, compute_samples_hash
+        patch_samples = patches if patches is not None else self._sample_patches(is_hdr=is_hdr, delta=delta)
+        samples_hash = compute_samples_hash(patch_samples)
+        if epoch is None:
+            if phase == "initial_sdr":
+                epoch = 1
+            elif phase == "hdr":
+                epoch = 2
+            else:
+                epoch = 3
+        return FboPixelCapture(
+            phase=phase,
+            slot_id=123,
+            epoch=epoch,
+            frame_generation=1,
+            fbo_format="GL_RGBA16F" if is_hdr else "GL_RGBA8",
+            is_float=is_hdr,
+            width=1920,
+            height=1080,
+            target_properties={
+                "target-trc": "pq" if is_hdr else "auto",
+                "target-prim": "bt.2020" if is_hdr else "auto",
+                "target-peak": "1000" if is_hdr else "auto",
+            },
+            fixture_hash="hevc_hdr_sha256" if is_hdr else "hevc_sdr_sha256",
+            patch_samples=patch_samples,
+            raw_samples_hash=samples_hash,
+            media_path="/path/to/hdr.mp4" if is_hdr else "/path/to/sdr.mp4",
+        )
+
+    def test_complete_capture_and_successful_evaluation(self):
+        from src.gpu_validation import (
+            PausedTransitionPixelOracle,
+            DEFAULT_SDR_REPEAT_TOLERANCE,
+            DEFAULT_MIN_HDR_DISTINCTION,
+        )
+        oracle = PausedTransitionPixelOracle(
+            tolerance=DEFAULT_SDR_REPEAT_TOLERANCE,
+            min_hdr_distinction=DEFAULT_MIN_HDR_DISTINCTION,
+        )
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        oracle.record_capture(self._make_capture("hdr", is_hdr=True))
+        # Returned SDR matches initial SDR within 0.005 (< 0.020 tolerance)
+        oracle.record_capture(self._make_capture("return_sdr", is_hdr=False, delta=0.005))
+
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "PASS")
+        self.assertEqual(reasons, [])
+
+    def test_strict_canonical_8_patches_required(self):
+        """Oracle strictly requires the full set of 8 canonical patches, rejecting subsets or missing keys."""
+        from src.gpu_validation import PausedTransitionPixelOracle
+        oracle = PausedTransitionPixelOracle()
+        # Incomplete patches (missing neutral_gradient)
+        incomplete = dict(self._sample_patches(is_hdr=False))
+        del incomplete["neutral_gradient"]
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False, patches=incomplete))
+        oracle.record_capture(self._make_capture("hdr", is_hdr=True))
+        oracle.record_capture(self._make_capture("return_sdr", is_hdr=False))
+
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("does not have the exact 8 canonical patches" in r for r in reasons))
+
+    def test_strict_channel_count_and_provenance(self):
+        """Oracle strictly verifies channel length (exactly 4 components per patch) and provenance."""
+        from src.gpu_validation import PausedTransitionPixelOracle
+        oracle = PausedTransitionPixelOracle()
+        # Corrupt one patch to have 3 channels instead of 4
+        corrupted = dict(self._sample_patches(is_hdr=False))
+        corrupted["peak_white"] = (1.0, 1.0, 1.0)  # missing alpha
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False, patches=corrupted))
+        oracle.record_capture(self._make_capture("hdr", is_hdr=True))
+        oracle.record_capture(self._make_capture("return_sdr", is_hdr=False))
+
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("channel length is 3, expected 4" in r for r in reasons))
+
+    def test_provenance_dimension_mismatch_fails(self):
+        """Oracle rejects captures with mismatched dimensions."""
+        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        oracle = PausedTransitionPixelOracle()
+        sdr_patches = self._sample_patches(is_hdr=False)
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        oracle.record_capture(self._make_capture("hdr", is_hdr=True))
+        # return_sdr with 1280x720 instead of 1920x1080
+        oracle.record_capture(FboPixelCapture(
+            phase="return_sdr", slot_id=124, epoch=3, frame_generation=2,
+            fbo_format="GL_RGBA8", is_float=False, width=1280, height=720,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="hevc_sdr_sha256",
+            patch_samples=sdr_patches, raw_samples_hash=compute_samples_hash(sdr_patches),
+            media_path="/path/to/sdr.mp4",
+        ))
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("dimension mismatch" in r for r in reasons))
+
+    def test_hdr_not_distinguishable_from_sdr_fails(self):
+        from src.gpu_validation import PausedTransitionPixelOracle
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        # HDR capture erroneously containing SDR values (< 0.150 difference)
+        sdr_as_hdr_patches = self._sample_patches(is_hdr=False)
+        from src.gpu_validation import FboPixelCapture, compute_samples_hash
+        oracle.record_capture(FboPixelCapture(
+            phase="hdr", slot_id=123, epoch=2, frame_generation=2,
+            fbo_format="GL_RGBA16F", is_float=True, width=1920, height=1080,
+            target_properties={"target-trc": "pq", "target-prim": "bt.2020", "target-peak": "1000"},
+            fixture_hash="hevc_hdr_sha256",
+            patch_samples=sdr_as_hdr_patches, raw_samples_hash=compute_samples_hash(sdr_as_hdr_patches),
+            media_path="/path/to/hdr.mp4",
+        ))
+        oracle.record_capture(self._make_capture("return_sdr", is_hdr=False))
+
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("not distinguishable from SDR reference" in r for r in reasons))
+
+    def test_missing_captures_return_unverified(self):
+        from src.gpu_validation import PausedTransitionPixelOracle
+        oracle = PausedTransitionPixelOracle()
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "UNVERIFIED")
+        self.assertTrue(any("missing required capture" in r for r in reasons))
+
+    def test_calibrated_tolerance_boundary(self):
+        """Test calibrated tolerance (0.020): delta 0.018 passes, delta 0.025 fails."""
+        from src.gpu_validation import PausedTransitionPixelOracle
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        oracle.record_capture(self._make_capture("hdr", is_hdr=True))
+
+        # 0.018 <= 0.020 -> PASS
+        oracle.record_capture(self._make_capture("return_sdr", is_hdr=False, delta=0.018))
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "PASS")
+
+        # 0.025 > 0.020 -> FAIL (using fresh oracle to avoid overwrite error)
+        oracle_fail = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        oracle_fail.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        oracle_fail.record_capture(self._make_capture("hdr", is_hdr=True))
+        oracle_fail.record_capture(self._make_capture("return_sdr", is_hdr=False, delta=0.025))
+        status, reasons = oracle_fail.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("exceeds calibrated tolerance 0.02" in r for r in reasons))
+
+    def test_negative_control_substituting_hdr_pixels_fails(self):
+        """ADR-0007 negative control: substitute HDR pixels into SDR evaluation.
+        Even though metadata is valid SDR, pixel evaluation MUST fail deterministically."""
+        from src.gpu_validation import PausedTransitionPixelOracle
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        oracle.record_capture(self._make_capture("hdr", is_hdr=True))
+        oracle.record_capture(self._make_capture("return_sdr", is_hdr=False))
+
+        # Standard evaluate passes
+        self.assertEqual(oracle.evaluate()[0], "PASS")
+
+        # Negative control: substitute HDR pixels -> MUST FAIL
+        status, reasons = oracle.evaluate(substitute_negative_hdr_pixels=True)
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("exceeds calibrated tolerance" in r for r in reasons))
+
+    def test_video_widget_fbo_pixel_readback_and_oracle_callback(self):
+        """MpvVideoWidget._render_pending_frame() performs real glReadPixels extraction on bound FBO."""
+        from src.video_widget import MpvVideoWidget
+        from src.hdr_controller import CommittedOutputState
+        import ctypes
+
+        widget = MpvVideoWidget.__new__(MpvVideoWidget)
+        widget.mpv_ctx = MagicMock()
+        widget.mpv = MagicMock()
+        widget._shutting_down = False
+        widget._render_failed = False
+        widget._force_redraw_pending = True
+        widget._render_pending = False
+        widget.get_width = MagicMock(return_value=320)
+        widget.get_height = MagicMock(return_value=180)
+        widget._cached_scale = 1.0
+        widget.gl_area = MagicMock()
+        slot = MagicMock()
+        slot.resource.fbo_id.value = 42
+        slot.resource.texture_id.value = 99
+        slot.fence = None
+        widget.fbo_pool = MagicMock()
+        widget.fbo_pool.acquire.return_value = slot
+        widget.queue_draw = MagicMock()
+        widget.render_backend_active = "gpu-next"
+        widget.render_frame_generation = 5
+        widget._first_frame_logged = True
+        widget._first_media_frame_exported = True
+        widget._first_media_frame_logged = True
+        widget._fallback_slot = None
+        widget._cached_hdr_support = True
+        widget._cached_hdr_support_valid = True
+        widget._committed_render_epoch = None
+
+        controller = MagicMock()
+        controller.is_publication_suppressed = False
+        controller.is_publication_pending = False
+        controller._shutting_down = False
+        controller.committed_output_state = CommittedOutputState(
+            epoch=7, target_trc="auto", target_prim="auto", target_peak="auto",
+            fbo_format="GL_RGBA8", gdk_color_state="srgb", is_float=False, is_hdr=False
+        )
+        widget.hdr_controller = controller
+
+        oracle_captured = []
+        widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captured.append(kwargs)
+
+        # libmpv may restore the default framebuffer before returning. The
+        # caller-owned slot must be rebound before pixel readback.
+        bound_fbo = [0]
+        def bind_framebuffer(_target, fbo):
+            bound_fbo[0] = fbo
+        widget.mpv_ctx.render.side_effect = lambda **_kwargs: bound_fbo.__setitem__(0, 0)
+
+        # Mock glReadPixels writing real bytes into the ctypes buffer
+        def mock_read_pixels(x, y, w, h, fmt, type_, data_ptr):
+            self.assertEqual(bound_fbo[0], 42)
+            buf = ctypes.cast(data_ptr, ctypes.POINTER(ctypes.c_uint8 * 4)).contents
+            buf[0] = 200
+            buf[1] = 100
+            buf[2] = 50
+            buf[3] = 255
+
+        mock_builder = MagicMock()
+        with patch("src.video_widget.should_render_frame", return_value=True), \
+             patch("src.video_widget.glBindFramebuffer", side_effect=bind_framebuffer), \
+             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
+            widget._render_pending_frame()
+
+        self.assertEqual(len(oracle_captured), 1)
+        cap = oracle_captured[0]
+        self.assertIs(cap["slot"], slot)
+        self.assertEqual(cap["epoch"], 7)
+        self.assertEqual(cap["frame_generation"], 6)
+        self.assertEqual(cap["fbo_format"], "GL_RGBA8")
+        self.assertFalse(cap["is_float"])
+        self.assertEqual(cap["width"], 320)
+        self.assertEqual(cap["height"], 180)
+        # Verify real patch samples were read and converted
+        samples = cap["patch_samples"]
+        self.assertEqual(len(samples), 8)
+        self.assertIn("reference_white", samples)
+        # 200/255 ≈ 0.78431, 100/255 ≈ 0.39215, 50/255 ≈ 0.19607, 255/255 = 1.0
+        r, g, b, a = samples["reference_white"]
+        self.assertAlmostEqual(r, 200 / 255.0, places=4)
+        self.assertAlmostEqual(g, 100 / 255.0, places=4)
+        self.assertAlmostEqual(b, 50 / 255.0, places=4)
+        self.assertAlmostEqual(a, 1.0, places=4)
+
+    def test_paused_single_frame_publication_and_oracle_capture(self):
+        """Under paused playback, exactly one solitary frame is rendered, published,
+        and delivered to the oracle. Subsequent idle ticks produce no extra captures."""
+        from src.video_widget import MpvVideoWidget
+        from src.hdr_controller import CommittedOutputState
+        import ctypes
+
+        widget = MpvVideoWidget.__new__(MpvVideoWidget)
+        widget.mpv_ctx = MagicMock()
+        widget.mpv = MagicMock()
+        widget.mpv.pause = True
+        widget._shutting_down = False
+        widget._render_failed = False
+        widget._force_redraw_pending = True
+        widget._render_pending = False
+        widget.get_width = MagicMock(return_value=320)
+        widget.get_height = MagicMock(return_value=180)
+        widget._cached_scale = 1.0
+        widget.gl_area = MagicMock()
+        slot = MagicMock()
+        slot.resource.fbo_id.value = 42
+        slot.resource.texture_id.value = 99
+        slot.fence = None
+        widget.fbo_pool = MagicMock()
+        widget.fbo_pool.acquire.return_value = slot
+        widget.queue_draw = MagicMock()
+        widget.render_backend_active = "gpu-next"
+        widget.render_frame_generation = 10
+        widget._first_frame_logged = True
+        widget._first_media_frame_exported = True
+        widget._first_media_frame_logged = True
+        widget._fallback_slot = None
+        widget._cached_hdr_support = True
+        widget._cached_hdr_support_valid = True
+        widget._committed_render_epoch = None
+        widget.current_texture = None
+
+        controller = MagicMock()
+        controller.is_publication_suppressed = False
+        controller.is_publication_pending = False
+        controller._shutting_down = False
+        controller.committed_output_state = CommittedOutputState(
+            epoch=1, target_trc="auto", target_prim="auto", target_peak="auto",
+            fbo_format="GL_RGBA8", gdk_color_state="srgb", is_float=False, is_hdr=False
+        )
+        widget.hdr_controller = controller
+
+        oracle_captures = []
+        widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captures.append(kwargs)
+
+        def mock_read_pixels(x, y, w, h, fmt, type_, data_ptr):
+            buf = ctypes.cast(data_ptr, ctypes.POINTER(ctypes.c_uint8 * 4)).contents
+            buf[0], buf[1], buf[2], buf[3] = 255, 255, 255, 255
+
+        mock_texture = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = mock_texture
+
+        # 1. Single paused render event occurs
+        with patch("src.video_widget.should_render_frame", return_value=True), \
+             patch("src.video_widget.glBindFramebuffer"), \
+             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
+            widget._render_pending_frame()
+
+        # Exactly ONE capture delivered, texture published, generation incremented
+        self.assertEqual(len(oracle_captures), 1)
+        self.assertIs(widget.current_texture, mock_texture)
+        self.assertEqual(widget.render_frame_generation, 11)
+        self.assertEqual(oracle_captures[0]["frame_generation"], 11)
+
+        # 2. Subsequent idle tick while paused without new frames to render
+        with patch("src.video_widget.should_render_frame", return_value=False):
+            widget._render_pending_frame()
+
+        # Still exactly ONE capture delivered, generation unchanged
+        self.assertEqual(len(oracle_captures), 1)
+        self.assertEqual(widget.render_frame_generation, 11)
+
+    def test_fbo_dropped_after_readback_is_never_sent_to_oracle(self):
+        """If an FBO is read but subsequently dropped (superseded or sync timeout),
+        it is NEVER published as a texture and NEVER delivered to the oracle."""
+        from src.video_widget import MpvVideoWidget
+        from src.hdr_controller import CommittedOutputState
+        import ctypes
+
+        widget = MpvVideoWidget.__new__(MpvVideoWidget)
+        widget.mpv_ctx = MagicMock()
+        widget.mpv = MagicMock()
+        widget._shutting_down = False
+        widget._render_failed = False
+        widget._force_redraw_pending = True
+        widget._render_pending = False
+        widget.get_width = MagicMock(return_value=320)
+        widget.get_height = MagicMock(return_value=180)
+        widget._cached_scale = 1.0
+        widget.gl_area = MagicMock()
+        slot = MagicMock()
+        slot.resource.fbo_id.value = 42
+        slot.resource.texture_id.value = 99
+        slot.fence = None
+        widget.fbo_pool = MagicMock()
+        widget.fbo_pool.acquire.return_value = slot
+        widget.queue_draw = MagicMock()
+        widget.render_backend_active = "gpu-next"
+        widget.render_frame_generation = 20
+        widget._first_frame_logged = True
+        widget._first_media_frame_exported = True
+        widget._first_media_frame_logged = True
+        widget._fallback_slot = None
+        widget._cached_hdr_support = True
+        widget._cached_hdr_support_valid = True
+        widget._committed_render_epoch = None
+        widget.current_texture = None
+
+        # Scenario: superseded epoch (committed epoch changed to 8 while render_epoch was 7)
+        controller = MagicMock()
+        controller.is_publication_suppressed = False
+        controller.is_publication_pending = False
+        controller._shutting_down = False
+        # Widget starts rendering epoch 7
+        controller.committed_output_state = CommittedOutputState(
+            epoch=7, target_trc="auto", target_prim="auto", target_peak="auto",
+            fbo_format="GL_RGBA8", gdk_color_state="srgb", is_float=False, is_hdr=False
+        )
+        widget.hdr_controller = controller
+
+        oracle_captures = []
+        widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captures.append(kwargs)
+
+        read_pixels_called = []
+        def mock_read_pixels(x, y, w, h, fmt, type_, data_ptr):
+            read_pixels_called.append(True)
+            # Mid-render epoch change to 8!
+            controller.committed_output_state = CommittedOutputState(
+                epoch=8, target_trc="auto", target_prim="auto", target_peak="auto",
+                fbo_format="GL_RGBA8", gdk_color_state="srgb", is_float=False, is_hdr=False
+            )
+
+        mock_builder = MagicMock()
+        with patch("src.video_widget.should_render_frame", return_value=True), \
+             patch("src.video_widget.glBindFramebuffer"), \
+             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
+            widget._render_pending_frame()
+
+        # glReadPixels was called during render...
+        self.assertTrue(len(read_pixels_called) > 0)
+        # ...BUT the frame was superseded and dropped!
+        widget.fbo_pool.release_buffer.assert_called_with(slot)
+        # Texture was NOT published, generation was NOT incremented, oracle was NOT called!
+        self.assertIsNone(widget.current_texture)
+        self.assertEqual(widget.render_frame_generation, 20)
+        self.assertEqual(len(oracle_captures), 0)
+
+    def test_nonblocking_readback_bounded_timeout_and_async_polling(self):
+        """HdrController nonblocking readback polling on GLib main loop and bounded timeout."""
+        from src.hdr_controller import HdrController
+
+        props = {}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
+        # Property starts returning stale "auto"
+        mock_mpv.__getitem__ = lambda _s, k: props.get(k, "auto")
+        mock_mpv.property_observer = lambda name: (lambda fn: fn)
+
+        controller = HdrController(mock_mpv)
+        controller._hdr_mode = "auto"
+        controller._is_hdr_content = True
+
+        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+             patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
+             patch("src.hdr_controller.check_hdr_support", return_value=True):
+            # Test 1: Immediate match succeeds and commits
+            controller.apply_hdr_settings(readback_timeout_sec=0.1)
+            self.assertFalse(controller.is_publication_suppressed)
+            self.assertFalse(controller.is_publication_pending)
+            self.assertIsNotNone(controller.committed_output_state)
+            self.assertEqual(controller.committed_output_state.target_trc, "pq")
+
+            # Test 2: Bounded timeout expires on persistent mismatch
+            mock_mpv.__getitem__ = lambda _s, k: "mismatched"
+            controller._is_hdr_content = False
+            controller.apply_hdr_settings(readback_timeout_sec=0.0)  # zero timeout -> immediate expiration
+            self.assertTrue(controller.is_publication_suppressed)
+            self.assertFalse(controller.is_publication_pending)
+            self.assertIn("bounded readback timeout", str(controller.state_gap_reason))
+
+    def test_paused_transition_defect_reproduction_and_resolution(self):
+        """Defect reproduction for Run 6:
+        Without ADR-0007 forced republication, paused HDR->SDR transition leaves stale
+        Rec.2100 PQ pixels in the FBO, failing the pixel oracle.
+        With ADR-0007, forced render updates the FBO to SDR pixels, passing the oracle.
+        """
+        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+
+        oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        sdr_ref = self._sample_patches(is_hdr=False)
+        hdr_ref = self._sample_patches(is_hdr=True)
+
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False, patches=sdr_ref))
+        oracle.record_capture(self._make_capture("hdr", is_hdr=True, patches=hdr_ref))
+
+        # 1. Defect reproduction:
+        # User switched playlist to SDR on pause. The FBO was NOT re-rendered,
+        # so it still contains the stale HDR Rec.2100 PQ pixels (e.g. reference_white=0.5807 vs SDR 1.0).
+        stale_hdr_pixels_in_fbo = hdr_ref
+        stale_return_capture = FboPixelCapture(
+            phase="return_sdr", slot_id=123, epoch=3, frame_generation=2,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="hevc_sdr_sha256",
+            patch_samples=stale_hdr_pixels_in_fbo, raw_samples_hash=compute_samples_hash(stale_hdr_pixels_in_fbo),
+            media_path="/path/to/sdr.mp4",
+        )
+        oracle.record_capture(stale_return_capture)
+
+        # Oracle evaluation on un-republished FBO MUST FAIL with large delta
+        defect_status, defect_reasons = oracle.evaluate()
+        self.assertEqual(defect_status, "FAIL")
+        self.assertTrue(any("exceeds calibrated tolerance 0.02" in r for r in defect_reasons))
+
+        # 2. Resolution verification (with ADR-0007 forced republication):
+        # A forced render was triggered on epoch change. The FBO was re-rendered into GL_RGBA8 with SDR parameters.
+        resolved_oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
+        resolved_oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False, patches=sdr_ref))
+        resolved_oracle.record_capture(self._make_capture("hdr", is_hdr=True, patches=hdr_ref))
+
+        new_sdr_pixels = self._sample_patches(is_hdr=False, delta=0.003)  # 0.003 < 0.020
+        republished_capture = FboPixelCapture(
+            phase="return_sdr", slot_id=124, epoch=3, frame_generation=3,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="hevc_sdr_sha256",
+            patch_samples=new_sdr_pixels, raw_samples_hash=compute_samples_hash(new_sdr_pixels),
+            media_path="/path/to/sdr.mp4",
+        )
+        resolved_oracle.record_capture(republished_capture)
+
+        resolved_status, resolved_reasons = resolved_oracle.evaluate()
+        self.assertEqual(resolved_status, "PASS")
+        self.assertEqual(resolved_reasons, [])
+
+    def test_oracle_rejects_invalid_phase(self):
+        """Oracle strictly rejects invalid phase strings."""
+        from src.gpu_validation import PausedTransitionPixelOracle
+        oracle = PausedTransitionPixelOracle()
+        oracle.record_capture(self._make_capture("invalid_phase", is_hdr=False))
+        self.assertEqual(len(oracle.provenance_errors), 1)
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("invalid capture phase" in r for r in reasons))
+
+    def test_oracle_rejects_stale_or_non_advancing_epoch(self):
+        """Oracle rejects captures with non-advancing or stale epochs."""
+        from src.gpu_validation import PausedTransitionPixelOracle
+        # Case 1: hdr epoch <= initial_sdr epoch
+        oracle1 = PausedTransitionPixelOracle()
+        oracle1.record_capture(self._make_capture("initial_sdr", is_hdr=False, epoch=2))
+        oracle1.record_capture(self._make_capture("hdr", is_hdr=True, epoch=2))  # 2 <= 2
+        oracle1.record_capture(self._make_capture("return_sdr", is_hdr=False, epoch=3))
+        status, reasons = oracle1.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("stale or non-advancing epoch for hdr" in r for r in reasons))
+
+        # Case 2: return_sdr epoch <= hdr epoch
+        oracle2 = PausedTransitionPixelOracle()
+        oracle2.record_capture(self._make_capture("initial_sdr", is_hdr=False, epoch=1))
+        oracle2.record_capture(self._make_capture("hdr", is_hdr=True, epoch=3))
+        oracle2.record_capture(self._make_capture("return_sdr", is_hdr=False, epoch=2))  # 2 <= 3
+        status, reasons = oracle2.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("stale or non-advancing epoch for return_sdr" in r for r in reasons))
+
+    def test_oracle_rejects_fixture_hash_and_media_mismatch(self):
+        """Oracle rejects fixture hash mismatch and media_path mismatch."""
+        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        # Fixture hash mismatch between initial_sdr and return_sdr
+        oracle1 = PausedTransitionPixelOracle()
+        oracle1.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        oracle1.record_capture(self._make_capture("hdr", is_hdr=True))
+        sdr_patches = self._sample_patches(is_hdr=False)
+        oracle1.record_capture(FboPixelCapture(
+            phase="return_sdr", slot_id=125, epoch=3, frame_generation=3,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="different_sdr_sha256",
+            patch_samples=sdr_patches, raw_samples_hash=compute_samples_hash(sdr_patches),
+            media_path="/path/to/sdr.mp4",
+        ))
+        status, reasons = oracle1.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("SDR reference fixture mismatch" in r for r in reasons))
+
+        # media_path mismatch
+        oracle2 = PausedTransitionPixelOracle()
+        oracle2.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        oracle2.record_capture(self._make_capture("hdr", is_hdr=True))
+        oracle2.record_capture(FboPixelCapture(
+            phase="return_sdr", slot_id=125, epoch=3, frame_generation=3,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="hevc_sdr_sha256",
+            patch_samples=sdr_patches, raw_samples_hash=compute_samples_hash(sdr_patches),
+            media_path="/path/to/other_sdr.mp4",
+        ))
+        status, reasons = oracle2.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("does not match initial_sdr media_path" in r for r in reasons))
+
+    def test_oracle_rejects_empty_or_unconfirmed_target_properties(self):
+        """Oracle rejects empty, unconfirmed, or non-matching target properties."""
+        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        sdr_patches = self._sample_patches(is_hdr=False)
+        # Empty properties
+        oracle = PausedTransitionPixelOracle()
+        oracle.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=101, epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={},
+            fixture_hash="hevc_sdr_sha256",
+            patch_samples=sdr_patches, raw_samples_hash=compute_samples_hash(sdr_patches),
+        ))
+        oracle.record_capture(self._make_capture("hdr", is_hdr=True))
+        oracle.record_capture(self._make_capture("return_sdr", is_hdr=False))
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("empty target_properties" in r for r in reasons))
+
+    def test_oracle_rejects_overwrite_attempt(self):
+        """Oracle strictly rejects overwrite attempts on already accepted phases."""
+        from src.gpu_validation import PausedTransitionPixelOracle
+        oracle = PausedTransitionPixelOracle()
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        # Second attempt to record initial_sdr
+        oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
+        self.assertEqual(len(oracle.provenance_errors), 1)
+        self.assertIn("attempt to overwrite", oracle.provenance_errors[0])
+        status, reasons = oracle.evaluate()
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(any("attempt to overwrite accepted capture" in r for r in reasons))
+
+    def test_oracle_unknown_provenance_returns_unverified(self):
+        """Unknown provenance yields UNVERIFIED, not PASS or FAIL."""
+        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        sdr_patches = self._sample_patches(is_hdr=False)
+        # Unknown fixture hash
+        oracle1 = PausedTransitionPixelOracle()
+        oracle1.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=101, epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="unknown",
+            patch_samples=sdr_patches, raw_samples_hash=compute_samples_hash(sdr_patches),
+        ))
+        oracle1.record_capture(self._make_capture("hdr", is_hdr=True))
+        oracle1.record_capture(self._make_capture("return_sdr", is_hdr=False))
+        status, reasons = oracle1.evaluate()
+        self.assertEqual(status, "UNVERIFIED")
+        self.assertTrue(any("unknown fixture hash provenance" in r for r in reasons))
+
+        # None epoch
+        oracle2 = PausedTransitionPixelOracle()
+        oracle2.record_capture(FboPixelCapture(
+            phase="initial_sdr", slot_id=101, epoch=None, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=1920, height=1080,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="hevc_sdr_sha256",
+            patch_samples=sdr_patches, raw_samples_hash=compute_samples_hash(sdr_patches),
+        ))
+        oracle2.record_capture(self._make_capture("hdr", is_hdr=True))
+        oracle2.record_capture(self._make_capture("return_sdr", is_hdr=False))
+        status, reasons = oracle2.evaluate()
+        self.assertEqual(status, "UNVERIFIED")
+        self.assertTrue(any("unknown epoch provenance" in r for r in reasons))
 
 
 if __name__ == "__main__":

@@ -52,12 +52,14 @@ from .gl_bindings import (
     glFenceSync,
     glFlush,
     glClientWaitSync,
+    glDeleteSync,
     glBindFramebuffer,
     get_gl_string,
     get_proc_address,
 )
 
 from .gl_renderer import GLFramebufferPool, FramebufferSlot
+from .gpu_validation import read_fbo_patch_samples
 from .hdr_controller import HdrController
 from .hdr_detection import check_hdr_support
 from .render_backend import (
@@ -132,6 +134,11 @@ class MpvVideoWidget(Gtk.Widget):
         self._render_terminal_failure = False
         self._first_frame_logged = False
         self._first_media_frame_logged = False
+        self._first_media_frame_exported = False
+        self._exported_media_generation: Optional[tuple[int, int]] = None
+        self._committed_render_epoch: Optional[int] = None
+        self._fbo_pixel_oracle_cb: Optional[Any] = None
+        self._fbo_pixel_oracle_error_cb: Optional[Any] = None
         self._cached_hdr_support = False
         self._cached_hdr_support_valid = False
         self._monitor_signal_id: Optional[int] = None
@@ -208,11 +215,27 @@ class MpvVideoWidget(Gtk.Widget):
         initial conservative value may already have been latched here, so a
         redraw alone is insufficient: refresh this cache from the now-populated
         non-blocking capability cache before selecting the next FBO format.
+
+        Per ADR-0007: check the controller's committed output state and epoch.
+        If publication is suppressed, keep the last-known texture visible and
+        do not force a render. If a new committed state differs from the last
+        rendered epoch, request a forced redraw so paused playback republishes
+        the new FBO format and GDK color state even with zero mpv update flags.
         """
         from .hdr_detection import invalidate_support_decision
         invalidate_support_decision()
         self._cached_hdr_support = check_hdr_support(allow_probe=False)
         self._cached_hdr_support_valid = True
+
+        controller = getattr(self, "hdr_controller", None)
+        if controller:
+            if getattr(controller, "is_publication_suppressed", False):
+                self.queue_draw()
+                return
+            committed = getattr(controller, "committed_output_state", None)
+            if committed is not None:
+                if getattr(self, "_committed_render_epoch", None) != committed.epoch:
+                    self._schedule_render(force_redraw=True)
         self.queue_draw()
 
     def _push_output_hint(self):
@@ -397,6 +420,9 @@ class MpvVideoWidget(Gtk.Widget):
         self._render_failed = False
         self._first_frame_logged = False
         self._first_media_frame_logged = False
+        self._first_media_frame_exported = False
+        self._exported_media_generation = None
+        self._committed_render_epoch = None
         self._update_cached_hdr_support()
 
         display = self.get_display()
@@ -579,12 +605,22 @@ class MpvVideoWidget(Gtk.Widget):
         scaled_w = max(1, scaled_w)
         scaled_h = max(1, scaled_h)
 
-        # NOTE: the "HDR requested but unsupported" warning is emitted by
-        # HdrController.apply_hdr_settings(); calling it here behind
-        # `if is_hdr:` made it unreachable (support was already proven true).
-        is_hdr = self.is_hdr_supported and self.hdr_controller.is_hdr_active
-        has_float = hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT")
-        use_float = is_hdr and has_float
+        controller = getattr(self, "hdr_controller", None)
+        if controller and getattr(controller, "is_publication_suppressed", False):
+            return GLib.SOURCE_REMOVE
+
+        committed = getattr(controller, "committed_output_state", None) if controller else None
+        if committed is not None:
+            use_float = committed.is_float
+            is_hdr = committed.is_hdr
+            color_state_target = committed.gdk_color_state
+            render_epoch = committed.epoch
+        else:
+            is_hdr = self.is_hdr_supported and (self.hdr_controller.is_hdr_active if hasattr(self, "hdr_controller") and self.hdr_controller else False)
+            has_float = hasattr(Gdk.MemoryFormat, "R16G16B16A16_FLOAT")
+            use_float = is_hdr and has_float
+            color_state_target = "rec2100-pq" if is_hdr else "srgb"
+            render_epoch = None
 
         self.gl_area.make_current()
         slot = self.fbo_pool.acquire(scaled_w, scaled_h, is_float=use_float)
@@ -596,6 +632,7 @@ class MpvVideoWidget(Gtk.Widget):
             return GLib.SOURCE_REMOVE
 
         render_error = None
+        pending_pixel_samples = None
         try:
             glBindFramebuffer(GL_FRAMEBUFFER, slot.resource.fbo_id.value)
             target_spec = render_target_spec(
@@ -614,6 +651,19 @@ class MpvVideoWidget(Gtk.Widget):
                     "internal_format": target_spec.internal_format,
                 },
             )
+            if hasattr(self, "_fbo_pixel_oracle_cb") and callable(self._fbo_pixel_oracle_cb):
+                try:
+                    # libmpv may restore the default framebuffer on return.
+                    # Read from the caller-owned FBO that received this frame.
+                    glBindFramebuffer(GL_FRAMEBUFFER, slot.resource.fbo_id.value)
+                    pending_pixel_samples = read_fbo_patch_samples(scaled_w, scaled_h, use_float)
+                except Exception as e:
+                    logging.warning(f"FBO pixel oracle readback failed: {e}")
+                    if hasattr(self, "_fbo_pixel_oracle_error_cb") and callable(self._fbo_pixel_oracle_error_cb):
+                        try:
+                            self._fbo_pixel_oracle_error_cb(str(e))
+                        except Exception:
+                            pass
             if not self._first_frame_logged:
                 logging.info(
                     "Rendered first frame backend=%s target=%dx%d "
@@ -625,17 +675,32 @@ class MpvVideoWidget(Gtk.Widget):
                     target_spec.depth,
                 )
                 self._first_frame_logged = True
-            if not self._first_media_frame_logged:
-                media_frame = media_frame_evidence(self.mpv)
-                if media_frame is not None:
+            rendered_media_frame = None
+            window = getattr(self, "_window", None)
+            raw_ctx_gen = getattr(self, "render_context_generation", 0)
+            ctx_gen = raw_ctx_gen if isinstance(raw_ctx_gen, int) else 0
+            raw_load_gen = getattr(window, "_media_load_generation", 0) if window else 0
+            load_gen = raw_load_gen if isinstance(raw_load_gen, int) else 0
+            exporter = getattr(window, "_diagnostics_exporter", None) if window else None
+            export_completed = getattr(exporter, "export_completed", False) is True if exporter else False
+            shutting_down = getattr(window, "_shutting_down", False) is True if window else False
+            current_gen = (ctx_gen, load_gen)
+
+            if not export_completed and not shutting_down:
+                if getattr(self, "_exported_media_generation", None) != current_gen:
+                    self._first_media_frame_exported = False
+
+            if not self._first_media_frame_exported or not self._first_media_frame_logged:
+                rendered_media_frame = media_frame_evidence(self.mpv)
+                if rendered_media_frame is not None and not self._first_media_frame_logged:
                     logging.info(
                         "Rendered first media frame backend=%s source=%dx%d "
                         "time_pos=%.6f path_token=%s",
                         self.render_backend_active,
-                        media_frame.source_width,
-                        media_frame.source_height,
-                        media_frame.time_pos,
-                        media_frame.path_token,
+                        rendered_media_frame.source_width,
+                        rendered_media_frame.source_height,
+                        rendered_media_frame.time_pos,
+                        rendered_media_frame.path_token,
                     )
                     self._first_media_frame_logged = True
         except Exception as e:
@@ -680,6 +745,30 @@ class MpvVideoWidget(Gtk.Widget):
             except Exception:
                 pass
 
+        superseded = False
+        if self._shutting_down:
+            superseded = True
+        elif controller is not None:
+            if getattr(controller, "_shutting_down", False) or getattr(controller, "is_publication_suppressed", False):
+                superseded = True
+            elif getattr(controller, "is_publication_pending", False):
+                superseded = True
+            elif render_epoch is not None:
+                current_committed = getattr(controller, "committed_output_state", None)
+                if current_committed is None or current_committed.epoch != render_epoch:
+                    superseded = True
+
+        if superseded:
+            if slot.fence:
+                if glDeleteSync:
+                    try:
+                        glDeleteSync(slot.fence)
+                    except Exception:
+                        pass
+                slot.fence = None
+            self.fbo_pool.release_buffer(slot)
+            return GLib.SOURCE_REMOVE
+
         builder = Gdk.GLTextureBuilder()
         builder.set_context(self.gl_area.get_context())
         builder.set_id(slot.resource.texture_id.value)
@@ -691,7 +780,7 @@ class MpvVideoWidget(Gtk.Widget):
         else:
             builder.set_format(Gdk.MemoryFormat.R8G8B8A8)
 
-        if is_hdr:
+        if color_state_target == "rec2100-pq":
             try:
                 builder.set_color_state(Gdk.ColorState.get_rec2100_pq())
                 color_state = "rec2100-pq"
@@ -750,11 +839,62 @@ class MpvVideoWidget(Gtk.Widget):
         self.current_texture = texture
         self.render_color_state = color_state
         self.render_frame_generation += 1
+        if render_epoch is not None:
+            self._committed_render_epoch = render_epoch
+
+        if (
+            pending_pixel_samples is not None
+            and hasattr(self, "_fbo_pixel_oracle_cb")
+            and callable(self._fbo_pixel_oracle_cb)
+        ):
+            try:
+                self._fbo_pixel_oracle_cb(
+                    slot=slot,
+                    epoch=render_epoch,
+                    frame_generation=self.render_frame_generation,
+                    fbo_format=self.render_target_format,
+                    is_float=use_float,
+                    width=scaled_w,
+                    height=scaled_h,
+                    patch_samples=pending_pixel_samples,
+                )
+            except Exception as e:
+                logging.warning(f"FBO pixel oracle callback failed: {e}")
+                if hasattr(self, "_fbo_pixel_oracle_error_cb") and callable(self._fbo_pixel_oracle_error_cb):
+                    try:
+                        self._fbo_pixel_oracle_error_cb(str(e))
+                    except Exception:
+                        pass
+        if (
+            rendered_media_frame is not None
+            and not self._first_media_frame_exported
+            and not export_completed
+            and not shutting_down
+        ):
+            self._first_media_frame_exported = True
+            self._exported_media_generation = current_gen
+            if window and hasattr(window, "on_first_media_frame_published"):
+                idle_add_once(
+                    window.on_first_media_frame_published,
+                    rendered_media_frame,
+                    ctx_gen,
+                    load_gen,
+                )
+            elif window and hasattr(window, "on_first_video_frame"):
+                idle_add_once(window.on_first_video_frame)
         if prev_fallback is not None and prev_fallback is not published_fallback:
             self.fbo_pool.release_buffer(prev_fallback)
 
         self.queue_draw()
         return GLib.SOURCE_REMOVE
+
+    def _handle_first_frame_confirmed(self):
+        window = getattr(self, "_window", None)
+        if window and hasattr(window, "on_first_video_frame"):
+            try:
+                idle_add_once(window.on_first_video_frame)
+            except Exception:
+                logging.exception("Failed to schedule first video frame notification")
 
     def _shutdown_render_context_for_area(self, area: Gtk.GLArea) -> bool:
         """Free GL resources using the GLArea context that owns them."""

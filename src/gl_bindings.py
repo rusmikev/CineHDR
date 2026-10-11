@@ -136,6 +136,19 @@ glClientWaitSync = get_gl_func(
     "glClientWaitSync", ctypes.c_uint, [ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint64]
 )
 glFlush = get_gl_func("glFlush", None, [])
+glReadPixels = get_gl_func(
+    "glReadPixels",
+    None,
+    [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+    ],
+)
 
 # Sync Constants
 GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117
