@@ -8,12 +8,27 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
+import zlib
+
+try:
+    from PIL import Image
+    HAS_PILLOW = True
+except ImportError:
+    Image = None
+    HAS_PILLOW = False
+
+_TESTS_DIR = str(Path(__file__).resolve().parent)
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
 import generate_patterns
+import run_gate2_extended_matrix
 import run_pixel_pipeline
 
 
@@ -889,6 +904,353 @@ class TestProbeContract(unittest.TestCase):
         self.assertIn(".mp4", generator_body)
         self.assertNotIn('return cache_dir / f"{hevc_fixture_stem(mode)}.hevc"', generator_body)
         self.assertNotIn('return cache_dir / f"{hevc_fixture_stem(mode)}.mkv"', generator_body)
+
+
+class TestGate2ScreenshotValidation(unittest.TestCase):
+    """Substantive validation of SDR/HDR screenshot decoding, patches, and subtitles."""
+
+    def _create_synthetic_png(
+        self,
+        size: tuple[int, int] = (320, 180),
+        color: tuple[int, int, int] = (0, 0, 0),
+    ) -> bytes:
+        width, height = size
+        sig = b"\x89PNG\r\n\x1a\n"
+        ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+        ihdr_crc = struct.pack(">I", zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF)
+        ihdr = struct.pack(">I", len(ihdr_data)) + b"IHDR" + ihdr_data + ihdr_crc
+
+        scanline = b"\x00" + bytes(color) * width
+        raw_idat = scanline * height
+        comp_idat = zlib.compress(raw_idat)
+        idat_crc = struct.pack(">I", zlib.crc32(b"IDAT" + comp_idat) & 0xFFFFFFFF)
+        idat = struct.pack(">I", len(comp_idat)) + b"IDAT" + comp_idat + idat_crc
+
+        iend_crc = struct.pack(">I", zlib.crc32(b"IEND") & 0xFFFFFFFF)
+        iend = struct.pack(">I", 0) + b"IEND" + iend_crc
+        return sig + ihdr + idat + iend
+
+    def _create_valid_fixture_image(self, peak_white: int = 255, primary: int = 255):
+        if not HAS_PILLOW or Image is None:
+            raise unittest.SkipTest("Pillow required for fixture image generation")
+        img = Image.new("RGB", (320, 180), (0, 0, 0))
+        # Row 0:
+        # Col 0 (0..80, 0..90): Black (0, 0, 0)
+        # Col 3 (240..320, 0..90): Peak white (peak_white, peak_white, peak_white)
+        for y in range(0, 90):
+            for x in range(240, 320):
+                img.putpixel((x, y), (peak_white, peak_white, peak_white))
+        # Row 1:
+        # Col 0 (0..80, 90..180): Red primary
+        for y in range(90, 180):
+            for x in range(0, 80):
+                img.putpixel((x, y), (primary, 0, 0))
+        # Col 1 (80..160, 90..180): Green primary
+        for y in range(90, 180):
+            for x in range(80, 160):
+                img.putpixel((x, y), (0, primary, 0))
+        # Col 2 (160..240, 90..180): Blue primary
+        for y in range(90, 180):
+            for x in range(160, 240):
+                img.putpixel((x, y), (0, 0, primary))
+        # Col 3 (240..320, 90..180): Neutral gradient
+        for y in range(90, 180):
+            for x in range(240, 320):
+                val = int((x - 240) / 80.0 * primary)
+                img.putpixel((x, y), (val, val, val))
+        return img
+
+    def test_png_chunk_integrity_autonomous(self) -> None:
+        valid_png = self._create_synthetic_png()
+        ok, err, meta = run_gate2_extended_matrix.check_png_chunk_integrity(valid_png)
+        self.assertTrue(ok)
+        self.assertEqual(err, "valid")
+        self.assertIn("IHDR", meta["chunks"])
+        self.assertIn("IDAT", meta["chunks"])
+        self.assertIn("IEND", meta["chunks"])
+
+        # CRC corruption in chunk
+        corrupted_crc = bytearray(valid_png)
+        # Corrupt one byte in the IDAT chunk data without updating CRC
+        idat_pos = valid_png.find(b"IDAT")
+        self.assertGreater(idat_pos, 0)
+        corrupted_crc[idat_pos + 4] ^= 0xFF
+        ok_crc, err_crc, _ = run_gate2_extended_matrix.check_png_chunk_integrity(bytes(corrupted_crc))
+        self.assertFalse(ok_crc)
+        self.assertTrue("crc_mismatch" in err_crc or "corrupted_idat" in err_crc)
+
+    def test_corrupt_png_rejected(self) -> None:
+        passed, reason, _ = run_gate2_extended_matrix.decode_and_validate_png(b"NOT_A_PNG_FILE")
+        self.assertFalse(passed)
+        self.assertEqual(reason, "invalid_png_signature")
+
+        truncated = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 10
+        passed, reason, _ = run_gate2_extended_matrix.decode_and_validate_png(truncated)
+        self.assertFalse(passed)
+        self.assertTrue("truncated" in reason or "corrupted" in reason)
+
+    def test_pillow_unavailable_graceful(self) -> None:
+        valid_png = self._create_synthetic_png()
+        orig_image = run_gate2_extended_matrix.Image
+        try:
+            run_gate2_extended_matrix.Image = None
+            passed, reason, img = run_gate2_extended_matrix.decode_and_validate_png(valid_png)
+            self.assertFalse(passed)
+            self.assertEqual(reason, "pillow_unavailable")
+            self.assertIsNone(img)
+        finally:
+            run_gate2_extended_matrix.Image = orig_image
+
+        if not HAS_PILLOW:
+            passed, reason, img = run_gate2_extended_matrix.decode_and_validate_png(valid_png)
+            self.assertFalse(passed)
+            self.assertEqual(reason, "pillow_unavailable")
+            self.assertIsNone(img)
+
+    def test_wrong_dimensions_rejected(self) -> None:
+        small_png = self._create_synthetic_png(size=(160, 90), color=(100, 100, 100))
+        passed, reason, _ = run_gate2_extended_matrix.decode_and_validate_png(small_png)
+        self.assertFalse(passed)
+        self.assertTrue(reason.startswith("wrong_dimensions"))
+
+    @unittest.skipUnless(HAS_PILLOW, "Pillow required for screenshot decoding")
+    def test_all_black_frame_rejected(self) -> None:
+        black_png = self._create_synthetic_png(size=(320, 180), color=(0, 0, 0))
+        passed, reason, _ = run_gate2_extended_matrix.decode_and_validate_png(black_png)
+        self.assertFalse(passed)
+        self.assertEqual(reason, "all_black_frame")
+
+        faint_black_png = self._create_synthetic_png(size=(320, 180), color=(1, 1, 1))
+        passed, reason, _ = run_gate2_extended_matrix.decode_and_validate_png(faint_black_png)
+        self.assertFalse(passed)
+        self.assertEqual(reason, "all_black_frame")
+
+    @unittest.skipUnless(HAS_PILLOW, "Pillow required for screenshot decoding")
+    def test_all_green_uninitialized_frame_rejected(self) -> None:
+        green_png = self._create_synthetic_png(size=(320, 180), color=(0, 200, 0))
+        passed, reason, _ = run_gate2_extended_matrix.decode_and_validate_png(green_png)
+        self.assertFalse(passed)
+        self.assertEqual(reason, "all_green_frame")
+
+    @unittest.skipUnless(HAS_PILLOW, "Pillow required for screenshot decoding")
+    def test_uniform_flat_frame_rejected(self) -> None:
+        flat_png = self._create_synthetic_png(size=(320, 180), color=(128, 128, 128))
+        passed, reason, _ = run_gate2_extended_matrix.decode_and_validate_png(flat_png)
+        self.assertFalse(passed)
+        self.assertEqual(reason, "uniform_flat_frame")
+
+    @unittest.skipUnless(HAS_PILLOW, "Pillow required for pattern patch validation")
+    def test_valid_pattern_patches_accepted(self) -> None:
+        img_sdr = self._create_valid_fixture_image(peak_white=255, primary=255)
+        passed, reason, details = run_gate2_extended_matrix.validate_pattern_patches(img_sdr)
+        self.assertTrue(passed)
+        self.assertEqual(reason, "valid")
+        self.assertFalse(details["color_accuracy_certified"])
+        self.assertEqual(details["diagnostic_patch_samples"]["black"], (0, 0, 0))
+        self.assertEqual(details["diagnostic_patch_samples"]["white"], (255, 255, 255))
+        self.assertEqual(details["diagnostic_patch_samples"]["red"], (255, 0, 0))
+        self.assertEqual(details["diagnostic_patch_samples"]["green"], (0, 255, 0))
+        self.assertEqual(details["diagnostic_patch_samples"]["blue"], (0, 0, 255))
+        self.assertTrue(details["color_invariants"]["black_floor_pass"])
+        self.assertTrue(details["color_invariants"]["white_neutral_axis_pass"])
+        self.assertTrue(details["color_invariants"]["red_dominance_pass"])
+
+        img_hdr = self._create_valid_fixture_image(peak_white=192, primary=192)
+        passed, reason, details = run_gate2_extended_matrix.validate_pattern_patches(img_hdr)
+        self.assertTrue(passed)
+        self.assertEqual(reason, "valid")
+        self.assertEqual(details["diagnostic_patch_samples"]["white"], (192, 192, 192))
+        self.assertEqual(details["diagnostic_patch_samples"]["red"], (192, 0, 0))
+
+    @unittest.skipUnless(HAS_PILLOW, "Pillow required for pattern patch validation")
+    def test_corrupted_pattern_patches_rejected(self) -> None:
+        # Red patch replaced with green
+        img = self._create_valid_fixture_image()
+        img.putpixel((40, 135), (0, 255, 0))
+        passed, reason, _ = run_gate2_extended_matrix.validate_pattern_patches(img)
+        self.assertFalse(passed)
+        self.assertTrue(reason.startswith("red_patch_not_dominant"))
+
+        # Black patch too bright
+        img = self._create_valid_fixture_image()
+        img.putpixel((40, 45), (100, 100, 100))
+        passed, reason, _ = run_gate2_extended_matrix.validate_pattern_patches(img)
+        self.assertFalse(passed)
+        self.assertTrue(reason.startswith("black_patch_too_bright"))
+
+        # White patch darker than black
+        img = self._create_valid_fixture_image()
+        img.putpixel((280, 45), (0, 0, 0))
+        passed, reason, _ = run_gate2_extended_matrix.validate_pattern_patches(img)
+        self.assertFalse(passed)
+        self.assertTrue(reason.startswith("white_not_brighter_than_black"))
+
+        # White patch non-neutral
+        img = self._create_valid_fixture_image()
+        img.putpixel((280, 45), (255, 100, 100))
+        passed, reason, _ = run_gate2_extended_matrix.validate_pattern_patches(img)
+        self.assertFalse(passed)
+        self.assertTrue(reason.startswith("white_patch_not_neutral"))
+
+        # Green patch not dominant
+        img = self._create_valid_fixture_image()
+        img.putpixel((120, 135), (200, 200, 50))
+        passed, reason, _ = run_gate2_extended_matrix.validate_pattern_patches(img)
+        self.assertFalse(passed)
+        self.assertTrue(reason.startswith("green_patch_not_dominant"))
+
+        # Blue patch not dominant
+        img = self._create_valid_fixture_image()
+        img.putpixel((200, 135), (50, 200, 100))
+        passed, reason, _ = run_gate2_extended_matrix.validate_pattern_patches(img)
+        self.assertFalse(passed)
+        self.assertTrue(reason.startswith("blue_patch_not_dominant"))
+
+    @unittest.skipUnless(HAS_PILLOW, "Pillow required for subtitle overlay validation")
+    def test_subtitle_overlay_validation(self) -> None:
+        base_img = self._create_valid_fixture_image()
+        sub_img = base_img.copy()
+
+        # Add subtitle text (white squares) inside subtitle region (x: 145..175, y: 145..155)
+        for y in range(145, 155):
+            for x in range(145, 175):
+                sub_img.putpixel((x, y), (255, 255, 255))
+
+        passed, reason, details = run_gate2_extended_matrix.validate_subtitle_overlay(base_img, sub_img)
+        self.assertTrue(passed)
+        self.assertEqual(reason, "valid")
+        self.assertEqual(details["changed_outside"], 0)
+        self.assertEqual(details["max_outside_diff"], 0)
+        self.assertGreaterEqual(details["changed_inside"], 50)
+        self.assertGreater(details["avg_inside_lum_increase"], 50.0)
+
+        # Negative test 1: Missing subtitles (identical images)
+        passed_missing, reason_missing, _ = run_gate2_extended_matrix.validate_subtitle_overlay(base_img, base_img)
+        self.assertFalse(passed_missing)
+        self.assertTrue(reason_missing.startswith("missing_subtitles"))
+
+        # Negative test 2: Image altered outside subtitle region (check unconditional max_outside_diff)
+        corrupt_outside = sub_img.copy()
+        corrupt_outside.putpixel((40, 45), (10, 0, 0))
+        passed_outside, reason_outside, details_outside = run_gate2_extended_matrix.validate_subtitle_overlay(base_img, corrupt_outside)
+        self.assertFalse(passed_outside)
+        self.assertTrue(reason_outside.startswith("outside_region_modified"))
+        self.assertEqual(details_outside["max_outside_diff"], 10)
+
+        # Negative test 3: Subtitles darken instead of brightening
+        dark_sub = base_img.copy()
+        for y in range(145, 155):
+            for x in range(145, 175):
+                dark_sub.putpixel((x, y), (0, 0, 0))
+        passed_dark, reason_dark, _ = run_gate2_extended_matrix.validate_subtitle_overlay(base_img, dark_sub)
+        self.assertFalse(passed_dark)
+        self.assertTrue(reason_dark.startswith("subtitles_not_bright"))
+
+    def test_w4_hwdec_auto_requires_actual_hardware_decoder(self) -> None:
+        fake_image = mock.MagicMock()
+
+        def run_matrix(active_decoder, software_only=False, requested_decoder="auto"):
+            with tempfile.TemporaryDirectory() as directory:
+                temp_dir = Path(directory)
+
+                def fake_probe(_binary, _fixture, _mode, api, decode_mode="no", _delivery="paused", env_overrides=None):
+                    if env_overrides and "CINEHDR_PROBE_SCREENSHOT_PATH" in env_overrides:
+                        Path(env_overrides["CINEHDR_PROBE_SCREENSHOT_PATH"]).write_bytes(b"fake_png")
+                    decode = {"requested": requested_decoder if decode_mode == "auto" else decode_mode}
+                    if decode_mode == "auto":
+                        if active_decoder is not ...:
+                            decode["active"] = active_decoder
+                    else:
+                        decode["active"] = "no"
+                    return {
+                        "active_api": api,
+                        "gl": {"vendor": "Mesa", "renderer": "llvmpipe" if software_only else "AMD Radeon"},
+                        "decode": decode,
+                        "screenshot": {"status": 0, "error": None},
+                        "subtitles": {"ready": True},
+                    }
+
+                with mock.patch.object(generate_patterns, "ensure_fixture", return_value={"path": str(temp_dir / "fixture.mkv")}), \
+                     mock.patch.object(run_gate2_extended_matrix, "run_probe_raw", side_effect=fake_probe), \
+                     mock.patch.object(run_gate2_extended_matrix, "decode_and_validate_png", return_value=(True, "valid", fake_image)), \
+                     mock.patch.object(run_gate2_extended_matrix, "validate_pattern_patches", return_value=(True, "valid", {})), \
+                     mock.patch.object(run_gate2_extended_matrix, "validate_subtitle_overlay", return_value=(True, "valid", {})):
+                    return run_gate2_extended_matrix.test_w4_screenshot_matrix(
+                        temp_dir / "probe", temp_dir, temp_dir, software_only=software_only
+                    )
+
+        for active in ("no", "auto", "unknown", "bogus", "", None, ..., 1):
+            with self.subTest(active=active):
+                result = run_matrix(active)
+                row = result["results"]["hdr_hwdec_auto"]
+                self.assertEqual(row["verdict"], "FAIL")
+                self.assertIn("active_hardware_decoder", row["reason"])
+                self.assertEqual(row["probe_evidence"]["requested_decoder"], "auto")
+                self.assertEqual(row["probe_evidence"]["active_decoder"], None if active is ... else active)
+                self.assertEqual(result["verdict"], "FAIL")
+                self.assertEqual(result["results"]["hdr_next"]["verdict"], "PASS")
+                self.assertEqual(result["results"]["hdr_legacy_ab"]["verdict"], "PASS")
+
+        for active in ("vaapi", "vaapi-copy", "nvdec-copy"):
+            with self.subTest(active=active):
+                self.assertEqual(run_matrix(active)["results"]["hdr_hwdec_auto"]["verdict"], "PASS")
+
+        wrong_request = run_matrix("vaapi-copy", requested_decoder="no")
+        self.assertEqual(wrong_request["results"]["hdr_hwdec_auto"]["verdict"], "FAIL")
+        self.assertIn("active_hardware_decoder", wrong_request["results"]["hdr_hwdec_auto"]["reason"])
+        self.assertEqual(wrong_request["results"]["hdr_hwdec_auto"]["probe_evidence"]["requested_decoder"], "no")
+        self.assertEqual(wrong_request["verdict"], "FAIL")
+
+        software = run_matrix("no", software_only=True)
+        self.assertEqual(software["results"]["hdr_hwdec_auto"]["verdict"], "NOT_RUN")
+        self.assertEqual(software["results"]["hdr_next"]["verdict"], "PASS")
+
+    def test_software_only_probe_evidence_validation(self) -> None:
+        # Software-only probe result with sw renderer and no hwdec
+        good_probe = {
+            "active_api": "opengl-next",
+            "gl": {"vendor": "Mesa", "renderer": "llvmpipe (LLVM 18.1.8)"},
+            "decode": {"requested": "no", "active": "no"},
+            "screenshot": {"status": 0, "error": None},
+        }
+        ok, err, ev = run_gate2_extended_matrix._validate_probe_evidence(good_probe, "opengl-next", software_only=True)
+        self.assertTrue(ok)
+        self.assertIsNone(err)
+        self.assertEqual(ev["active_api"], "opengl-next")
+        self.assertEqual(ev["active_decoder"], "no")
+
+        # Violation: hwdec active when software_only is required
+        hwdec_probe = {
+            "active_api": "opengl-next",
+            "gl": {"vendor": "Mesa", "renderer": "llvmpipe"},
+            "decode": {"requested": "no", "active": "vaapi-copy"},
+            "screenshot": {"status": 0, "error": None},
+        }
+        ok_hw, err_hw, _ = run_gate2_extended_matrix._validate_probe_evidence(hwdec_probe, "opengl-next", software_only=True)
+        self.assertFalse(ok_hw)
+        self.assertIn("software_only_violation", err_hw)
+
+        # Violation: hardware GL renderer when software_only is required
+        hw_gl_probe = {
+            "active_api": "opengl-next",
+            "gl": {"vendor": "AMD", "renderer": "AMD Radeon RX 7900 XTX"},
+            "decode": {"requested": "no", "active": "no"},
+            "screenshot": {"status": 0, "error": None},
+        }
+        ok_gl, err_gl, _ = run_gate2_extended_matrix._validate_probe_evidence(hw_gl_probe, "opengl-next", software_only=True)
+        self.assertFalse(ok_gl)
+        self.assertIn("software_only_violation", err_gl)
+
+        # Screenshot command failed
+        fail_shot = {
+            "active_api": "opengl-next",
+            "gl": {"vendor": "Mesa", "renderer": "llvmpipe"},
+            "decode": {"requested": "no", "active": "no"},
+            "screenshot": {"status": -1, "error": "file write error"},
+        }
+        ok_shot, err_shot, _ = run_gate2_extended_matrix._validate_probe_evidence(fail_shot, "opengl-next", software_only=True)
+        self.assertFalse(ok_shot)
+        self.assertIn("screenshot_command_failed", err_shot)
 
 
 if __name__ == "__main__":

@@ -64,6 +64,13 @@ struct probe_result {
     int gradient_ramp_count;
     float subtitle_sample[3];
     bool subtitle_sampled;
+    bool screenshot_requested;
+    int screenshot_command_status;
+    const char *screenshot_error;
+    bool subtitle_requested;
+    int subtitle_track_id;
+    bool subtitle_ready;
+    const char *subtitle_error;
     int rendered_frames;
     GLenum gl_error;
     double frame_time_mean_ms;
@@ -314,6 +321,8 @@ static int capture(const char *video_file, const char *mode, const char *api,
     }
     if (dither_depth_opt && set_option(mpv, "dither-depth", dither_depth_opt) < 0)
         goto done;
+    if (sub_file_opt && set_option(mpv, "sub-files", sub_file_opt) < 0)
+        goto done;
     int error = mpv_initialize(mpv);
     if (error < 0) {
         fprintf(stderr, "mpv_initialize failed: %s\n", mpv_error_string(error));
@@ -362,10 +371,6 @@ static int capture(const char *video_file, const char *mode, const char *api,
     if (error < 0) {
         fprintf(stderr, "loadfile failed: %s\n", mpv_error_string(error));
         goto done;
-    }
-    if (sub_file_opt) {
-        const char *sub_cmd[] = {"sub-add", sub_file_opt, "select", NULL};
-        mpv_command(mpv, sub_cmd);
     }
     bool last_frame_nonempty = false;
     bool last_frame_nonuniform = false;
@@ -533,11 +538,33 @@ static int capture(const char *video_file, const char *mode, const char *api,
         goto done;
     }
 
+    if (sub_file_opt) {
+        result->subtitle_requested = true;
+        int64_t current_sid = 0;
+        int sid_rc = mpv_get_property(mpv, "sid", MPV_FORMAT_INT64, &current_sid);
+        if (sid_rc < 0 || current_sid <= 0) {
+            result->subtitle_ready = false;
+            result->subtitle_error = (sid_rc < 0) ? mpv_error_string(sid_rc) : "no active subtitle track";
+        } else {
+            result->subtitle_track_id = (int) current_sid;
+            result->subtitle_ready = true;
+            result->subtitle_error = NULL;
+        }
+    }
+
     const char *screenshot_path = getenv("CINEHDR_PROBE_SCREENSHOT_PATH");
     if (screenshot_path) {
+        result->screenshot_requested = true;
         const char *shot_mode = getenv("CINEHDR_PROBE_SCREENSHOT_MODE");
         const char *shot_cmd[] = {"screenshot-to-file", screenshot_path, shot_mode ? shot_mode : "video", NULL};
-        mpv_command(mpv, shot_cmd);
+        int shot_rc = mpv_command(mpv, shot_cmd);
+        result->screenshot_command_status = shot_rc;
+        if (shot_rc < 0) {
+            result->screenshot_error = mpv_error_string(shot_rc);
+            fprintf(stderr, "screenshot-to-file failed: %d (%s)\n", shot_rc, result->screenshot_error);
+        } else {
+            result->screenshot_error = NULL;
+        }
     }
 
     const size_t component_count = (size_t) FRAME_WIDTH * FRAME_HEIGHT * 4;
@@ -829,6 +856,20 @@ static void print_result(const char *mode, const char *api, const char *timestam
                result->subtitle_sample[0], result->subtitle_sample[1], result->subtitle_sample[2]);
     }
     fputs("},\n  \"errors\": {\"mpv\": null, \"fbo\": null, \"gl\": null},\n", stdout);
+    if (result->screenshot_requested) {
+        fputs("  \"screenshot\": {", stdout);
+        printf("\"status\": %d, \"error\": ", result->screenshot_command_status);
+        json_string(result->screenshot_error);
+        fputs("},\n", stdout);
+    }
+    if (result->subtitle_requested) {
+        fputs("  \"subtitles\": {", stdout);
+        printf("\"ready\": %s, \"track_id\": %d, \"error\": ",
+               result->subtitle_ready ? "true" : "false",
+               result->subtitle_track_id);
+        json_string(result->subtitle_error);
+        fputs("},\n", stdout);
+    }
     if (result->benchmark_frame_count > 0) {
         printf("  \"performance\": {\n");
         printf("    \"total_frames\": %d,\n", result->benchmark_frame_count);
