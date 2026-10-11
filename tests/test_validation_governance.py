@@ -34,7 +34,8 @@ class ValidationGovernanceTests(unittest.TestCase):
     def test_agent_rules_require_bounded_hardware_attempts(self):
         agents = read("AGENTS.md")
         self.assertIn("0006-bounded-validation-governance.md", agents)
-        self.assertIn("at most two real-hardware executions", agents)
+        self.assertIn("Fixed numerical attempt limits are removed", agents)
+        self.assertIn("material difference from the previous run", agents)
         self.assertIn("external test agent is an Operator", agents)
         self.assertIn("Never repeat an unchanged soak", agents)
 
@@ -57,11 +58,13 @@ class ValidationGovernanceTests(unittest.TestCase):
             self.assertIn("review-only", current)
             self.assertIn("one failed dispatch", normalized.lower())
             self.assertIn("two materially distinct local", normalized)
+            self.assertIn("Gemini-first", current)
+            self.assertIn("No mandatory Sol -> Astra sequence", normalized)
         self.assertIn("one active implementation agent", policy)
         self.assertIn("non-overlapping file ownership", policy)
-        self.assertIn("Do not repeat an\nunchanged full suite", policy)
+        self.assertIn("Do not repeat an unchanged full suite", " ".join(policy.split()))
 
-    def test_gemini_entry_is_operator_bounded_and_separate(self):
+    def test_gemini_engineer_and_operator_roles_are_separate(self):
         agents = read("AGENTS.md")
         gemini = read("GEMINI.md")
         adr = read("docs/adr/0006-bounded-validation-governance.md")
@@ -73,22 +76,37 @@ class ValidationGovernanceTests(unittest.TestCase):
         self.assertIn("do not silently omit artifacts or infer PASS", gemini)
         self.assertIn("self-repair", gemini)
         self.assertIn("cannot be combined with a hardware Operator", gemini)
-        self.assertIn("`gpt-6-astra`, high", adr)
+        self.assertIn("qualified separate reviewer", adr)
+        self.assertIn("default Engineer", gemini)
+        self.assertIn("The author cannot accept its own sensitive work", gemini)
         self.assertNotIn("gpt-5.6-", adr)
         self.assertNotIn("GEMINI.md", read(".gitignore").splitlines())
 
     def test_adr_defines_attempt_budget_and_claim_oracles(self):
         adr = read("docs/adr/0006-bounded-validation-governance.md")
         for required in (
-            "default budget of two real-hardware executions",
-            "one repeat after an evidence review identifies a single material change",
-            "A third execution is exceptional",
-            "explicit user approval for that third run",
+            "Fixed numerical attempt limits per family are removed",
+            "material difference from the previous run",
+            "Unchanged repeats without diagnostic purpose are strictly prohibited",
             "External test executor",
             "Claim-to-oracle rule",
             "Machine-readable evidence must be sanitized",
         ):
             self.assertIn(required, adr)
+
+    def test_budget_routing_cannot_waive_independence_or_reset_attempts(self):
+        policy = " ".join(read("docs/MODEL_POLICY.md").split())
+        self.assertIn("Do not automatically launch GPT agents", policy)
+        self.assertIn("API prices are not Codex subscription usage", policy)
+        self.assertIn("No author may accept its own sensitive work", policy)
+        self.assertIn("separate reviewer session or agent that did not author", policy)
+        self.assertIn("Policy/model changes do not reset hardware budgets", policy)
+        self.assertIn("explicit user run approval", policy)
+        adr = " ".join(read("docs/adr/0006-bounded-validation-governance.md").split())
+        self.assertIn("both retained failures", adr)
+        self.assertIn("does not reset attempt counts, release existing HOLD rows", adr)
+        development = " ".join(read("docs/GPU_NEXT_DEVELOPMENT.md").split())
+        self.assertIn("does not reset this exhausted attempt budget", development)
 
     def test_operator_template_is_immutable_and_single_run(self):
         template = read("docs/GPU_TEST_HANDOFF_TEMPLATE.md")

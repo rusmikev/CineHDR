@@ -53,6 +53,14 @@ outcomes, not token accounting promised by any subscription plan.
 | 2026-08-25 | Intel/NVIDIA smoke oracle v2 | Architecture and evidence contract: primary `gpt-5.6-sol`, high; bounded implementation in the primary session because proactive delegation was unavailable | Replaced the historical aggregate 16-process predicate with independently selectable vendor/fixture rows and no automatic retry. An initial empty render, missing fixture, wrong media path, stale runtime, API fallback, stub, early exit, or file warning now prevents PASS. | Added path-safe loaded-media-frame evidence, pinned fixture/runtime/API/GPU/HDR checks, clean preflight, sanitized JSON plus raw-log hashes, and one-pinned-Flatpak execution for both Intel and NVIDIA. Local unit/source checks only; real laptop status remains `NOT_RUN` until an exact source commit and rebuilt Flatpak commit exist. |
 | 2026-09-23 | Flatpak GPU Next validation attempt family | Operator: target hardware (Gemini/User) | Run 1 (09:59:12 UTC): quick playback WARN on integrated iGPU (hwdec=no). Run 2 (10:10:05 UTC): GL probe on target dGPU. Run 3 (11:37:47 UTC, user authorized): quick playback WARN on target discrete GPU with opengl-next and vaapi-copy. | WARN (exit 0). Target discrete GPU render, active opengl-next, and active vaapi-copy confirmed. Physical decode GPU remains Unknown. VO drop observed growth after baseline: 0 (initial sample counter: 21). Fullscreen and multiple RPU warnings unresolved; Gate 2W and Dolby Vision validation remain open. |
 | 2026-09-24 | Target GNOME Wayland color-management trace capture (Run 2) and Gate 2W audit | Operator: target hardware (Gemini/User) | Run 1: initial passive trace under GNOME (wayland-trace-20260924-133500); Run 2: single-shot trace capture script (wayland-trace-MgsoJA) after parser fix. Two-run budget exhausted. | Offline trace parser PASS (status: PASS, ready -> set_image_description -> commit on surface #61). Active API and Session status for this capture remain Unknown (no contemporaneous Copy Report). 1514 attaches logged as client protocol calls, not confirmed presented frames. Combined renderer+submission row placed on HOLD ("нет свидетельства из той же сессии"). Gate 2W remains OPEN. Previously accepted independent rows preserved. No further hardware runs permitted without Sol proposal, Astra review, and user authorization. |
+| 2026-09-26 | Target GNOME Wayland color-management trace capture (Run 3, Candidate v4) and Gate 2W narrow row acceptance | Operator: target hardware (Gemini/User); Engineer: Gemini | Run 1 (2026-09-24): initial passive trace under GNOME (`wayland-trace-20260924-133500`). Run 2 (2026-09-24): single-shot trace (`wayland-trace-MgsoJA`) with parser PASS but missing contemporaneous Copy Report -> HOLD. Run 3 (2026-09-26, user-authorized exceptional ADR-0006 run): single-shot trace (`wayland-trace-Z4GghM`, script SHA-256 `1139ef43...`) on Candidate v4 (app commit `8ed86c0b...`, target discrete GPU). | PASS (exit 0). Synchronous autonomous diagnostics export (`first-media-frame-confirmed`) confirmed active `opengl-next`, `session_status=active`, `render_target=GL_RGBA16F` (depth 16), `Gdk.ColorState=Rec.2100 PQ`, and `vaapi-copy` in the same session as Wayland color-management protocol submission and commit on surface #61 (`io.github.rusmikev.CineHDR`). Narrow correlated row accepted as PASS. Cleanup status raw `FAILED_STILL_RUNNING` separated from subsequent observation (`CONFIRMED_ABSENT` at 07:50:18 UTC). Gate 2W remains OPEN overall: this correlated GPU Next first-frame/ready/set/commit observation does not by itself establish the complete SDR→HDR→SDR→HDR publication matrix or the separate legacy backend protocol row. Direct scanout, display photometry, and per-frame linkage are explicit non-claims; KDE was not started. The previously accepted GDK publication matrix retains its separate status on its original stack. |
+| 2026-10-03 | Gate 2W Run 4 offline qualification: SDR fixture reproduction, Flatpak library provenance proposal, and rerun brief | Engineer: Gemini | Restored SDR fixture SHA-256 `41393a0e...` with FFmpeg 8.1.2 Lavf62.12.102 (preserving `2ec07e...`); dry-run preflight confirmed VERIFIED for both fixtures. Identified Flatpak `/app/lib/` provenance blocker against `publication_runtime_errors`; added negative regression tests reproducing rejection and foreign library substitution; evaluated under MODEL_POLICY.md and prepared ADR amendment proposal without editing product code; added ADR-0006 Gate 2W Run 4 rerun brief. | All 432 unit tests pass cleanly. No hardware run executed; Gate 2W remains OPEN pending independent review of the proposal and user authorization. |
+| 2026-10-04 | Gate 2W oracle hardening & Astra high review blocker resolution | Engineer: Gemini | Resolved 4 reproduced blockers from Astra high review: eliminated cross-connection ID space confusion by unconditionally rejecting descriptor ID recreation on the primary composite row (`len(all_creations) > 1`), avoiding fragile heuristics while preserving single-creation Attempt 3; rejected `unset_image_description` between `set_image_description` and `commit`; protected `cleanup_status.json` from `EXIT` handler overwrite; ensured fail-closed handling in `run_wayland_publication_validation.sh` on missing `info` via `flatpak ps`. Added negative regression tests including foreign `wl_callback` ID deletion across multiple registries. | All 481 unit tests pass cleanly (Attempt 3 SHA-256 `2e9d5de1...` verified PASS). `git diff --check` clean. Ready for independent Astra high re-review without build or hardware run; Gate 2W remains OPEN, Run 4 remains HOLD. |
+| 2026-10-04 | Gate 2W Run 4 oracle and launcher independent review | Reviewer: `gpt-6-astra`, high (review only) | Independent review of Revision 2 packet and full diff against HEAD `9010e5a`; verified resolution of all 4 blockers without new connection heuristics | VERDICT: ACCEPTED / PASS. Confirmed that unconditional rejection of descriptor ID reuse on the primary composite row (`len(all_creations) > 1`) eliminates the reproduced false PASS from a foreign delete_id during descriptor ID reuse; Attempt 3 narrow row remains valid (`#51` created once, `ready(7)` -> `set` -> `commit`); `unset_image_description` invalidation, `EXIT` trap cleanup preservation, and fail-closed missing-info handling verified. Clears the independent oracle-review prerequisite; Candidate v5 snapshot and local Flatpak build remain separate planned steps. Gate 2W remains OPEN, Run 4 remains on HOLD pending explicit hardware authorization. |
+
+| 2026-10-04 | Gate 2W Run 5 exception and execution brief | Primary Codex engineering; independent `gpt-6-astra`, high review only | First review required exact GPU/runtime/host identity, an enclosing deadline, failure-safe artifact retention and corrected claim boundary; focused re-review accepted all four | Candidate v6 bundle and fixtures verified by SHA-256; 149 focused unit tests and governance checks passed, shell syntax and `git diff --check` clean. Reviewer accepted one bounded Run 5 proposal; installation and hardware execution still await separate explicit user approval. Gate 2W stays OPEN / Run 4 row HOLD. |
+| 2026-10-04 | Gate 2W Run 5 live validation | Primary Codex Operator following independently accepted bounded brief | One authorized execution only; no retry. Initial legacy SDR passed, HDR switch failed after a file-error event; gpu-next not run | Raw logs and sanitized JSON hashed; test instance cleanup CLEAN and absent. Candidate v5 restored and verified. Gate 2W OPEN, multi-phase row HOLD; HDR file-error root cause unverified. |
+
 
 ## Initial observation
 
@@ -158,3 +166,211 @@ correction and one Architect-requested fix were sufficient; no task required
   - `wayland-client.raw.log`: SHA-256 `ba775d0a4ba212168ec6e07dea1614a6ce0d61913a2aa251812fa497c90b3578`
   - Capture script: `validation-reports/capture_wayland_trace.sh` (SHA-256 `7d7b152dc403445a9e064aaa938653ee17bb89a30ee12223b6ce860101332f67`)
   - Raw logs and private media paths remain strictly uncommitted.
+
+
+### 2026-09-25 User-requested model routing and budget revision
+
+- Scope: shared policy, Codex/Gemini entry points, ADR-0006 routing amendment,
+  current Gate 2W guidance and static governance checks. Performed in the
+  current Codex session without spawning additional agents; the exact serving
+  model identifier was not exposed to this session. This is a policy revision,
+  not an independent acceptance review of the application changes.
+- Gemini is the default bounded Engineer; GPT-6 Luna serves prescribed low-risk
+  work, Sol difficult engineering/proposals/reviews and Astra selective difficult
+  or high-risk work. Removed the compulsory Sol-to-Astra sequence and the
+  provider-wide restriction of Gemini to Operator or Astra to Reviewer.
+- Independent review remains mandatory at sensitive boundaries. It must be a
+  separate qualified session/agent with source and evidence access. A hardware
+  Operator still cannot repair its own execution or accept a row. Actual model
+  availability and the user's budget preference govern routing.
+- Official OpenAI model and Codex usage documentation informed the route
+  defaults; API pricing is not treated as a subscription quota. No fixed quota
+  or unverified Gemini version is prescribed.
+- GNOME remains first; KDE follows verification of the core GNOME path. Gate 2W
+  remains OPEN and its exhausted GNOME capture row remains HOLD. Existing local
+  and hardware attempt counts are preserved. Pending W4 and diagnostics export
+  patches are not accepted or changed by this revision.
+- Validation: focused static governance tests and policy diff checks; no build,
+  playback, hardware execution, commit, push or pull request. Detailed test
+  result is recorded with the completed task rather than implying runtime proof.
+
+### 2026-09-26 Target GNOME Wayland trace capture Attempt 3 and Gate 2W narrow row acceptance
+
+- **Environment and Provenance**:
+  - Source checkout base: Git commit `9010e5a4a473aa90ae35ef5bb22b27dacf373d6e`.
+  - Installed system Flatpak candidate v4:
+    - App commit: `8ed86c0b54694b75d1aaa9be75956d1d3a9d075901d90695e4e0d3d144970813`.
+    - Runtime commit: `b1935f7a673108616d4fd84564f15cefc9f637481472a8d4d2f0945375d41f4b` (`org.gnome.Platform/x86_64/50`).
+    - Bundle package: `validation-reports/candidate-v4/io.github.rusmikev.CineHDR-candidate-v4.flatpak`
+      (SHA-256 `54f71856ea224f85834dfb15d717d76ff4136288c7493d0d4cab0e12fcf439f2`).
+  - Target discrete GPU: `AMD Radeon (radeonsi, gfx1200, ACO, DRM 3.64)`.
+  - Mesa / GL version: `OpenGL ES 3.2 Mesa 26.2.2 (git-3281a69a8b)`.
+- **Target Hardware Execution (Attempt 3, Exceptional User-Authorized Brief)**:
+  - History of 3 attempts preserved:
+    - Run 1 (2026-09-24, `wayland-trace-20260924-133500`): initial passive trace under GNOME.
+    - Run 2 (2026-09-24, `wayland-trace-MgsoJA`): single-shot trace capture after parser fix; offline parser PASS, but active API and session status were Unknown (no contemporaneous Copy Report), placing combined row on HOLD ("нет свидетельства из той же сессии"). Two-run budget exhausted.
+    - Run 3 (2026-09-26, `wayland-trace-Z4GghM`): single-shot execution under approved ADR-0006 brief using corrected script `validation-reports/capture_wayland_trace_attempt3_corrected.sh` (SHA-256 `1139ef43bf88aa5dffad0e522e01fc4f9e2048b899fad2c465fbbb556adac3e6`).
+  - Monitored Flatpak instance ID `2470237098` across session window `2026-09-26T07:47:04.757041Z` to `2026-09-26T07:47:16.897379Z`.
+  - Script exit code: `0`; process exit code: `130` (graceful SIGINT termination after facts acquisition).
+  - Stop reason: `FACTS_VERIFIED`.
+  - Autonomous diagnostics export: `first-media-frame-confirmed` triggered at `2026-09-26T07:47:15.715399+00:00`
+    (`video_output_diagnostics.json`, SHA-256 `164e8bca3f1004f17fdbb2079338c37d57669abea7d70427c4d0f9e14af6f9b7`):
+    - Active API: `opengl-next`, session status: `active`.
+    - Render target format: `GL_RGBA16F`, depth: 16.
+    - GDK Color State: `Rec.2100 PQ (published texture)`.
+    - Active decoder: `vaapi-copy`.
+    - Evidence status: `CONFIRMED`, gaps: `[]`.
+    - Verified report text hash: `32c46f79b490d76f00b8011d41b8ea6976e2e6a66b5740ba6ef2c98758472ffd`.
+  - Offline Wayland trace parser evaluated `wayland-client.raw.log` (SHA-256 `2e9d5de1a514986d1cbcb88d0b6d6312725e44e065e7fae7b77f40c3b77b107c`)
+    and reported status `PASS` (`wayland-trace-validation.json`, SHA-256 `fa5d05e219929be2637131a8a7b076f358ce9f996454bce35eebd1af66cef821`):
+    - Image description `51` ready event at index 643.
+    - `wl_surface#61` color management surface `64` received `set_image_description` at index 953 followed by `commit` at index 968.
+    - Toplevel application ownership verified: `io.github.rusmikev.CineHDR`.
+    - Surface buffer attaches: 5 total (4 post-description).
+- **Process Absence and Cleanup Observation**:
+  - Raw `cleanup_status.txt` (SHA-256 `d7a91e51b28326614450b962eefeeb5c108ebc4ceea94e02dae9286b5e96c0c6`) recorded `FAILED_STILL_RUNNING` due to polling within 0.2s of `flatpak kill` while container was tearing down.
+  - Independent subsequent check confirmed instance `2470237098` was completely absent in `flatpak ps` at `2026-09-26T07:50:18.675659+00:00`.
+  - The exact cause of the cleanup delay remains unproven without dedicated profiling.
+- **Evidence Adjudication and Gate Status**:
+  - The narrow row requiring simultaneous proof of active `opengl-next` renderer and Wayland color-management protocol submission in the same session is accepted as `PASS` (`session_facts.json`, SHA-256 `ca73ebec0e1268bc3a64a719cbd9a818f4c8c276616a05efce77c4f75ecea725`).
+  - Gate 2W remains `OPEN`.
+  - Non-claims explicitly maintained per ADR-0006 (boundaries of client protocol evidence, not added blockers):
+    - Physical display output (photometry / photon measurement) is not certified by this client trace.
+    - Compositor transformation / direct scanout / zero-copy presentation is not proven.
+    - Per-frame client-to-compositor presentation linkage is not proven.
+    - Pixel / color accuracy under Wayland compositor remains a separate verification track.
+  - Remaining open requirements under the accepted matrix:
+    - GNOME: the accepted `opengl-next` trace covers one backend. ADR-0004 still
+      needs a separate legacy `opengl` process with passing GDK publication report
+      and same-session manager `perceptual`/`done`, ready image description,
+      perceptual `set_image_description`, then CineHDR surface commit. The surface
+      encoding may be compositor-preferred across source texture states.
+    - KDE/KWin remains `UNAVAILABLE` pending upstream support; its row has no
+      accepted compositor submission evidence.
+    - Resize, fullscreen, teardown, and forced SDR/PQ surface alternation are
+      not conditions of this Gate 2W row. Gate 1/2 lifecycle and publication rows
+      retain their separate status. Absence of local reports does not establish
+      a zero attempt count.
+- **Retained Local Artifacts (Private)**:
+  - Local directory: `validation-reports/wayland-trace-Z4GghM/`
+  - `session_facts.json`: SHA-256 `ca73ebec0e1268bc3a64a719cbd9a818f4c8c276616a05efce77c4f75ecea725`
+  - `wayland-trace-validation.json`: SHA-256 `fa5d05e219929be2637131a8a7b076f358ce9f996454bce35eebd1af66cef821`
+  - `video_output_diagnostics.json`: SHA-256 `164e8bca3f1004f17fdbb2079338c37d57669abea7d70427c4d0f9e14af6f9b7`
+  - `video_output_diagnostics.txt`: SHA-256 `32c46f79b490d76f00b8011d41b8ea6976e2e6a66b5740ba6ef2c98758472ffd`
+  - `wayland-client.raw.log`: SHA-256 `2e9d5de1a514986d1cbcb88d0b6d6312725e44e065e7fae7b77f40c3b77b107c`
+  - `instance.txt`: SHA-256 `ee9044c5c0084dbdb9c6b613acce2ad6e3b88aefbf5afda81bc73756dbd3f5dd`
+  - `instance_info`: SHA-256 `e84509710af804b367da4bd8f1e8f62b5f0f076fcfce35d98ac3ae4ccc46b349`
+  - `exit_code.txt`: SHA-256 `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa`
+  - `process_exit_code.txt`: SHA-256 `f5bde7eb9f6c71611dc5726e8aca3eb4eba3e386da49e0a4ed5c295a90a73a0d`
+  - `stop_reason.txt`: SHA-256 `33c555218a04b0414dffa51441fd217889f235272d0280a8b36c1a4b1b293d4d`
+  - `cleanup_status.txt`: SHA-256 `d7a91e51b28326614450b962eefeeb5c108ebc4ceea94e02dae9286b5e96c0c6`
+  - `SHA256SUMS`: SHA-256 `f2439c5823dcd6e20c9b655a7212457ecd61f9d2db56ef51c9fc56db694be111`
+  - Raw logs and private media paths remain strictly uncommitted.
+
+### 2026-09-26 W4 software evidence and hardware hand-off boundary
+
+- Engineer: `gpt-6-sol`, medium, explicitly assigned bounded documentation and
+  harness-path correction; no GPU/Wayland run. Retained W4 software report passed
+  on llvmpipe with `hwdec-current=no`; its hardware cell was `NOT_RUN` in that
+  software-only report.
+- The screenshot validator tolerates one decoded 8-bit value outside the subtitle
+  ROI; the retained report observed zero difference there. Its 50-pixel subtitle
+  count and two-code-value PNG patch limits are structural heuristics, not
+  ADR-0005 FBO precision bounds. PNG `cHRM` identifies primaries, not PQ/HLG
+  transfer. The W4 script retains repo-relative defaults and explicit environment
+  or command-line path overrides without a user-specific fallback.
+- The next hardware row required an explicit raw active-decoder check because
+  the runner does not reject `hwdec=auto` falling back to `decode.active=no`.
+  This was a preflight limitation, not a change to the accepted W4 thresholds.
+
+### 2026-09-26 W4 standalone hardware screenshot row
+
+- Roles: `gpt-6-luna` low Operator executed the immutable, user-authorized
+  single-run brief; `gpt-6-sol` medium Engineer prepared this bounded document
+  update; the parent independently reviewed the raw evidence and accepted only
+  this row. The earlier W4 hardware-attempt total remains Unknown; this is one
+  recorded authorized execution, not a reset of ADR-0006 history.
+- Target AMD GPU/host stack, 09:56:40–09:56:41 UTC, exit 0. Exact HEVC Main10 HDR
+  fixture provenance and loaded dependencies passed independent checks. Raw
+  `decode.requested=auto`, `decode.active=vaapi-copy`, actual `opengl-next`,
+  target GL renderer, BT.2020/PQ input and target, `GL_RGBA16F`/16, and the
+  320×180 16-bit RGB screenshot passed the existing PNG/patch oracle. CUDA
+  loader errors during auto probing remain in stderr; mpv subsequently reported
+  active VAAPI-copy decoding. Source evidence is retained in
+  `validation-reports/gate2-w4-hardware-20260926-095640/` with SHA256SUMS.
+- Verdict: narrow `PASS` for the standalone W4 `hdr_hwdec_auto` screenshot row.
+  The current runner's aggregate PASS does not enforce active hardware decoding;
+  the independent raw check did. The physical decode GPU remains Unknown. This
+  is not CineHDR GTK playback or Candidate v4 execution, display output,
+  color accuracy, direct scanout, or aggregate Gate 2/2W acceptance. The
+  software-only W4 report's `NOT_RUN`
+  remains its historical result.
+
+### 2026-09-27 CineHDR UI screenshot save observation
+
+User-operated `s` in one installed-v4 CineHDR session; no agent changed the app
+or settings. A new 3840×2160 8-bit RGB JPEG appeared in the previously empty
+screenshot directory at 02:22:44.816449Z (SHA-256
+`c5cceb24186f75bb853f2d892daf21c358b47c40bdea452803159edfc2f38954`).
+Pillow verify/load and visual inspection confirmed a nonempty video frame:
+UI save workflow `PASS`. A fresh 02:28:57.795574Z Copy Report showed configured
+and requested GPU Next, active `opengl-next`, session `active`, `vaapi-copy`,
+target AMD GPU, `GL_RGBA16F`/16, and Rec.2100 PQ GDK color state. The same
+CineHDR instance and app/runtime commits were confirmed at 02:30:23Z, linking
+the report to the 02:22:30Z screenshot session, without per-frame linkage. The
+02:16:56Z report remains historical evidence from a prior process. `gpt-6-sol`
+medium prepared this documentation; the parent independently reviewed the UI
+and process evidence. No HDR/color accuracy, subtitle, physical HDR output, or
+wider Gate 2/2W claim follows. Retained evidence:
+`validation-reports/ui-screenshot-20260927-022244/` with SHA256SUMS.
+
+### 2026-09-27 W4 active-decoder oracle correction and retained GNOME evidence
+
+User requested continued Codex work with Gemini temporarily excluded.
+`gpt-6-sol` medium prepared the bounded runner/test patch; the parent independently
+reviewed it and required one correction to avoid a VAAPI-only restriction.
+A caller-level regression on the original runner reproduced six false PASS
+cases; the corrected W4 class passed 12 tests and the integrated pixel-pipeline
+suite passed all 32. The hardware cell now checks requested `auto` separately
+from a concrete actual hardware backend, with both retained in evidence.
+Offline replay accepted the existing real `vaapi-copy` JSON; an explicitly
+synthetic `decode.active=no` mutation was rejected. All accepted hardware
+reports remain unchanged; no new hardware run occurred.
+
+The parent also reconciled the retained GNOME legacy trace with its user Copy
+Report: the protocol chain passes and the `opengl` sample lies inside the
+capture interval, but no full same-process publication matrix exists in that
+capture. Gate 2W remains OPEN; its next useful check combines that matrix with
+protocol capture under the existing attempt limits. Artifacts are retained in
+`validation-reports/w4-hwdec-oracle-20260927/` and
+`validation-reports/wayland-legacy-offline-reconciliation-20260927.json`.
+
+### 2026-10-03 Gate 2W Run 4 offline qualification and provenance analysis
+
+Engineer: Gemini. Offline qualification for Gate 2W Run 4 resolved two blockers without GPU or Wayland execution:
+1. Reconciled SDR fixture provenance: confirmed FFmpeg 8.1.3 generator on host with Lavf62.12.102 muxer tag restored to match the accepted fixture `41393a0ee9dd887a1f11d4b21946fef3d1f49e72127719eefd1ac40aa9d5e360` byte-for-byte; updated JSON provenance and preserved unmodified FFmpeg 8.1.3 artifact `cinehdr-gate2-hevc-main10-yuv420p10-lossless-sdr-ffmpeg813-2ec07e.mp4`. Preflight check confirms both fixtures `VERIFIED`.
+2. Reconciled Flatpak Candidate v4 runtime loading: inside container, libmpv is loaded from `/app/lib/libmpv.so.2.5.0` (matching built candidate SHA-256 `8c40fbc4...`), whereas `src/gpu_validation.py` currently requires `/mpv-gpu-next-prefix/lib64/`. Added negative regression test reproducing the rejection of `/app/lib/` and verifying that foreign library substitution (`/usr/lib`, `/tmp`, version drift) is strictly rejected.
+3. Formulated proposal for exact canonical path checking (`libmpv_path in {"/app/lib/libmpv.so.2", "/app/lib/libmpv.so.2.5.0"}`) gated by verified container context, eliminating loose suffix matching.
+4. Assessed under `docs/MODEL_POLICY.md`: altering library provenance criteria in `src/gpu_validation.py` affects render evidence criteria and packaging boundaries, requiring an ADR amendment proposal and independent review before product modifications. Stopped before modifying `src/gpu_validation.py`. Noted that modifying product code will change git commit SHA, requiring Candidate v5 rebuild rather than reusing Candidate v4. Candidate v4 is not claimed to have passed the matrix.
+5. Added the ADR-0006 Gate 2W Run 4 rerun brief to `docs/GPU_NEXT_DEVELOPMENT.md` targeting GNOME Shell 50.5 on Wayland with `org.gnome.Platform//50`, incorporating Attempt 1's contemporaneous Copy Report and Candidate v5 prerequisites.
+
+### 2026-10-04 Gate 2W Run 4 offline remediation of Astra high review blockers
+
+- **Role**: Engineer (Gemini-first under MODEL_POLICY).
+- **Scope**: Offline resolution of 4 blockers reproduced during the independent Astra high review of Gate 2W Run 4:
+  1. *Wayland ID space mixing across connections*:
+     - Object lineage enforced in `tests/parse_wayland_color_trace.py`: verified that `wl_surface` and its `xdg_wm_base` belong to the same connection/registry as `wp_color_manager_v1`, and that `wp_image_description_v1` creations stem strictly from `manager_id`, its creators, or `color_surface_id`. Reject descriptions created by alien managers on other connections.
+     - Ambiguous `delete_id` rejection: when client-allocated descriptor ID reuse is evaluated, verified that `wl_display.delete_id` belongs to the connection's display, and rejected reuse if any other object with the same ID was destroyed within the reuse window.
+  2. *`unset_image_description` between set and commit*:
+     - In `validate_composite_window_trace` (as well as `validate_multiphase_trace` and `validate_trace`), invalidated and rejected submission if `wp_color_management_surface_v1.unset_image_description` occurred between `set_image_description` and `wl_surface.commit`.
+  3. *Overwriting final `cleanup_status.json` by EXIT trap handler*:
+     - In `run_wayland_publication_validation.sh`: `cleanup_handler` now protects pre-existing `cleanup_status.json` (such as `trigger_signal: NORMAL`), preventing the EXIT trap handler from clobbering clean completion telemetry.
+  4. *Recognizing instance as terminated when info is missing without checking `flatpak ps`*:
+     - In `cleanup_instance`, if `$XDG_RUNTIME_DIR/.flatpak/<inst>/info` is absent, strictly query `flatpak ps --columns=instance`. Fail-closed (return 1) if the instance remains listed or if `flatpak ps` query fails. Return 0 only when absence is verified via `flatpak ps`.
+- **Validation**:
+  - Maintained accepted narrow result of Attempt 3 (`wayland-trace-Z4GghM`, SHA-256 `2e9d5de1...`, `PASS`).
+  - Claim boundaries preserved: `container_session_correlated=true`, `same_process_wire_correlated=false`, per-frame presentation and compositor scanout rows remain `OPEN`.
+  - Added 4 negative regression tests and positive counterpart tests in `tests/test_wayland_color_trace.py` (54 tests passed) and `tests/test_wayland_publication_scenario.py` (51 tests passed).
+  - All static and governance tests passed (`test_validation_governance.py`, `test_attempt3_regressions.py`).
+  - `git diff --check` passed cleanly.
+  - No Flatpak build or install, no real GPU/Wayland Run 4 execution, no push or PR.

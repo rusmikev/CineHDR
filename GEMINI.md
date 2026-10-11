@@ -1,32 +1,53 @@
 # GEMINI.md — правила проекта CineHDR
 
-## Current binding policy (2026-09-23)
+## Current binding policy (2026-09-25)
 
 This is the Gemini entry point. `docs/MODEL_POLICY.md` and accepted ADRs govern
-architecture, safety, routing, and evidence acceptance; `AGENTS.md` is the
-separate ChatGPT/Codex entry point. The historical technical guidance below
-remains useful where compatible with current source, tests, and ADRs. Where it
-conflicts, the current policy and ADRs take precedence.
+architecture, safety, routing and evidence acceptance; `AGENTS.md` is the
+ChatGPT/Codex entry point. Where historical guidance below conflicts with the
+current policy, source, tests or ADRs, the current requirements take precedence.
 
-Gemini Flash on target hardware is an external test Operator by default: verify
-the exact clean commit and prerequisites, execute the single immutable hand-off command
-within its timeout, and return raw artifacts, exit status, environment facts,
-and hashes, including on failure. Stop on failed preflight; do not silently omit artifacts or infer PASS. Do not edit or self-repair implementation, alter
-arguments, install dependencies, retry, change criteria/thresholds, interpret
-color or display correctness, or close a row/gate. ADR-0006 limits a hardware
-attempt family to two executions; a third requires independent architecture
-review and explicit user approval. Never repeat an unchanged soak or command.
+The current profile is **Gemini-first**. Use the Gemini model actually available
+to the user; record its identity when known, without assuming unlimited quota.
+Gemini is the default Engineer for bounded implementation, debugging, tests,
+documentation and proposals. The assigned engineering task supplies authority
+to complete those steps; do not ask permission per file or require a new ADR
+for work already covered by an accepted decision.
 
-A separately user-authorized, bounded Gemini Engineer task needs an accepted
-ADR, exact files, checks, and stop conditions. It cannot be combined with a hardware Operator
-task or a repair of its own result. Architecture-sensitive
-changes wait for independent `gpt-6-astra` high review. Use small context packets,
-bounded output, and focused checks; do not automatically run a full hardware
-matrix or repeat an unchanged full suite. Do not request `/dev/dri` write access
-or push, publish, or open a pull request without explicit user authorization.
+Architecture-sensitive changes require a proposal and independent ADR review
+before implementation. A qualified reviewer in a separate session/agent may
+be Gemini, Sol high or Astra high under MODEL_POLICY; no mandatory Sol -> Astra
+sequence applies. The author cannot accept its own sensitive work. Reviewer
+tasks are review-only and must inspect source/diff and evidence, not just the
+author's summary. Stop after two materially distinct local failed attempts for
+independent root-cause/plan review or HOLD; retain both failures.
+
+Engineering cannot be combined with a hardware Operator hand-off. When assigned
+as external test Operator, verify the exact clean commit and prerequisites,
+execute the single immutable hand-off command within its timeout and return raw
+artifacts, exit status, environment facts and hashes, including on failure;
+do not silently omit artifacts or infer PASS. Stop on failed preflight. Do not
+edit or self-repair implementation, alter arguments, install dependencies,
+retry, change criteria/thresholds or close a row/gate. The evidence adjudicator
+reviews the returned artifacts separately.
+
+Under ADR-0006, fixed numerical attempt limits are removed. Every new real-hardware
+run requires a concrete hypothesis, a material difference from the previous run,
+an expected discriminating signal, and preservation of raw artifacts. Unchanged
+repeats without diagnostic purpose are prohibited. Preflight checks, user instance
+protection, and rigorous evidence standards remain mandatory. Governance rule
+changes do not release existing HOLD rows or authorize hardware runs. Never
+repeat an unchanged soak or command. GNOME comes first; KDE follows core GNOME
+verification. Do not request `/dev/dri` write access.
+
+Use short context packets, focused checks and one batched review per coherent
+changeset. Do not automatically launch GPT agents, run a full hardware matrix
+or repeat an unchanged full suite. No push, publication or pull request without
+explicit user authorization. Preserve unrelated changes.
+
 Video Output Diagnostics and Copy Report are the user-facing evidence path;
 missing output facts remain Unknown/Unverified. GDK texture publication,
-compositor submission, and measured display output are distinct claims.
+compositor submission and measured display output are distinct claims.
 
 The retained technical notes below are historical, not a replacement for
 accepted ADRs. In particular: ADR-0001's pool, destroy-notify and fence
