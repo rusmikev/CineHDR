@@ -218,15 +218,19 @@ class CineApplication(Adw.Application):
                 win.mpv.write_watch_later_config()
             win.mpv.stop()
 
-        if (
-            self.gpu_validation_config is not None
-            and self._gpu_validation_session is None
-        ):
-            from .gpu_validation import prepare_validation_player
+        is_fixed_fixture_validation = False
+        if self.gpu_validation_config is not None:
+            from .gpu_validation import _uses_publication_fixture_contract
 
-            self._gpu_validation_setup_failures = prepare_validation_player(
-                win.mpv, self.gpu_validation_config.mode
+            is_fixed_fixture_validation = _uses_publication_fixture_contract(
+                self.gpu_validation_config.mode
             )
+            if self._gpu_validation_session is None:
+                from .gpu_validation import prepare_validation_player
+
+                self._gpu_validation_setup_failures = prepare_validation_player(
+                    win.mpv, self.gpu_validation_config.mode
+                )
 
         for gfile in files:
             path = gfile.get_path() or gfile.get_uri()
@@ -236,7 +240,10 @@ class CineApplication(Adw.Application):
         for window in self.get_windows():
             w = cast(CineWindow, window)
             # Pause previous opened windows
-            w.mpv.pause = w != win
+            if w != win:
+                w.mpv.pause = True
+            elif not is_fixed_fixture_validation:
+                w.mpv.pause = False
 
         win.hide_ui_timeout()
 
