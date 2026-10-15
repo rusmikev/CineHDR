@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import atexit
+import errno
 import json
 import os
 from pathlib import Path
@@ -377,26 +378,40 @@ class DiagnosticsExportTests(unittest.TestCase):
                 self.assertEqual(manifest_after["trigger"], "first-media-frame-confirmed")
 
     def test_exporter_handles_write_error_gracefully(self):
-        """Verify that write errors (e.g. read-only filesystem) do not crash and record the error."""
+        """Verify that write errors (e.g. read-only filesystem or permission error) do not crash and record the error."""
         with tempfile.TemporaryDirectory() as tmp_dir:
-            unwritable_dir = Path(tmp_dir) / "readonly_dir"
-            unwritable_dir.mkdir(parents=True)
-            # Make unwritable
-            os.chmod(unwritable_dir, 0o400)
-
-            export_path = unwritable_dir / "subdir" / "video_output_diagnostics.txt"
+            export_path = Path(tmp_dir) / "subdir" / "video_output_diagnostics.txt"
             exporter = DiagnosticsExporter(export_path=export_path)
             win = self._create_mock_window()
 
-            try:
+            # 1. Directory creation failure (PermissionError / EACCES)
+            with patch.object(Path, "mkdir", side_effect=PermissionError(errno.EACCES, "Permission denied")):
                 ok, err = exporter.on_first_frame(win)
                 self.assertFalse(ok)
                 self.assertIsNotNone(err)
                 self.assertIn("write_error", err)
                 self.assertIsNotNone(exporter.last_write_error)
-            finally:
-                # Restore permissions for cleanup
-                os.chmod(unwritable_dir, 0o700)
+                self.assertIn("Permission denied", exporter.last_write_error)
+
+            # 2. File write failure (read-only filesystem / EROFS)
+            exporter_write = DiagnosticsExporter(export_path=export_path)
+            with patch.object(Path, "write_text", side_effect=OSError(errno.EROFS, "Read-only file system")):
+                ok, err = exporter_write.on_first_frame(win)
+                self.assertFalse(ok)
+                self.assertIsNotNone(err)
+                self.assertIn("write_error", err)
+                self.assertIsNotNone(exporter_write.last_write_error)
+                self.assertIn("Read-only file system", exporter_write.last_write_error)
+
+            # 3. Real filesystem failure that fails even for root (parent path component is a regular file)
+            blocker = Path(tmp_dir) / "blocker_file"
+            blocker.write_text("blocker")
+            exporter_real = DiagnosticsExporter(export_path=blocker / "sub" / "diag.txt")
+            ok, err = exporter_real.on_first_frame(win)
+            self.assertFalse(ok)
+            self.assertIsNotNone(err)
+            self.assertIn("write_error", err)
+            self.assertIsNotNone(exporter_real.last_write_error)
 
     def test_exporter_flatpak_identity_mismatch(self):
         """Verify that Flatpak instance/commit mismatch marks evidence as INCOMPLETE."""
