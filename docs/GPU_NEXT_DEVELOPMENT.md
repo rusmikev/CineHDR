@@ -1365,14 +1365,19 @@ Raw traces and media fixtures remain local and are not published.
 
 ### Paused HDR output republication and first-frame evidence cleanup (2026-10-17)
 
-Following accepted ADR-0007, the asynchronous property readback (`_readback_target_properties`)
-was removed from the active render and publication path. Target color options (`target-prim`,
-`target-trc`, `target-peak`) are set synchronously at render entry via mpv options cache,
-eliminating property-readback races and timeouts during paused HDR/SDR transitions.
+Following accepted ADR-0007, `_start_nonblocking_readback` and its property-reply
+handlers and timeout were removed from `HdrController`. On the GTK main context,
+`apply_hdr_settings()` sets `target-trc`, `target-prim`, and `target-peak`
+synchronously before committing one output-state tuple. The pinned mpv renderers
+refresh their option caches at render entry. Setter success confirms accepted
+configuration; it does not certify rendered pixels.
 
 Render generation protection and first published sample retention are preserved:
-- Generation tracking and `_generation_ready` guarantee that a stale frame does not
-  supplant a newly requested render target.
+
+- `_pending_epoch` blocks candidate rendering during target application. The
+  widget checks the committed epoch before texture construction and advances
+  `_committed_render_epoch` only after publication. These guards reject
+  superseded output states; the FBO oracle separately checks pixel contents.
 - In `src/gpu_validation.py`, the first published capture is strictly recorded and
   protected against subsequent replacement.
 - Three-way evidence semantics are enforced: missing GDK accessors, unpopulated epoch,

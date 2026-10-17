@@ -380,10 +380,13 @@ Engineer: Gemini. Offline qualification for Gate 2W Run 4 resolved two blockers 
 
 - **Role**: Gemini (Engineer under Gemini-first profile; architecture accepted by independent Astra high).
 - **Scope & Implementation**:
-  - Implemented the ADR-0007 paused output republication simplification: removed asynchronous
-    property readback (`_readback_target_properties`) in `src/hdr_controller.py` and `src/video_widget.py`.
-  - Preserved generation protection (`_generation_ready`) and first published sample retention in
-    `src/gpu_validation.py`.
+  - Integrated the ADR-0007 simplification: removed `_start_nonblocking_readback`,
+    property-reply handlers and timeout from `src/hdr_controller.py`.
+    `apply_hdr_settings()` sets target options before committing output state;
+    the pinned native renderers refresh option caches at render entry.
+  - Preserved `_pending_epoch` and the widget's committed-epoch checks and
+    `_committed_render_epoch`, plus first published sample retention in
+    `src/gpu_validation.py`. Configuration guards do not certify pixel contents.
   - Corrected first-frame unavailable evidence semantics: missing GDK texture getters, unpopulated
     epoch, or unknown media path are retained in the first published sample and evaluated as `UNVERIFIED`
     without false `provenance_errors` across recovery; confirmed format/tag mismatches strictly yield `FAIL`.
@@ -403,3 +406,19 @@ Engineer: Gemini. Offline qualification for Gate 2W Run 4 resolved two blockers 
     13 SHA-256 sums verified.
 - **Claim Boundaries**: Local client texture publication and FBO pixel fidelity are verified on both
   backends. Physical display HDR output and packaged application build are not certified by this check.
+- **Packaged candidate inspection (Codex)**:
+  - Build source commit: `feb0d405297f031d4a49db6f7ddf5cd5e7c612d1`;
+    exported app commit: `2e97e6a5e694c1de54cfad246240d93222aea5a16f9ee1910cc2074cc0d9a10e`.
+  - Bundle SHA-256 `b3505cd372a34a7625077d3ffdc672dc7939710d6a06408bbe006df0f9aee506`;
+    build-log SHA-256 `239eddcc68d4f39bfc6acef4f2ca06c4db9d9de53135de85fa66a0797c8175ff`.
+  - All 39 source files and 25 installed Python/shader files match the verified
+    development snapshot; the dependency manifest is unchanged. Build log
+    records 13/13 passing suites.
+  - Correction to the Engineer summary: cached downloads did not mean all
+    dependency binaries were reused. The log records compilation of FFmpeg,
+    libplacebo and libmpv. Packaged libmpv and libplacebo hashes differ from the
+    previously installed stack; libavcodec matches. This alone does not prove
+    a functional regression, but overlay results do not verify these binaries.
+  - Corrected documentation-only names and setter/render timing description;
+    production code and existing bundle are unchanged. Packaged runtime
+    validation remains pending; no remote action performed by this inspection.
