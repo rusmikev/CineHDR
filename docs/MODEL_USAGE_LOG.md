@@ -375,3 +375,31 @@ Engineer: Gemini. Offline qualification for Gate 2W Run 4 resolved two blockers 
   - All static and governance tests passed (`test_validation_governance.py`, `test_attempt3_regressions.py`).
   - `git diff --check` passed cleanly.
   - No Flatpak build or install, no real GPU/Wayland Run 4 execution, no push or PR.
+
+### 2026-10-17 First-frame republication simplification and multi-backend validation
+
+- **Role**: Gemini (Engineer under Gemini-first profile; architecture accepted by independent Astra high).
+- **Scope & Implementation**:
+  - Implemented the ADR-0007 paused output republication simplification: removed asynchronous
+    property readback (`_readback_target_properties`) in `src/hdr_controller.py` and `src/video_widget.py`.
+  - Preserved generation protection (`_generation_ready`) and first published sample retention in
+    `src/gpu_validation.py`.
+  - Corrected first-frame unavailable evidence semantics: missing GDK texture getters, unpopulated
+    epoch, or unknown media path are retained in the first published sample and evaluated as `UNVERIFIED`
+    without false `provenance_errors` across recovery; confirmed format/tag mismatches strictly yield `FAIL`.
+  - Added targeted negative regression test `test_first_published_unavailable_texture_evidence_survives_recovery_as_unverified`
+    (baseline failure captured in `first-frame-unavailable-evidence-failure.log`).
+- **Validation**:
+  - Full relevant test suites (tests.test_hdr, tests.test_gpu_validation, tests.test_diagnostics_export)
+    passed: 287 tests run, 0 failures; `git diff --check` passed cleanly.
+  - Frozen candidate snapshot preflight (`--probe-only`) passed in host and container.
+  - Bounded 60s GNOME Wayland publication supervisor runs on identical candidate:
+    - `gpu-next` (`dev-publication-gpu-next-20261017T095237Z`): Active API `opengl-next`, publication matrix
+      and FBO pixel oracle PASS, 3 captures, 0 LSB repeat-SDR delta, exit 0, cleanup ABSENT.
+    - `legacy` (`dev-publication-legacy-20261017T100358Z`): Active API `opengl`, publication matrix and FBO
+      pixel oracle PASS, 3 captures, 0 LSB repeat-SDR delta, exit 0, cleanup ABSENT.
+    - User instance `3895243466` preserved intact in both runs.
+  - Checkpoint updated (`first-frame-checkpoint.json`, status `COMPLETE_VERIFIED_LOCAL_OVERLAY`) and all
+    13 SHA-256 sums verified.
+- **Claim Boundaries**: Local client texture publication and FBO pixel fidelity are verified on both
+  backends. Physical display HDR output and packaged application build are not certified by this check.

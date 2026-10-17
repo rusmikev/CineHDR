@@ -1362,3 +1362,29 @@ The original decision and its first superseding record remain in
 sets GNOME `CLOSED`, cross-compositor Gate 2W `CONDITIONAL`, and Gate 2 and
 Gate 3 `OPEN`. It records that the Mesa release was not captured in Run 7.
 Raw traces and media fixtures remain local and are not published.
+
+### Paused HDR output republication and first-frame evidence cleanup (2026-10-17)
+
+Following accepted ADR-0007, the asynchronous property readback (`_readback_target_properties`)
+was removed from the active render and publication path. Target color options (`target-prim`,
+`target-trc`, `target-peak`) are set synchronously at render entry via mpv options cache,
+eliminating property-readback races and timeouts during paused HDR/SDR transitions.
+
+Render generation protection and first published sample retention are preserved:
+- Generation tracking and `_generation_ready` guarantee that a stale frame does not
+  supplant a newly requested render target.
+- In `src/gpu_validation.py`, the first published capture is strictly recorded and
+  protected against subsequent replacement.
+- Three-way evidence semantics are enforced: missing GDK accessors, unpopulated epoch,
+  or unknown media path remain sticky `UNVERIFIED` across subsequent recovery, while
+  proven format, tag, or epoch mismatches strictly remain `FAIL`.
+
+Both `legacy` and `gpu-next` backends passed the local client GDK publication matrix
+and paused transition FBO pixel oracle on GNOME Wayland (0 LSB repeat-SDR delta,
+consistent `R8G8B8A8`/sRGB and `R16G16B16A16_FLOAT`/Rec.2100 PQ states, active APIs
+`opengl` and `opengl-next`).
+
+Scope limitation: This confirms only the measured client-side texture publication and
+FBO pixel readback boundaries in the development overlay. It does not certify physical
+display HDR output, compositor presentation transformations, or packaged application
+distribution.

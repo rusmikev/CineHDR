@@ -3060,37 +3060,6 @@ class TestPausedHdrOutputRepublication(unittest.TestCase):
             # Widget must NOT schedule forced render when publication is suppressed
             self.assertFalse(widget._force_redraw_pending)
 
-    def test_mismatched_readback_suppresses_publication(self):
-        """If readback value does not match expected target, publication is suppressed."""
-        from src.hdr_controller import HdrController
-
-        props = {}
-        mock_mpv = MagicMock()
-        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
-        # Readback returns stale value "auto" instead of set "pq"
-        mock_mpv.__getitem__ = lambda _s, k: "auto" if k == "target-trc" else props.get(k)
-        mock_mpv.property_observer = lambda name: (lambda fn: fn)
-
-        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
-             patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
-             patch("src.hdr_controller.check_hdr_support", return_value=True):
-            controller = HdrController(mock_mpv)
-            widget, _ = self._create_widget_mock(controller)
-            controller.on_change_cb = widget._on_hdr_controller_change
-
-            controller._hdr_mode = "auto"
-            controller._is_hdr_content = True
-            controller.apply_hdr_settings(readback_timeout_sec=0.0)
-
-            self.assertTrue(controller.is_publication_suppressed)
-            self.assertIn("mismatched readback", str(controller.state_gap_reason))
-            self.assertFalse(widget._force_redraw_pending)
-
-            from src.diagnostics_report import generate_video_output_report
-            report = generate_video_output_report(MagicMock(), gl_area=widget, mpv=mock_mpv)
-            self.assertIn("Publication State Gap", report)
-            self.assertIn("Publication suppressed", report)
-
     @patch("src.video_widget.should_render_frame", return_value=True)
     @patch("src.video_widget.glBindFramebuffer")
     @patch("src.video_widget.Gdk.GLTextureBuilder")
@@ -3466,6 +3435,108 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         self.assertAlmostEqual(b, 50 / 255.0, places=4)
         self.assertAlmostEqual(a, 1.0, places=4)
 
+    def test_first_published_transition_frame_cannot_be_hidden_by_recovery(self):
+        """Exercise the widget/session/oracle boundary with controlled GL pixels.
+
+        A later correct SDR frame must not hide a bad first published SDR frame.
+        This is a fault-injection test, not evidence about live libmpv timing.
+        """
+        from types import SimpleNamespace
+        from src.hdr_controller import HdrController
+        from src.gpu_validation import (
+            GpuValidationSession, PausedTransitionPixelOracle, compute_patch_centers,
+        )
+
+        for stale_first_frame in (False, True):
+            with self.subTest(stale_first_frame=stale_first_frame), \
+                 patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+                 patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
+                 patch("src.hdr_controller.check_hdr_support", return_value=True), \
+                 patch("src.hdr_controller.has_float_format_support", return_value=True):
+                props = {"pause": True}
+                player = MagicMock()
+                player.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
+                player.__getitem__ = lambda _s, k: props.get(k)
+                player._get_property.side_effect = props.get
+                player.get_property.side_effect = props.get
+                player.property_observer = lambda name: (lambda fn: fn)
+                controller = HdrController(player)
+                self.addCleanup(controller.disconnect)
+                controller._hdr_mode = "auto"
+                widget, slot = TestPausedHdrOutputRepublication._create_widget_mock(
+                    self, controller
+                )
+                slot.index = 0
+                widget.current_texture = None
+                widget._exported_media_generation = (0, 0)
+                controller.on_change_cb = widget._on_hdr_controller_change
+                session = GpuValidationSession.__new__(GpuValidationSession)
+                session.player = player
+                session.video_area = widget
+                session.config = SimpleNamespace(
+                    fixture_sdr_sha256="hevc_sdr_sha256",
+                    fixture_hdr_sha256="hevc_hdr_sha256",
+                )
+                session.steps = [None, None, None]
+                session.pixel_oracle = PausedTransitionPixelOracle()
+                widget._fbo_pixel_oracle_cb = session._on_fbo_pixel_capture
+                centers = {xy: name for name, xy in compute_patch_centers(1920, 1080).items()}
+
+                def read_pixels(x, y, w, h, fmt, pixel_type, destination):
+                    samples = frame_samples[centers[x, y]]
+                    is_float = controller.committed_output_state.is_float
+                    scalar = ctypes.c_float if is_float else ctypes.c_uint8
+                    out = ctypes.cast(destination, ctypes.POINTER(scalar * 4)).contents
+                    out[:] = samples if is_float else [round(c * 255) for c in samples]
+
+                def texture_evidence(_area):
+                    return {
+                        "available": True,
+                        "format": "R16G16B16A16_FLOAT" if controller.committed_output_state.is_float else "R8G8B8A8",
+                        "color_state_rec2100_pq": controller.committed_output_state.is_hdr,
+                        "color_state_srgb": not controller.committed_output_state.is_hdr,
+                        "dimensions_match": True,
+                    }
+
+                with patch("src.video_widget.should_render_frame", return_value=True), \
+                     patch("src.video_widget.glBindFramebuffer"), \
+                     patch("src.video_widget.glFenceSync", return_value=None), \
+                     patch("src.video_widget.glFlush"), \
+                     patch("src.video_widget.idle_add_once"), \
+                     patch("src.gpu_validation.glReadPixels", side_effect=read_pixels), \
+                     patch("src.gpu_validation.publication_texture_evidence", side_effect=texture_evidence), \
+                     patch("src.video_widget.Gdk.GLTextureBuilder"):
+                    for step_index, phase in enumerate(("initial_sdr", "hdr", "return_sdr")):
+                        is_hdr = phase == "hdr"
+                        session.step_index = step_index
+                        session._pending_render_frame_generation = widget.render_frame_generation
+                        props.update({"playlist-pos": int(is_hdr), "path": "/hdr.mp4" if is_hdr else "/sdr.mp4"})
+                        controller._is_hdr_content = is_hdr
+                        controller.apply_hdr_settings()
+                        self.assertFalse(controller.is_publication_pending)
+                        self.assertFalse(controller.is_publication_suppressed)
+                        frame_samples = self._sample_patches(
+                            is_hdr=is_hdr or (stale_first_frame and phase == "return_sdr")
+                        )
+                        widget._force_redraw_pending = True
+                        widget._render_pending_frame()
+                        capture = session.pixel_oracle.get_capture(phase)
+                        self.assertIsNotNone(capture)
+                        self.assertEqual(capture.frame_generation, session._pending_render_frame_generation + 1)
+                        self.assertEqual(capture.epoch, controller.committed_output_state.epoch)
+                        self.assertEqual(widget.render_color_state, "rec2100-pq" if is_hdr else "srgb")
+
+                    first_return = session.pixel_oracle.get_capture("return_sdr")
+                    frame_samples = self._sample_patches(is_hdr=False)
+                    widget._force_redraw_pending = True
+                    widget._render_pending_frame()
+                    self.assertGreater(widget.render_frame_generation, first_return.frame_generation)
+                    self.assertIs(session.pixel_oracle.get_capture("return_sdr"), first_return)
+                    status, reasons = session.pixel_oracle.evaluate()
+                    self.assertEqual(status, "FAIL" if stale_first_frame else "PASS", reasons)
+                    if stale_first_frame:
+                        self.assertTrue(any("exceeds calibrated tolerance" in reason for reason in reasons), reasons)
+
     def test_paused_single_frame_publication_and_oracle_capture(self):
         """Under paused playback, exactly one solitary frame is rendered, published,
         and delivered to the oracle. Subsequent idle ticks produce no extra captures."""
@@ -3620,39 +3691,6 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         self.assertIsNone(widget.current_texture)
         self.assertEqual(widget.render_frame_generation, 20)
         self.assertEqual(len(oracle_captures), 0)
-
-    def test_nonblocking_readback_bounded_timeout_and_async_polling(self):
-        """HdrController nonblocking readback polling on GLib main loop and bounded timeout."""
-        from src.hdr_controller import HdrController
-
-        props = {}
-        mock_mpv = MagicMock()
-        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
-        # Property starts returning stale "auto"
-        mock_mpv.__getitem__ = lambda _s, k: props.get(k, "auto")
-        mock_mpv.property_observer = lambda name: (lambda fn: fn)
-
-        controller = HdrController(mock_mpv)
-        controller._hdr_mode = "auto"
-        controller._is_hdr_content = True
-
-        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
-             patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
-             patch("src.hdr_controller.check_hdr_support", return_value=True):
-            # Test 1: Immediate match succeeds and commits
-            controller.apply_hdr_settings(readback_timeout_sec=0.1)
-            self.assertFalse(controller.is_publication_suppressed)
-            self.assertFalse(controller.is_publication_pending)
-            self.assertIsNotNone(controller.committed_output_state)
-            self.assertEqual(controller.committed_output_state.target_trc, "pq")
-
-            # Test 2: Bounded timeout expires on persistent mismatch
-            mock_mpv.__getitem__ = lambda _s, k: "mismatched"
-            controller._is_hdr_content = False
-            controller.apply_hdr_settings(readback_timeout_sec=0.0)  # zero timeout -> immediate expiration
-            self.assertTrue(controller.is_publication_suppressed)
-            self.assertFalse(controller.is_publication_pending)
-            self.assertIn("bounded readback timeout", str(controller.state_gap_reason))
 
     def test_paused_transition_defect_reproduction_and_resolution(self):
         """Defect reproduction for Run 6:

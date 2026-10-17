@@ -299,6 +299,7 @@ class FboPixelCapture:
     captured_at: float = field(default_factory=time.monotonic)
     raw_samples_hash: str | None = None
     media_path: str = ""
+    texture_evidence: Mapping[str, Any] | None = None
 
 
 class PausedTransitionPixelOracle:
@@ -380,6 +381,12 @@ class PausedTransitionPixelOracle:
                 return "UNVERIFIED", [f"{cap.phase} has unknown fixture hash provenance: {cap.fixture_hash!r}"]
             if cap.epoch is None:
                 return "UNVERIFIED", [f"{cap.phase} has unknown epoch provenance (epoch is None)"]
+            if str(cap.media_path).strip().lower() in ("none", "unknown"):
+                return "UNVERIFIED", [f"{cap.phase} has unknown media identity provenance"]
+            if cap.texture_evidence is not None and not cap.texture_evidence.get("available"):
+                err = cap.texture_evidence.get("error")
+                detail = f": {err}" if err else ""
+                return "UNVERIFIED", [f"{cap.phase} has unavailable GDK texture evidence{detail}"]
 
         reasons: list[str] = []
 
@@ -409,6 +416,18 @@ class PausedTransitionPixelOracle:
             reasons.append(
                 f"return_sdr format error: expected GL_RGBA8/non-float, got {return_sdr.fbo_format}/{return_sdr.is_float}"
             )
+
+        for cap in (initial_sdr, hdr, return_sdr):
+            if cap.texture_evidence and cap.texture_evidence.get("available"):
+                wants_hdr = cap.phase == "hdr"
+                expected_format = "R16G16B16A16_FLOAT" if wants_hdr else "R8G8B8A8"
+                color_key = "color_state_rec2100_pq" if wants_hdr else "color_state_srgb"
+                if cap.texture_evidence.get("format") != expected_format or not cap.texture_evidence.get(color_key):
+                    reasons.append(
+                        f"{cap.phase} actual GDK texture format/color differs from {expected_format}/{color_key}: {cap.texture_evidence}"
+                    )
+                if not cap.texture_evidence.get("dimensions_match"):
+                    reasons.append(f"{cap.phase} actual GDK texture dimensions differ from published FBO")
 
         # Fixture hash validation
         if initial_sdr.fixture_hash != return_sdr.fixture_hash:
@@ -565,6 +584,7 @@ def serialize_fbo_pixel_measurements(
                 "height": cap.height,
                 "fixture_hash": cap.fixture_hash,
                 "raw_samples_hash": cap.raw_samples_hash,
+                "texture_evidence": dict(cap.texture_evidence or {}),
                 "patch_samples": samples_dict,
             }
         else:
@@ -2095,78 +2115,69 @@ class GpuValidationSession:
         if self.pixel_oracle.get_capture(phase) is not None:
             return
 
-        # 2. Check controller and committed output state
-        controller = getattr(self.video_area, "hdr_controller", None)
-        if controller is None:
+        # A retained texture or a render before the requested fixture/output
+        # decision is outside this phase's first-new-publication boundary.
+        if frame_generation <= getattr(self, "_pending_render_frame_generation", -1):
             return
-
-        committed = getattr(controller, "committed_output_state", None)
-        if committed is not None:
-            # Drop frames rendered while publication is pending or suppressed
-            if getattr(controller, "is_publication_pending", False) or getattr(
-                controller, "is_publication_suppressed", False
-            ):
-                return
-            # Epoch must match committed epoch exactly
-            if epoch is None or epoch != committed.epoch:
-                return
-            target_properties = {
-                "target-trc": committed.target_trc,
-                "target-prim": committed.target_prim,
-                "target-peak": committed.target_peak,
-            }
-            if fbo_format != committed.fbo_format or is_float != committed.is_float:
-                return
-            if expected_signal == "hdr" and not committed.is_hdr:
-                return
-            if expected_signal == "sdr" and committed.is_hdr:
-                return
-        else:
-            # Fallback for mock controller environments without full CommittedOutputState
-            target_properties = {
-                "target-trc": getattr(controller, "target_trc", ""),
-                "target-prim": getattr(controller, "target_prim", ""),
-                "target-peak": getattr(controller, "target_peak", ""),
-            }
-            if expected_signal == "hdr" and (not is_float or fbo_format != "GL_RGBA16F"):
-                return
-            if expected_signal == "sdr" and (is_float or fbo_format != "GL_RGBA8"):
-                return
-
-        # 3. Check playlist position and media path
         current_pos = int(_number(_mpv_property(self.player, "playlist-pos"), -1))
         if current_pos != expected_index:
             return
-        media_path = str(_mpv_property(self.player, "path") or "")
-
-        # 4. Check that this exact FBO was successfully published by video_area
-        widget_gen = int(getattr(self.video_area, "render_frame_generation", 0))
-        if widget_gen < frame_generation:
+        controller = getattr(self.video_area, "hdr_controller", None)
+        if controller is None:
             return
-        if getattr(self.video_area, "current_texture", None) is None:
+        committed = getattr(controller, "committed_output_state", None)
+        if committed is None or committed.is_hdr != (expected_signal == "hdr"):
             return
-
-        # 5. Check frame generation freshness on step switches
-        if (
-            hasattr(self, "_pending_render_frame_generation")
-            and frame_generation <= self._pending_render_frame_generation
+        if getattr(controller, "is_publication_pending", False) or getattr(
+            controller, "is_publication_suppressed", False
         ):
             return
-
-        # 5. Strictly advancing epoch verification vs prior accepted captures
-        if phase == "hdr":
-            prev = self.pixel_oracle.get_capture("initial_sdr")
-            if prev is not None and prev.epoch is not None and epoch is not None and epoch <= prev.epoch:
-                return
-        elif phase == "return_sdr":
-            prev = self.pixel_oracle.get_capture("hdr")
-            if prev is not None and prev.epoch is not None and epoch is not None and epoch <= prev.epoch:
-                return
 
         slot_id = getattr(slot, "index", getattr(slot, "slot_id", None))
         if isinstance(slot_id, bool) or not isinstance(slot_id, int) or slot_id < 0:
             self.pixel_oracle.record_readback_error("FBO slot identity is unavailable")
             return
+
+        def fail(reason: str) -> None:
+            self.pixel_oracle.provenance_errors.append(
+                f"first published {phase} frame {frame_generation}: {reason}"
+            )
+
+        # The callback is invoked only after current_texture assignment. Once
+        # inside the boundary, no mismatch may be skipped in favor of recovery.
+        widget_gen = int(getattr(self.video_area, "render_frame_generation", 0))
+        if widget_gen != frame_generation or getattr(self.video_area, "current_texture", None) is None:
+            fail("published texture/generation identity is unavailable")
+
+        media_path = str(_mpv_property(self.player, "path") or "")
+        if not media_path:
+            media_path = "unknown"
+
+        if epoch is not None:
+            if epoch != committed.epoch:
+                fail(f"epoch {epoch!r} differs from committed epoch {committed.epoch}")
+            previous_phase = "initial_sdr" if phase == "hdr" else "hdr" if phase == "return_sdr" else None
+            previous = self.pixel_oracle.get_capture(previous_phase) if previous_phase else None
+            if previous is not None and previous.epoch is not None and epoch <= previous.epoch:
+                fail(f"epoch {epoch} did not advance after {previous_phase} epoch {previous.epoch}")
+
+        if fbo_format != committed.fbo_format or is_float != committed.is_float:
+            fail(f"FBO {fbo_format}/{is_float} differs from committed {committed.fbo_format}/{committed.is_float}")
+
+        texture_evidence = publication_texture_evidence(self.video_area)
+        if texture_evidence.get("available"):
+            expected_format = "R16G16B16A16_FLOAT" if is_float else "R8G8B8A8"
+            expected_color_key = "color_state_rec2100_pq" if expected_signal == "hdr" else "color_state_srgb"
+            if texture_evidence.get("format") != expected_format or not texture_evidence.get(expected_color_key):
+                fail(f"actual GDK texture format/color differs from {expected_format}/{expected_signal}: {texture_evidence}")
+            if not texture_evidence.get("dimensions_match"):
+                fail("actual GDK texture dimensions differ from published FBO")
+
+        target_properties = {
+            "target-trc": committed.target_trc,
+            "target-prim": committed.target_prim,
+            "target-peak": committed.target_peak,
+        }
 
         capture = FboPixelCapture(
             phase=phase,
@@ -2182,6 +2193,7 @@ class GpuValidationSession:
             patch_samples=patch_samples,
             raw_samples_hash=compute_samples_hash(patch_samples),
             media_path=media_path,
+            texture_evidence=texture_evidence,
         )
         self.pixel_oracle.record_capture(capture)
 

@@ -58,7 +58,6 @@ except Exception:
 # tests/test_hdr.py (no duplicated tables).
 HDR_MODES = ("auto", "force-hdr", "force-sdr")
 HDR_PEAK_PRESETS = ("auto", "200", "400", "600", "1000", "1600")
-DEFAULT_READBACK_TIMEOUT_SEC = 0.1
 
 
 class CommittedOutputState(NamedTuple):
@@ -79,24 +78,6 @@ def has_float_format_support() -> bool:
         return False
     mem_fmt = getattr(Gdk, "MemoryFormat", None)
     return bool(mem_fmt and hasattr(mem_fmt, "R16G16B16A16_FLOAT"))
-
-
-def prop_matches(actual: Any, expected: Any) -> bool:
-    """Compare an actual libmpv property readback with an expected target value."""
-    if actual is None and expected is None:
-        return True
-    if actual is None or expected is None:
-        return False
-    act_str = str(actual).strip().lower()
-    exp_str = str(expected).strip().lower()
-    if act_str == exp_str:
-        return True
-    try:
-        if abs(float(actual) - float(expected)) < 1e-4:
-            return True
-    except (ValueError, TypeError):
-        pass
-    return False
 
 
 def is_tone_mapping_active(
@@ -235,26 +216,6 @@ class HdrController(GObject.Object):
         self._publication_suppressed: bool = False
         self._state_gap_reason: Optional[str] = None
         self._committed_state: Optional[CommittedOutputState] = None
-        self._readback_timeout_source_id: Optional[int] = None
-        self._pending_readback_query_id: int = 0
-        self._active_readback_epoch: Optional[int] = None
-        self._active_readback_results: dict[str, Any] = {}
-        self._active_readback_errors: dict[str, str] = {}
-        self._active_readback_expected: dict[str, Any] = {}
-        self._active_readback_state_args: dict[str, Any] = {}
-        self._event_callback_registered = False
-
-        if (
-            isinstance(self.mpv, mpv.MPV)
-            and hasattr(self.mpv, "_event_handle")
-            and hasattr(self.mpv, "register_event_callback")
-        ):
-            try:
-                self.mpv.register_event_callback(self._on_mpv_event)
-                self._event_callback_registered = True
-            except Exception as e:
-                logging.debug("Could not register event callback on mpv: %s", e)
-
         self._initial_mpv_props = {}
         # target-colorspace-hint is deliberately absent: it is a no-op under
         # the libmpv render API (mpv does not own the swapchain), so CineHDR
@@ -355,10 +316,7 @@ class HdrController(GObject.Object):
         elif key == "hdr-target-peak":
             self.hdr_target_peak = settings.get_string("hdr-target-peak")
 
-    def apply_hdr_settings(
-        self,
-        readback_timeout_sec: float = DEFAULT_READBACK_TIMEOUT_SEC,
-    ):
+    def apply_hdr_settings(self):
         """
         Configure mpv video output properties according to the resolved HDR mode.
         """
@@ -439,13 +397,6 @@ class HdrController(GObject.Object):
                 self.on_change_cb()
             return
 
-        if getattr(self, "_readback_timeout_source_id", None) is not None:
-            try:
-                GLib.source_remove(self._readback_timeout_source_id)
-            except Exception:
-                pass
-            self._readback_timeout_source_id = None
-
         self._output_epoch = getattr(self, "_output_epoch", 0) + 1
         epoch = self._output_epoch
         self._pending_epoch = epoch
@@ -467,6 +418,10 @@ class HdrController(GObject.Object):
                 self._applied_mpv_props[prop] = val
             except mpv.ShutdownError:
                 self._pending_epoch = None
+                self._publication_suppressed = True
+                self._state_gap_reason = "mpv stopped while setting output target"
+                if self.on_change_cb:
+                    self.on_change_cb()
                 return
             except Exception as e:
                 setter_failed = True
@@ -482,309 +437,30 @@ class HdrController(GObject.Object):
                 self.on_change_cb()
             return
 
-        state_args = {
-            "expected_trc": expected_trc,
-            "expected_prim": expected_prim,
-            "expected_peak": expected_peak,
-            "desired_fbo_format": desired_fbo_format,
-            "desired_color_state": desired_color_state,
-            "desired_is_float": desired_is_float,
-            "hdr_output_active": hdr_output_active,
-            "effective_target_peak": effective_target_peak,
-        }
-        self._start_nonblocking_readback(
-            epoch=epoch,
-            props=props,
-            state_args=state_args,
-            timeout_sec=readback_timeout_sec,
-        )
-
-    def _on_mpv_event(self, event: Any) -> None:
-        try:
-            if getattr(self, "_disconnected", False) or getattr(self, "_shutting_down", False):
-                return
-            eid = getattr(getattr(event, "event_id", None), "value", None)
-            if eid == getattr(getattr(mpv, "MpvEventID", None), "GET_PROPERTY_REPLY", 3):
-                userdata = getattr(event, "reply_userdata", 0)
-                query_id = userdata >> 8
-                if query_id != getattr(self, "_pending_readback_query_id", 0):
-                    return
-                prop_name = None
-                val = None
-                if hasattr(event, "data") and event.data:
-                    prop_name = getattr(event.data, "name", None)
-                    val = getattr(event.data, "value", None)
-                err = getattr(event, "error", 0)
-                GLib.idle_add(
-                    self._on_nonblocking_property_reply,
-                    query_id,
-                    self._active_readback_epoch,
-                    prop_name,
-                    val,
-                    err,
-                )
-        except Exception as e:
-            logging.debug("Error in _on_mpv_event: %s", e)
-
-    def _start_nonblocking_readback(
-        self,
-        epoch: int,
-        props: list[tuple[str, Any]],
-        state_args: dict[str, Any],
-        timeout_sec: float = DEFAULT_READBACK_TIMEOUT_SEC,
-    ) -> None:
-        if getattr(self, "_readback_timeout_source_id", None) is not None:
-            try:
-                GLib.source_remove(self._readback_timeout_source_id)
-            except Exception:
-                pass
-            self._readback_timeout_source_id = None
-
-        self._active_readback_epoch = epoch
-        self._active_readback_results = {}
-        self._active_readback_errors = {}
-        self._active_readback_expected = {p: v for p, v in props}
-        self._active_readback_state_args = state_args
-        self._pending_readback_query_id = getattr(self, "_pending_readback_query_id", 0) + 1
-        query_id = self._pending_readback_query_id
-
-        # Dispatch nonblocking readback without blocking the GTK main loop
         if (
-            isinstance(self.mpv, mpv.MPV)
-            and getattr(self, "_event_callback_registered", False)
-            and hasattr(self.mpv, "_event_handle")
-            and hasattr(mpv, "_mpv_get_property_async")
+            self._disconnected or getattr(self, "_shutting_down", False)
+            or self._output_epoch != epoch or self._pending_epoch != epoch
         ):
-            # Production: truly nonblocking readback using native libmpv async API
-            self._readback_timeout_source_id = GLib.timeout_add(
-                max(1, int(timeout_sec * 1000)),
-                self._on_readback_timeout,
-                epoch,
-                query_id,
-                timeout_sec,
-            )
-            for idx, (prop, _exp) in enumerate(props):
-                userdata = (query_id << 8) | idx
-                c_name = prop.encode("utf-8")
-                try:
-                    mpv._mpv_get_property_async(
-                        self.mpv._event_handle, userdata, c_name, mpv.MpvFormat.NODE
-                    )
-                except Exception as e:
-                    GLib.idle_add(
-                        self._on_nonblocking_property_reply,
-                        query_id,
-                        epoch,
-                        prop,
-                        None,
-                        -1,
-                    )
-        else:
-            # Test mock harness without native libmpv event loop:
-            # Query mock object directly without spawning background worker threads.
-            for p, _exp in props:
-                try:
-                    self._active_readback_results[p] = self.mpv[p]
-                except Exception as exc:
-                    self._active_readback_errors[p] = str(exc)
-
-            all_matched = True
-            mismatch_reason = None
-            for prop, expected_val in props:
-                if prop in self._active_readback_errors:
-                    all_matched = False
-                    mismatch_reason = f"readback failure: {self._active_readback_errors[prop]}"
-                    break
-                actual_val = self._active_readback_results.get(prop)
-                if not prop_matches(actual_val, expected_val):
-                    all_matched = False
-                    mismatch_reason = (
-                        f"mismatched readback for '{prop}': expected {expected_val!r}, got {actual_val!r}"
-                    )
-                    break
-
-            if all_matched:
-                self._committed_state = CommittedOutputState(
-                    epoch=epoch,
-                    target_trc=state_args["expected_trc"],
-                    target_prim=state_args["expected_prim"],
-                    target_peak=state_args["expected_peak"],
-                    fbo_format=state_args["desired_fbo_format"],
-                    gdk_color_state=state_args["desired_color_state"],
-                    is_float=state_args["desired_is_float"],
-                    is_hdr=state_args["hdr_output_active"],
-                )
-                self._pending_epoch = None
-                self._publication_suppressed = False
-                self._state_gap_reason = None
-
-                self.check_unsupported_warning()
-                self.check_dovi_warning()
-                self.check_force_hdr_warning()
-                self._log_telemetry(
-                    state_args["hdr_output_active"], state_args["effective_target_peak"]
-                )
-                if self.on_change_cb:
-                    self.on_change_cb()
-            else:
-                self._pending_epoch = None
-                self._publication_suppressed = True
-                if timeout_sec <= 0.0:
-                    self._state_gap_reason = (
-                        f"bounded readback timeout (0ms) for epoch {epoch}: {mismatch_reason}"
-                    )
-                else:
-                    self._state_gap_reason = mismatch_reason
-                logging.warning(self._state_gap_reason)
-                if self.on_change_cb:
-                    self.on_change_cb()
-
-    def _on_mpv_event(self, event: Any) -> None:
-        try:
-            if getattr(self, "_disconnected", False) or getattr(self, "_shutting_down", False):
-                return
-            eid = getattr(getattr(event, "event_id", None), "value", None)
-            if eid == getattr(getattr(mpv, "MpvEventID", None), "GET_PROPERTY_REPLY", 3):
-                userdata = getattr(event, "reply_userdata", 0)
-                query_id = userdata >> 8
-                if query_id != getattr(self, "_pending_readback_query_id", 0):
-                    return
-                prop_name = None
-                val = None
-                if hasattr(event, "data") and event.data:
-                    prop_name = getattr(event.data, "name", None)
-                    val = getattr(event.data, "value", None)
-                err = getattr(event, "error", 0)
-                GLib.idle_add(
-                    self._on_nonblocking_property_reply,
-                    query_id,
-                    self._active_readback_epoch,
-                    prop_name,
-                    val,
-                    err,
-                )
-        except Exception as e:
-            logging.debug("Error in _on_mpv_event: %s", e)
-
-    def _on_nonblocking_property_reply(
-        self,
-        query_id: int,
-        epoch: int,
-        prop_name: Optional[str],
-        val: Any,
-        err: int,
-    ) -> bool:
-        if getattr(self, "_disconnected", False) or getattr(self, "_shutting_down", False):
-            return GLib.SOURCE_REMOVE
-        if query_id != getattr(self, "_pending_readback_query_id", 0) or epoch != self._output_epoch:
-            return GLib.SOURCE_REMOVE
-
-        clean_name = prop_name
-        if clean_name and clean_name.startswith("options/"):
-            clean_name = clean_name[len("options/"):]
-
-        if not clean_name:
-            for p in self._active_readback_expected:
-                if p not in self._active_readback_results and p not in self._active_readback_errors:
-                    clean_name = p
-                    break
-
-        if clean_name:
-            if err != 0:
-                self._active_readback_errors[clean_name] = f"readback error code {err}"
-            else:
-                self._active_readback_results[clean_name] = val
-
-        self._evaluate_readback_results(query_id, epoch)
-        return GLib.SOURCE_REMOVE
-
-    def _evaluate_readback_results(self, query_id: int, epoch: int) -> None:
-        if query_id != getattr(self, "_pending_readback_query_id", 0) or epoch != self._output_epoch:
             return
-
-        expected_props = self._active_readback_expected
-        if len(self._active_readback_results) + len(self._active_readback_errors) < len(expected_props):
-            return
-
-        if self._readback_timeout_source_id is not None:
-            try:
-                GLib.source_remove(self._readback_timeout_source_id)
-            except Exception:
-                pass
-            self._readback_timeout_source_id = None
-
-        all_matched = True
-        mismatch_reason = None
-
-        for prop, expected_val in expected_props.items():
-            if prop in self._active_readback_errors:
-                all_matched = False
-                mismatch_reason = f"readback failure: {self._active_readback_errors[prop]}"
-                break
-            actual_val = self._active_readback_results.get(prop)
-            if not prop_matches(actual_val, expected_val):
-                all_matched = False
-                mismatch_reason = (
-                    f"mismatched readback for '{prop}': expected {expected_val!r}, got {actual_val!r}"
-                )
-                break
-
-        state_args = self._active_readback_state_args
-        if all_matched:
-            self._committed_state = CommittedOutputState(
-                epoch=epoch,
-                target_trc=state_args["expected_trc"],
-                target_prim=state_args["expected_prim"],
-                target_peak=state_args["expected_peak"],
-                fbo_format=state_args["desired_fbo_format"],
-                gdk_color_state=state_args["desired_color_state"],
-                is_float=state_args["desired_is_float"],
-                is_hdr=state_args["hdr_output_active"],
-            )
-            self._pending_epoch = None
-            self._publication_suppressed = False
-            self._state_gap_reason = None
-
-            self.check_unsupported_warning()
-            self.check_dovi_warning()
-            self.check_force_hdr_warning()
-            self._log_telemetry(
-                state_args["hdr_output_active"], state_args["effective_target_peak"]
-            )
-            if self.on_change_cb:
-                self.on_change_cb()
-        else:
-            self._pending_epoch = None
-            self._publication_suppressed = True
-            self._state_gap_reason = mismatch_reason
-            logging.warning(self._state_gap_reason)
-            if self.on_change_cb:
-                self.on_change_cb()
-
-    def _on_readback_timeout(
-        self, epoch: int, query_id: int, timeout_sec: float
-    ) -> bool:
-        self._readback_timeout_source_id = None
-        if getattr(self, "_disconnected", False) or getattr(self, "_shutting_down", False):
-            return GLib.SOURCE_REMOVE
-        if query_id != getattr(self, "_pending_readback_query_id", 0) or epoch != self._output_epoch:
-            return GLib.SOURCE_REMOVE
-
-        if self._pending_epoch == epoch:
-            self._pending_epoch = None
-            self._publication_suppressed = True
-            missing_props = [
-                p for p in self._active_readback_expected
-                if p not in self._active_readback_results and p not in self._active_readback_errors
-            ]
-            self._state_gap_reason = (
-                f"bounded readback timeout ({int(timeout_sec * 1000)}ms) for epoch {epoch}: "
-                f"timed out awaiting {missing_props}"
-            )
-            logging.warning(self._state_gap_reason)
-            if self.on_change_cb:
-                self.on_change_cb()
-        return GLib.SOURCE_REMOVE
+        self._committed_state = CommittedOutputState(
+            epoch=epoch,
+            target_trc=expected_trc,
+            target_prim=expected_prim,
+            target_peak=expected_peak,
+            fbo_format=desired_fbo_format,
+            gdk_color_state=desired_color_state,
+            is_float=desired_is_float,
+            is_hdr=hdr_output_active,
+        )
+        self._pending_epoch = None
+        self._publication_suppressed = False
+        self._state_gap_reason = None
+        self.check_unsupported_warning()
+        self.check_dovi_warning()
+        self.check_force_hdr_warning()
+        self._log_telemetry(hdr_output_active, effective_target_peak)
+        if self.on_change_cb:
+            self.on_change_cb()
 
     def _log_telemetry(self, hdr_output_active: bool, effective_target_peak: Any):
         import json
@@ -1063,12 +739,6 @@ class HdrController(GObject.Object):
         self._disconnected = True
         self._shutting_down = True
         self._pending_epoch = None
-        if getattr(self, "_readback_timeout_source_id", None) is not None:
-            try:
-                GLib.source_remove(self._readback_timeout_source_id)
-            except Exception:
-                pass
-            self._readback_timeout_source_id = None
         if hasattr(self, "_monitor_poll_timer_id") and self._monitor_poll_timer_id:
             try:
                 GLib.source_remove(self._monitor_poll_timer_id)

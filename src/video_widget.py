@@ -606,7 +606,10 @@ class MpvVideoWidget(Gtk.Widget):
         scaled_h = max(1, scaled_h)
 
         controller = getattr(self, "hdr_controller", None)
-        if controller and getattr(controller, "is_publication_suppressed", False):
+        if controller and (
+            getattr(controller, "is_publication_pending", False)
+            or getattr(controller, "is_publication_suppressed", False)
+        ):
             return GLib.SOURCE_REMOVE
 
         committed = getattr(controller, "committed_output_state", None) if controller else None
@@ -638,7 +641,10 @@ class MpvVideoWidget(Gtk.Widget):
             target_spec = render_target_spec(
                 use_float, rgba16f=GL_RGBA16F, rgba8=GL_RGBA8
             )
-            self.render_target_format = "GL_RGBA16F" if use_float else "GL_RGBA8"
+            self.render_target_format = (
+                committed.fbo_format if committed is not None
+                else "GL_RGBA16F" if use_float else "GL_RGBA8"
+            )
             self.render_target_depth = target_spec.depth
             self.mpv_ctx.render(
                 flip_y=False,

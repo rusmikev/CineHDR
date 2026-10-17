@@ -2315,6 +2315,13 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
             is_publication_suppressed=False,
         )
         session.video_area.current_texture = object()
+        texture_patch = patch(
+            "src.gpu_validation.publication_texture_evidence",
+            return_value={"available": True, "format": "R8G8B8A8",
+                          "color_state_srgb": True, "dimensions_match": True},
+        )
+        texture_patch.start()
+        self.addCleanup(texture_patch.stop)
         properties = {"playlist-pos": 0, "path": "/path/to/sdr.mp4"}
         session.player._get_property.side_effect = properties.get
         session.player.get_property.side_effect = properties.get
@@ -2340,6 +2347,186 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         )
         self.assertIsNone(session.pixel_oracle.get_capture("initial_sdr"))
         self.assertIn("FBO slot identity is unavailable", session.pixel_oracle.readback_errors)
+
+    def test_first_new_publication_mismatch_survives_later_recovery(self):
+        """A wrong first FBO cannot be skipped in favor of a later good frame."""
+        from src.hdr_controller import CommittedOutputState
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.config = SimpleNamespace(fixture_sdr_sha256="sdr_hash")
+        session.step_index = 0
+        session.steps = [None, None, None]
+        session.pixel_oracle = PausedTransitionPixelOracle()
+        session.player = MagicMock()
+        session.player._get_property.side_effect = {"playlist-pos": 0, "path": "/sdr.mp4"}.get
+        session.video_area = SimpleNamespace(
+            hdr_controller=SimpleNamespace(
+                committed_output_state=CommittedOutputState(
+                    1, "auto", "auto", "auto", "GL_RGBA8", "srgb", False, False
+                ),
+                is_publication_pending=False,
+                is_publication_suppressed=False,
+            ),
+            current_texture=object(),
+            render_frame_generation=1,
+        )
+        session._pending_render_frame_generation = 0
+        sample = dict(
+            slot=SimpleNamespace(index=0), epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA16F", is_float=True, width=320, height=180,
+            patch_samples=self._canonical_samples(is_hdr=False),
+        )
+        session._on_fbo_pixel_capture(**sample)
+        session.video_area.render_frame_generation = 2
+        session._on_fbo_pixel_capture(**{
+            **sample, "frame_generation": 2, "fbo_format": "GL_RGBA8", "is_float": False
+        })
+        self.assertTrue(session.pixel_oracle.provenance_errors)
+        self.assertEqual(session.pixel_oracle.evaluate()[0], "FAIL")
+        good_fbo = {**sample, "fbo_format": "GL_RGBA8", "is_float": False}
+
+        # The selected HDR file can briefly retain a correctly labeled SDR
+        # publication before the HDR output decision commits. It is outside
+        # the HDR first-publication boundary.
+        session.pixel_oracle = PausedTransitionPixelOracle()
+        session.step_index = 1
+        session.player._get_property.side_effect = {"playlist-pos": 1, "path": "/hdr.mp4"}.get
+        session.video_area.render_frame_generation = 1
+        session._on_fbo_pixel_capture(**good_fbo)
+        self.assertFalse(session.pixel_oracle.provenance_errors)
+        self.assertIsNone(session.pixel_oracle.get_capture("hdr"))
+
+        session.video_area.hdr_controller.committed_output_state = CommittedOutputState(
+            2, "pq", "bt.2020", "auto", "GL_RGBA16F", "rec2100-pq", True, True
+        )
+        self.assertEqual(session._current_publication_phase()[0], "hdr")
+        self.assertEqual(session.player._get_property("playlist-pos"), 1)
+        session.video_area.render_frame_generation = 2
+        session._on_fbo_pixel_capture(**{
+            **sample, "epoch": 1, "frame_generation": 2,
+        })
+        session.video_area.render_frame_generation = 3
+        session._on_fbo_pixel_capture(**{
+            **sample, "epoch": 2, "frame_generation": 3,
+        })
+        self.assertTrue(any("epoch" in error for error in session.pixel_oracle.provenance_errors), session.pixel_oracle.provenance_errors)
+        self.assertEqual(session.pixel_oracle.evaluate()[0], "FAIL")
+
+        # A real texture's wrong tag is equally fatal, even when the FBO
+        # metadata and later publication are otherwise correct.
+        session.pixel_oracle = PausedTransitionPixelOracle()
+        session.step_index = 0
+        session.player._get_property.side_effect = {"playlist-pos": 0, "path": "/sdr.mp4"}.get
+        session.video_area.hdr_controller.committed_output_state = CommittedOutputState(
+            1, "auto", "auto", "auto", "GL_RGBA8", "srgb", False, False
+        )
+        session.video_area.render_frame_generation = 1
+        correct_tag = {"available": True, "format": "R8G8B8A8",
+                       "color_state_srgb": True, "dimensions_match": True}
+        with patch("src.gpu_validation.publication_texture_evidence", side_effect=[
+            {**correct_tag, "color_state_srgb": False}, correct_tag
+        ]):
+            session._on_fbo_pixel_capture(**good_fbo)
+            session.video_area.render_frame_generation = 2
+            session._on_fbo_pixel_capture(**{**good_fbo, "frame_generation": 2})
+        self.assertTrue(session.pixel_oracle.provenance_errors)
+        self.assertEqual(session.pixel_oracle.evaluate()[0], "FAIL")
+
+    def test_first_published_unavailable_texture_evidence_survives_recovery_as_unverified(self):
+        """Unavailable GDK texture evidence on the first frame must be retained as UNVERIFIED, not FAIL.
+
+        A subsequent frame with available evidence must not replace the first frame or turn it into PASS.
+        """
+        from src.hdr_controller import CommittedOutputState
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.config = SimpleNamespace(
+            fixture_sdr_sha256="sdr_hash",
+            fixture_hdr_sha256="hdr_hash",
+        )
+        session.step_index = 0
+        session.steps = [None, None, None]
+        session.pixel_oracle = PausedTransitionPixelOracle(
+            expected_sdr_hash="sdr_hash",
+            expected_hdr_hash="hdr_hash",
+        )
+        session.player = MagicMock()
+        session.player._get_property.side_effect = {"playlist-pos": 0, "path": "/sdr.mp4"}.get
+        session.video_area = SimpleNamespace(
+            hdr_controller=SimpleNamespace(
+                committed_output_state=CommittedOutputState(
+                    1, "auto", "auto", "auto", "GL_RGBA8", "srgb", False, False
+                ),
+                is_publication_pending=False,
+                is_publication_suppressed=False,
+            ),
+            current_texture=object(),
+            render_frame_generation=1,
+        )
+        session._pending_render_frame_generation = 0
+        sdr_fbo = dict(
+            slot=SimpleNamespace(index=0), epoch=1, frame_generation=1,
+            fbo_format="GL_RGBA8", is_float=False, width=320, height=180,
+            patch_samples=self._canonical_samples(is_hdr=False),
+        )
+
+        unavailable_evidence = {
+            "available": False,
+            "error": "Gdk accessor unavailable",
+        }
+        available_evidence = {
+            "available": True,
+            "format": "R8G8B8A8",
+            "color_state_srgb": True,
+            "dimensions_match": True,
+        }
+
+        with patch("src.gpu_validation.publication_texture_evidence", side_effect=[
+            unavailable_evidence, available_evidence
+        ]):
+            # Frame 1: published with unavailable GDK texture evidence
+            session._on_fbo_pixel_capture(**sdr_fbo)
+
+            # First capture must be retained
+            first_capture = session.pixel_oracle.get_capture("initial_sdr")
+            self.assertIsNotNone(first_capture, "First published sample was lost")
+            self.assertEqual(first_capture.frame_generation, 1)
+            self.assertEqual(first_capture.texture_evidence, unavailable_evidence)
+            self.assertFalse(session.pixel_oracle.provenance_errors,
+                             f"Unavailable evidence incorrectly treated as provenance error: {session.pixel_oracle.provenance_errors}")
+
+            # Frame 2: subsequent frame with available evidence
+            session.video_area.render_frame_generation = 2
+            session._on_fbo_pixel_capture(**{**sdr_fbo, "frame_generation": 2})
+
+            # Subsequent frame must not replace first capture
+            retained_capture = session.pixel_oracle.get_capture("initial_sdr")
+            self.assertIs(retained_capture, first_capture, "Subsequent frame replaced the first frame")
+            self.assertEqual(retained_capture.frame_generation, 1)
+
+        # Populate valid hdr and return_sdr captures so evaluate() tests full transition criteria
+        hdr_samples = self._canonical_samples(is_hdr=True)
+        session.pixel_oracle.record_capture(FboPixelCapture(
+            phase="hdr", slot_id=1, epoch=2, frame_generation=3,
+            fbo_format="GL_RGBA16F", is_float=True, width=320, height=180,
+            target_properties={"target-trc": "pq", "target-prim": "bt.2020", "target-peak": "auto"},
+            fixture_hash="hdr_hash", patch_samples=hdr_samples, raw_samples_hash=compute_samples_hash(hdr_samples),
+            media_path="/hdr.mp4",
+            texture_evidence={"available": True, "format": "R16G16B16A16_FLOAT", "color_state_rec2100_pq": True, "dimensions_match": True},
+        ))
+        ret_samples = self._canonical_samples(is_hdr=False)
+        session.pixel_oracle.record_capture(FboPixelCapture(
+            phase="return_sdr", slot_id=2, epoch=3, frame_generation=4,
+            fbo_format="GL_RGBA8", is_float=False, width=320, height=180,
+            target_properties={"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"},
+            fixture_hash="sdr_hash", patch_samples=ret_samples, raw_samples_hash=compute_samples_hash(ret_samples),
+            media_path="/sdr.mp4",
+            texture_evidence={"available": True, "format": "R8G8B8A8", "color_state_srgb": True, "dimensions_match": True},
+        ))
+
+        status, reasons = session.pixel_oracle.evaluate()
+        self.assertEqual(status, "UNVERIFIED", f"Expected UNVERIFIED, got {status} ({reasons})")
+        self.assertTrue(any("unavailable" in r.lower() or "gdk" in r.lower() for r in reasons), reasons)
 
     def test_publication_mode_wires_oracle_and_writes_artifact(self):
         """End-to-end test: publication session wires _fbo_pixel_oracle_cb, pipes real
@@ -2432,6 +2619,20 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         )
         video_area._fbo_pixel_oracle_cb = session._on_fbo_pixel_capture
         video_area._fbo_pixel_oracle_error_cb = session._on_fbo_pixel_readback_error
+
+        def actual_texture(_area):
+            hdr = controller.committed_output_state.is_hdr
+            return {
+                "available": True,
+                "format": "R16G16B16A16_FLOAT" if hdr else "R8G8B8A8",
+                "color_state_rec2100_pq": hdr,
+                "color_state_srgb": not hdr,
+                "dimensions_match": True,
+            }
+
+        texture_patch = patch("src.gpu_validation.publication_texture_evidence", side_effect=actual_texture)
+        texture_patch.start()
+        self.addCleanup(texture_patch.stop)
 
         self.assertTrue(callable(video_area._fbo_pixel_oracle_cb))
         self.assertTrue(callable(video_area._fbo_pixel_oracle_error_cb))
