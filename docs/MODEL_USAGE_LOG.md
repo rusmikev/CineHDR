@@ -422,3 +422,16 @@ Engineer: Gemini. Offline qualification for Gate 2W Run 4 resolved two blockers 
   - Corrected documentation-only names and setter/render timing description;
     production code and existing bundle are unchanged. Packaged runtime
     validation remains pending; no remote action performed by this inspection.
+- **Subsequent installed-package validation (Gemini Operator; Codex artifact review)**:
+  - Session `wayland-publication-20261017-155536-289412` used the exact bundle
+    above, without source overlay. Both active APIs, all four publications,
+    three FBO phases and composite-window protocol checks passed. Repeat-SDR
+    samples are identical; both processes exited 0 with `CLEAN` cleanup.
+  - Independently checked all 23 artifact hashes and the saved reports. The
+    integration worktree was clean at documentation commit
+    `556da105a142ba8f014c961caeca011dd64fe5bf`; production remains the built
+    `feb0d405297f031d4a49db6f7ddf5cd5e7c612d1` source.
+  - Recorded packaged evidence and its public hashes in the existing development
+    summary. Publication is distinguished from presentation; physical HDR and
+    the UI-dependent highlight observation remain unverified. No new build,
+    live run, gate-status change or remote action was performed by this review.

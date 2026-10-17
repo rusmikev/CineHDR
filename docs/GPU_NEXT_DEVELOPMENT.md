@@ -1389,7 +1389,42 @@ and paused transition FBO pixel oracle on GNOME Wayland (0 LSB repeat-SDR delta,
 consistent `R8G8B8A8`/sRGB and `R16G16B16A16_FLOAT`/Rec.2100 PQ states, active APIs
 `opengl` and `opengl-next`).
 
-Scope limitation: This confirms only the measured client-side texture publication and
-FBO pixel readback boundaries in the development overlay. It does not certify physical
-display HDR output, compositor presentation transformations, or packaged application
-distribution.
+Those development runs cover the source overlay only. The subsequent installed
+Flatpak check below independently covers the packaged application.
+
+**Packaged validation (2026-10-17): PASS for both backends.** Saved session
+`wayland-publication-20261017-155536-289412` ran the installed package directly,
+without a development bootstrap, source overlay or `PYTHONPATH` substitution:
+
+- Build source: `feb0d405297f031d4a49db6f7ddf5cd5e7c612d1`.
+- App commit: `2e97e6a5e694c1de54cfad246240d93222aea5a16f9ee1910cc2074cc0d9a10e`.
+- Runtime commit: `0bd5091046708e64bc882e8349877cfbae713f6a1e2d0487a5f10af820a2d792`.
+- Bundle SHA-256: `b3505cd372a34a7625077d3ffdc672dc7939710d6a06408bbe006df0f9aee506`.
+
+Both `opengl` and `opengl-next` passed SDR -> HDR -> SDR -> HDR publication
+at generations 3/5/7/9. The three retained FBO phases have epochs 3/4/5,
+matching actual GDK format/color evidence, no provenance/readback errors,
+and identical initial/return SDR samples (0 LSB delta). Each backend also
+passed ready -> set_image_description -> commit on the composite window
+(`wl_surface` 61, color-management surface 64). Both processes exited 0
+with `CLEAN` cleanup. No preexisting user instances were recorded by this launcher.
+
+The local run manifest verifies all 23 artifacts. Public provenance for its
+publication, FBO and protocol results is retained below; raw traces stay local.
+
+| Backend | Artifact | SHA-256 |
+| --- | --- | --- |
+| legacy | publication report | `8cac28c7ec490b1077f617ef82c38272dd92dc1fa5bf2d66181fcdfa5b8dee20` |
+| legacy | FBO samples JSON | `cf803365c6b7b074632da74e4bd1570ab26f1f7d3449ca7a1981aa1eef9c6b14` |
+| legacy | color-management JSON | `3769eca6de86346902b3eb0a6f7430b3219064f4229a43914b3b6569f99495fa` |
+| gpu-next | publication report | `f88ecc9d5d053447649a69f92ea79474ff86ddde408e4d94945e5a355c1ca7da` |
+| gpu-next | FBO samples JSON | `3025cff814582fabd018569e1079b4d4a41319fa08e6e126f09764314ae5ee16` |
+| gpu-next | color-management JSON | `7f31621f59095cd9e3640baf2f5e8eabcfcb363a9478e59918a9ce2c735663c5` |
+
+Scope: client texture publication, sampled FBO contents and composite-window
+protocol submission are verified on this installed stack. Container/session
+correlation is available; same-process wire and per-frame presentation correlation
+remain unavailable. This does not certify scanout, physical display HDR or resolve
+the observed highlight difference when the UI appears. The raw aggregate remains
+`GATE2W_EVIDENCE_GATHERED`; existing gate adjudications are unchanged. The next step
+for this patch is CI on the publication branch, without another unchanged live run.
