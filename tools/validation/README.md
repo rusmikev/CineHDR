@@ -153,8 +153,8 @@
   - `validate_trace(trace: str)`
   - `validate_composite_window_trace(trace: str, expected_app_id="io.github.rusmikev.CineHDR")`
   - `validate_multiphase_trace(trace: str, expected_app_id="io.github.rusmikev.CineHDR")`
-  - `create_evidence_report(trace_path, publication_report_path, backend, *, oracle=None, multiphase=False, expected_app_id=None, app_id=None)`
-  - `create_failure_evidence(trace_path, publication_report_path, backend, error, *, oracle=None, multiphase=False, expected_app_id=None, app_id=None)`
+  - `create_evidence_report(trace_path, publication_report_path, backend, *, oracle=None, multiphase=False, expected_app_id=None)`
+  - `create_failure_evidence(trace_path, publication_report_path, backend, error, *, oracle=None, multiphase=False)`
   - `main(argv)` — CLI с обязательными аргументами `--trace`, `--publication-report`, `--backend {legacy,gpu-next}`, `--output`, опциональным выбором ожидаемого приложения `--app-id` (по умолчанию `io.github.rusmikev.CineHDR`) и опциональным выбором оракула `--oracle {composite_window,primary_composite,strict_multiphase,legacy}` (или `--multiphase` как синонимом `--oracle strict_multiphase`).
 - `src/gtk_cm_policy.py`: `COLOR_MGMT_OPT_IN_ENV = "CINEHDR_EXPERIMENTAL_COLOR_MGMT"`, `COLOR_MGMT_OPT_IN_FLAG = "--experimental-color-mgmt"`, `CmCaps`, `gtk_cm_opted_in`, `apply_color_mgmt_opt_in`, `apply_gsk_renderer_policy`, `gtk_color_managed`, `gtk_can_tag_hdr`, `preferred_gsk_renderer`.
 - `tools/validation/test_wayland_color_trace.py` *(до `C2a`: `tests/test_wayland_color_trace.py`)*: классы `TestGtkCmPolicy`, `WaylandColorTraceTests`.
@@ -186,12 +186,13 @@
   - `WaylandColorTraceTests.test_ready_after_set_and_wrong_surface_commit_are_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `WaylandColorTraceTests.test_failed_description_display_error_and_protocol_disconnect_are_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `WaylandColorTraceTests.test_ready2_is_accepted_and_records_the_64_bit_identity` (`tools/validation/test_wayland_color_trace.py`)
-- **Контроли выбора ожидаемого `app_id` (параметризация поверхностей, изоляция приложений, валидация аргумента и несовместимость с legacy-оракулом)**:
-  - `WaylandColorTraceTests.test_composite_window_with_custom_app_id_and_default_fallback` (`tools/validation/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_multiphase_with_custom_app_id_and_default_fallback` (`tools/validation/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_multi_app_trace_selects_only_specified_app` (`tools/validation/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_cli_and_report_propagate_app_id` (`tools/validation/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_empty_app_id_and_legacy_combination_rejected` (`tools/validation/test_wayland_color_trace.py`)
+- **Контроли выбора ожидаемого `app_id` (параметризация поверхностей, изоляция приложений, валидация аргумента, порядок цепочек в strict_multiphase и несовместимость с legacy-оракулом)**:
+  - `TestGtkCmPolicy.test_composite_window_with_custom_app_id_and_default_fallback` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_multiphase_with_custom_app_id_and_default_fallback` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_multiphase_with_foreign_and_target_chains_ordering_and_completeness` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_multi_app_trace_selects_only_specified_app` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_cli_and_report_propagate_app_id` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_empty_app_id_and_legacy_combination_rejected` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).

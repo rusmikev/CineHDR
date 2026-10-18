@@ -687,7 +687,6 @@ def validate_composite_window_trace(
     trace: str,
     expected_app_id: str = DEFAULT_APP_ID,
 ) -> dict[str, Any]:
-    expected_app_id = _validate_app_id(expected_app_id)
     """Validate passive Wayland color-management submission for CineHDR's composite window.
 
     Full ADR-0004 criteria for dynamically found window surface:
@@ -701,6 +700,7 @@ def validate_composite_window_trace(
     7. wl_surface.commit called on that exact window surface after set_image_description;
     8. Free of protocol errors, descriptor failed events, and fatal errors.
     """
+    expected_app_id = _validate_app_id(expected_app_id)
     fatal = _fatal_error(trace)
     if fatal is not None:
         raise fatal
@@ -1137,7 +1137,6 @@ def validate_multiphase_trace(
     trace: str,
     expected_app_id: str = DEFAULT_APP_ID,
 ) -> dict[str, Any]:
-    expected_app_id = _validate_app_id(expected_app_id)
     """Validate 4-phase SDR->HDR->SDR->HDR color-management sequence and video surface attribution.
 
     Rejects count-based heuristics (simply counting 4 set_image_description calls).
@@ -1152,6 +1151,7 @@ def validate_multiphase_trace(
     - If set_image_description occurs only on a toplevel window surface (where app_id applies
       to the entire window and no subsurface/offload video buffer chain exists), status is UNKNOWN.
     """
+    expected_app_id = _validate_app_id(expected_app_id)
     fatal = _fatal_error(trace)
     if fatal is not None:
         raise fatal
@@ -1232,6 +1232,7 @@ def validate_multiphase_trace(
 
     toplevel_surfaces, subsurfaces, surface_attaches, viewport_surfaces = _surface_roles_and_attaches(calls)
     image_descs_info = _extract_image_descriptions_info(calls)
+    candidate_unknown: dict[str, Any] | None = None
 
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
         if (
@@ -1458,7 +1459,7 @@ def validate_multiphase_trace(
                         "target video surface cannot be proven from client trace: subsurface/offload "
                         "video buffer chain is unobserved"
                     )
-                return {
+                unknown_candidate = {
                     "schema": TRACE_SCHEMA,
                     "revision": MULTIPHASE_REVISION,
                     "status": "UNKNOWN",
@@ -1466,6 +1467,15 @@ def validate_multiphase_trace(
                     "reason": reason,
                     "matched": base_matched,
                 }
+                is_candidate_target = (
+                    candidate_unknown is not None
+                    and candidate_unknown["matched"]["surface"]["app_id"] == expected_app_id
+                )
+                if candidate_unknown is None or (is_target_app and not is_candidate_target):
+                    candidate_unknown = unknown_candidate
+
+    if candidate_unknown is not None:
+        return candidate_unknown
 
     raise TraceValidationError(
         "no bound wp_color_manager_v1 proved a complete 4-phase sequence "
@@ -1498,7 +1508,6 @@ def create_evidence_report(
     oracle: str | None = None,
     multiphase: bool = False,
     expected_app_id: str | None = None,
-    app_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate trace and prerequisite publication report without copying either."""
     if backend not in {"legacy", "gpu-next"}:
@@ -1509,17 +1518,13 @@ def create_evidence_report(
     if f"Expected backend: {backend}" not in report_lines:
         raise TraceValidationError("publication prerequisite report backend did not match")
 
-    chosen_app_id = expected_app_id if expected_app_id is not None else app_id
-    if chosen_app_id is not None and (not isinstance(chosen_app_id, str) or not chosen_app_id.strip()):
-        raise TraceValidationError("expected_app_id cannot be empty or whitespace-only")
+    target_app_id = _validate_app_id(expected_app_id)
 
     is_legacy = (not multiphase) and (oracle not in ("primary_composite", "composite_window", "strict_multiphase"))
-    if is_legacy and chosen_app_id is not None:
+    if is_legacy and expected_app_id is not None:
         raise TraceValidationError(
-            f"legacy oracle does not support app_id attribution ({chosen_app_id!r} specified)"
+            f"legacy oracle does not support app_id attribution ({expected_app_id!r} specified)"
         )
-
-    target_app_id = chosen_app_id if chosen_app_id is not None else DEFAULT_APP_ID
 
     trace_text = trace_path.read_text(encoding="utf-8", errors="replace")
     if multiphase or oracle == "strict_multiphase":
@@ -1546,8 +1551,6 @@ def create_failure_evidence(
     *,
     oracle: str | None = None,
     multiphase: bool = False,
-    expected_app_id: str | None = None,
-    app_id: str | None = None,
 ) -> dict[str, Any]:
     """Build hash-linked failure evidence without exposing a successful chain.
 
@@ -1627,7 +1630,6 @@ def main(argv: list[str] | None = None) -> int:
                 args.backend,
                 error,
                 oracle=effective_oracle,
-                expected_app_id=args.app_id,
             )
             args.output.write_text(
                 json.dumps(failure_evidence, indent=2, sort_keys=True) + "\n",

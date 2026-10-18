@@ -15,7 +15,6 @@ sys.path.insert(0, str(REPO_DIR))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from parse_wayland_color_trace import (
-    DEFAULT_APP_ID,
     MULTIPHASE_REVISION,
     MULTIPHASE_SCOPE,
     PRIMARY_COMPOSITE_REVISION,
@@ -1773,6 +1772,144 @@ class TestGtkCmPolicy(unittest.TestCase):
                 ])
             self.assertEqual(status_empty, 1)
             self.assertIn("cannot be empty or whitespace-only", stderr.getvalue())
+
+    def test_multiphase_with_foreign_and_target_chains_ordering_and_completeness(self):
+        header = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+        """.strip()
+
+        foreign_full_chain = """
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#161)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#167, wl_surface#161)
+[ 1042.007]  -> xdg_surface#167.get_toplevel(new id xdg_toplevel#168)
+[ 1042.008]  -> xdg_toplevel#168.set_app_id("org.example.Foreign")
+[ 1042.009]  -> wl_compositor#1.create_surface(new id wl_surface#171)
+[ 1042.010]  -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#172, wl_surface#171, wl_surface#161)
+[ 1042.011]  -> wp_viewporter#12.get_viewport(new id wp_viewport#175, wl_surface#171)
+[ 1042.012]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#123, wl_surface#171)
+[ 1042.013]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#150)
+[ 1042.014]  -> wp_image_description_creator_params_v1#150.set_primaries_named(1)
+[ 1042.015]  -> wp_image_description_creator_params_v1#150.set_tf_named(9)
+[ 1042.016]  -> wp_image_description_creator_params_v1#150.create(new id wp_image_description_v1#131)
+[ 1042.017]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#152)
+[ 1042.018]  -> wp_image_description_creator_params_v1#152.set_primaries_named(6)
+[ 1042.019]  -> wp_image_description_creator_params_v1#152.set_tf_named(11)
+[ 1042.020]  -> wp_image_description_creator_params_v1#152.create(new id wp_image_description_v1#132)
+[ 1042.021]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#154)
+[ 1042.022]  -> wp_image_description_creator_params_v1#154.set_primaries_named(1)
+[ 1042.023]  -> wp_image_description_creator_params_v1#154.set_tf_named(9)
+[ 1042.024]  -> wp_image_description_creator_params_v1#154.create(new id wp_image_description_v1#133)
+[ 1042.025]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#156)
+[ 1042.026]  -> wp_image_description_creator_params_v1#156.set_primaries_named(6)
+[ 1042.027]  -> wp_image_description_creator_params_v1#156.set_tf_named(11)
+[ 1042.028]  -> wp_image_description_creator_params_v1#156.create(new id wp_image_description_v1#134)
+[ 1042.029]  wp_image_description_v1#131.ready(101)
+[ 1042.030]  -> wp_color_management_surface_v1#123.set_image_description(wp_image_description_v1#131, 0)
+[ 1042.031]  -> wl_surface#171.attach(wl_buffer#181, 0, 0)
+[ 1042.032]  -> wl_surface#171.commit()
+[ 1042.033]  wp_image_description_v1#132.ready(102)
+[ 1042.034]  -> wp_color_management_surface_v1#123.set_image_description(wp_image_description_v1#132, 0)
+[ 1042.035]  -> wl_surface#171.attach(wl_buffer#182, 0, 0)
+[ 1042.036]  -> wl_surface#171.commit()
+[ 1042.037]  wp_image_description_v1#133.ready(103)
+[ 1042.038]  -> wp_color_management_surface_v1#123.set_image_description(wp_image_description_v1#133, 0)
+[ 1042.039]  -> wl_surface#171.attach(wl_buffer#183, 0, 0)
+[ 1042.040]  -> wl_surface#171.commit()
+[ 1042.041]  wp_image_description_v1#134.ready(104)
+[ 1042.042]  -> wp_color_management_surface_v1#123.set_image_description(wp_image_description_v1#134, 0)
+[ 1042.043]  -> wl_surface#171.attach(wl_buffer#184, 0, 0)
+[ 1042.044]  -> wl_surface#171.commit()
+        """.strip()
+
+        target_full_chain = """
+[ 1042.045]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.046]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.047]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.048]  -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.049]  -> wl_compositor#1.create_surface(new id wl_surface#71)
+[ 1042.050]  -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#72, wl_surface#71, wl_surface#61)
+[ 1042.051]  -> wp_viewporter#12.get_viewport(new id wp_viewport#75, wl_surface#71)
+[ 1042.052]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#71)
+[ 1042.053]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.054]  -> wp_image_description_creator_params_v1#50.set_primaries_named(1)
+[ 1042.055]  -> wp_image_description_creator_params_v1#50.set_tf_named(9)
+[ 1042.056]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.057]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#52)
+[ 1042.058]  -> wp_image_description_creator_params_v1#52.set_primaries_named(6)
+[ 1042.059]  -> wp_image_description_creator_params_v1#52.set_tf_named(11)
+[ 1042.060]  -> wp_image_description_creator_params_v1#52.create(new id wp_image_description_v1#32)
+[ 1042.061]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#54)
+[ 1042.062]  -> wp_image_description_creator_params_v1#54.set_primaries_named(1)
+[ 1042.063]  -> wp_image_description_creator_params_v1#54.set_tf_named(9)
+[ 1042.064]  -> wp_image_description_creator_params_v1#54.create(new id wp_image_description_v1#33)
+[ 1042.065]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#56)
+[ 1042.066]  -> wp_image_description_creator_params_v1#56.set_primaries_named(6)
+[ 1042.067]  -> wp_image_description_creator_params_v1#56.set_tf_named(11)
+[ 1042.068]  -> wp_image_description_creator_params_v1#56.create(new id wp_image_description_v1#34)
+[ 1042.069]  wp_image_description_v1#31.ready(101)
+[ 1042.070]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.071]  -> wl_surface#71.attach(wl_buffer#81, 0, 0)
+[ 1042.072]  -> wl_surface#71.commit()
+[ 1042.073]  wp_image_description_v1#32.ready(102)
+[ 1042.074]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#32, 0)
+[ 1042.075]  -> wl_surface#71.attach(wl_buffer#82, 0, 0)
+[ 1042.076]  -> wl_surface#71.commit()
+[ 1042.077]  wp_image_description_v1#33.ready(103)
+[ 1042.078]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#33, 0)
+[ 1042.079]  -> wl_surface#71.attach(wl_buffer#83, 0, 0)
+[ 1042.080]  -> wl_surface#71.commit()
+[ 1042.081]  wp_image_description_v1#34.ready(104)
+[ 1042.082]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#34, 0)
+[ 1042.083]  -> wl_surface#71.attach(wl_buffer#84, 0, 0)
+[ 1042.084]  -> wl_surface#71.commit()
+        """.strip()
+
+        target_incomplete_chain = """
+[ 1042.045]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.046]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.047]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.048]  -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.049]  -> wl_compositor#1.create_surface(new id wl_surface#71)
+[ 1042.050]  -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#72, wl_surface#71, wl_surface#61)
+[ 1042.051]  -> wp_viewporter#12.get_viewport(new id wp_viewport#75, wl_surface#71)
+[ 1042.052]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#71)
+[ 1042.053]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.054]  -> wp_image_description_creator_params_v1#50.set_primaries_named(1)
+[ 1042.055]  -> wp_image_description_creator_params_v1#50.set_tf_named(9)
+[ 1042.056]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.057]  wp_image_description_v1#31.ready(101)
+[ 1042.058]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.059]  -> wl_surface#71.attach(wl_buffer#81, 0, 0)
+[ 1042.060]  -> wl_surface#71.commit()
+        """.strip()
+
+        # 1. Foreign full chain before valid target chain -> PASS target
+        trace_foreign_first = f"{header}\n{foreign_full_chain}\n{target_full_chain}"
+        evidence1 = validate_multiphase_trace(trace_foreign_first, expected_app_id="mpv")
+        self.assertEqual(evidence1["status"], "PASS")
+        self.assertEqual(evidence1["matched"]["surface"]["app_id"], "mpv")
+        self.assertEqual(evidence1["matched"]["surface"]["wl_surface_id"], 71)
+
+        # 2. Reverse order (target full chain before foreign) -> same result and target app_id
+        trace_target_first = f"{header}\n{target_full_chain}\n{foreign_full_chain}"
+        evidence2 = validate_multiphase_trace(trace_target_first, expected_app_id="mpv")
+        self.assertEqual(evidence2["status"], "PASS")
+        self.assertEqual(evidence2["matched"]["surface"]["app_id"], "mpv")
+        self.assertEqual(evidence2["matched"]["surface"]["wl_surface_id"], 71)
+
+        # 3. Foreign full chain, target incomplete -> non-PASS
+        trace_incomplete = f"{header}\n{foreign_full_chain}\n{target_incomplete_chain}"
+        evidence3 = validate_multiphase_trace(trace_incomplete, expected_app_id="mpv")
+        self.assertNotEqual(evidence3.get("status"), "PASS")
+
+        # 4. Only foreign chain -> non-PASS (UNKNOWN)
+        trace_only_foreign = f"{header}\n{foreign_full_chain}"
+        evidence4 = validate_multiphase_trace(trace_only_foreign, expected_app_id="mpv")
+        self.assertNotEqual(evidence4.get("status"), "PASS")
+        self.assertEqual(evidence4.get("status"), "UNKNOWN")
 
 
 if __name__ == "__main__":
