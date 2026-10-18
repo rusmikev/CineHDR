@@ -1,73 +1,461 @@
-# CineHDR Agent Instructions
+# CineHDR — правила для ИИ-исполнителей
 
-This is the ChatGPT/Codex entry point. Follow `docs/MODEL_POLICY.md` for all
-model routing, shared safety, and escalation. Gemini uses `GEMINI.md`.
+Редакция 3, 2026-10-18. Это единственный файл правил проекта. `GEMINI.md`
+ссылается сюда. Правила меняет только владелец репозитория. Агент, считающий
+правило ошибочным или устаревшим, пишет об этом в отчёте по задаче и
+продолжает работать по правилу.
 
-- Current profile: **Gemini-first** for bounded engineering, tests, docs and
-  proposals. Honor the user's Gemini-only budget preference; do not automatically
-  launch GPT agents. An explicitly assigned Codex task authorizes that task.
-- When routed to GPT-6, use `gpt-6-luna` low for mechanical/low-risk prescribed
-  work, `gpt-6-sol` medium for bounded difficult engineering and high for proposals
-  or substantial reviews. Reserve `gpt-6-astra` high for the hardest questions or
-  high-risk review; difficult implementation needs an explicit assignment.
-- Engineer, Reviewer and Operator are roles, not model restrictions. A Reviewer
-  task is review-only. Sensitive work needs independent acceptance of its ADR
-  and changeset by a qualified separate session/agent that did not author it.
-  Astra high, Sol high or a capable available Gemini may review. No mandatory
-  Sol -> Astra sequence applies; no author may accept its own sensitive work.
-- Never silently substitute or upgrade models. After one failed dispatch,
-  report it; use a named capable alternative only within the authorized route,
-  otherwise continue independent work pending a user routing decision.
-- Default to one active implementation agent plus at most one independent
-  prescribed-check Operator, with non-overlapping file ownership and a short
-  context packet. Batch one review per coherent changeset. Stop after two
-  materially distinct local attempts at the same failure for independent
-  root-cause/plan review or HOLD, not an automatic premium-model chain.
-- Policy/model changes do not reset attempt counts, release HOLD, accept pending
-  patches or authorize hardware runs. GNOME is the current debugging target;
-  KDE follows after the core path is verified on GNOME.
-- Record architectural decisions as ADRs with measurable validation and a
-  rollback plan.
-- Treat tests, measurements, and source evidence as the acceptance authority,
-  not model confidence.
-- Do not create entities beyond necessity. Extend existing modules, tests,
-  diagnostics and documents first; justify any new abstraction, service,
-  setting, script, report format or gate by a concrete unmet requirement.
-- Verify every runtime hypothesis live in the actual CineHDR playback path
-  before calling it confirmed or fixed. Static analysis and mocks are
-  prerequisites, not substitutes; missing live evidence stays unverified.
-- Use Video Output Diagnostics and its Copy Report as the single user-facing
-  place for video-output checks, failure reasons and evidence gaps. Distinguish
-  configured intent from actual state, texture publication from presentation,
-  and compositor metadata from measured display output. Unavailable data must
-  remain Unknown/Unverified, never a fabricated zero, success or certification.
-- Live checks still obey ADR-0006: prefer the current session, make no hidden
-  playback changes, and use one bounded discriminating observation. Do not
-  request /dev/dri write access; the user or authorized external Operator performs
-  real GPU/Wayland executions when necessary.
-- Follow `docs/adr/0006-bounded-validation-governance.md` for every real-GPU,
-  compositor, long-running, or externally executed validation task.
-- Treat a gate as independent evidence rows. A failed, unavailable, or deferred
-  row must not erase accepted rows or force unrelated retries; Gate 2W remains
-  separate from the CineHDR-owned Gate 2 boundary.
-- Fixed numerical attempt limits are removed. Every new real-hardware run
-  requires a concrete hypothesis, a material difference from the previous run,
-  an expected discriminating signal, and preservation of raw artifacts.
-  Unchanged repeats without diagnostic purpose are strictly prohibited.
-  Preserve preflight checks, user instance protection, and evidence standards;
-  governance rule changes do not release existing HOLD rows.
-- A rerun brief must name the prior failure signature, the single material
-  change, the expected discriminating evidence, the command, timeout, and
-  required artifacts. Never repeat an unchanged soak or hardware command.
-- An external test agent is an Operator, not an acceptance authority. It may
-  execute an immutable hand-off and return raw artifacts; it must not edit the
-  implementation, weaken criteria, choose thresholds, or close a gate.
-- Prose, screenshots, mocks, and model summaries cannot close an evidence row
-  unless the row explicitly defines them as its oracle. Retain a sanitized,
-  machine-readable report and its provenance for every accepted hardware row.
-  Store personal paths, media titles, and raw machine identifiers locally;
-  public summaries, documentation, and commit messages must remain anonymized.
-- Do not push, publish, open pull requests, or modify remote repositories
-  without explicit user authorization.
-- Preserve unrelated user changes and keep the stable implementation usable
-  while the GPU Next line is experimental.
+Пометки: **[MUST]** — нарушение блокирует коммит. **[SHOULD]** — отступление
+допускается с обоснованием в теле коммита.
+
+## 1. Проект и цель
+
+- CineHDR — форк видеоплеера Cine (GTK4 / libadwaita / libmpv / Python + ctypes)
+  с HDR-выводом на Wayland через `GdkGLTextureBuilder` + `Gdk.ColorState` +
+  `wp_color_manager_v1`.
+- Цель — релиз 1.0: Flatpak x86_64; HDR на GNOME ≥ 48 и Plasma ≥ 6.3;
+  SDR-воспроизведение везде, где работает Cine. Порядок работ: GNOME → KDE →
+  Intel/NVIDIA; чистка кода — параллельно. План и статус: `docs/PLAN.md`,
+  `docs/TESTING.md`.
+- Решения D1–D7 приняты 2026-10-18 (`docs/adr/0008`, Accepted): upstreaming
+  снят с целей; гейт `auto` — runtime-критерий; `GDK_DEBUG=color-mgmt`
+  включается Flatpak-лаунчером по умолчанию (реализация — PLAN P1.2);
+  governance-документы подлежат удалению по PLAN C1 (решение принято, работа не выполнена); scope 1.0 — GNOME + KDE, Flatpak x86_64;
+  `po/` обновляется скриптом; валидационные инструменты живут в
+  `tools/validation/`, в продукт не устанавливаются и по умолчанию выключены.
+- Цель по upstream — оставаться мержабельным с upstream `main` (§13).
+- Рендер `legacy` (`opengl`) — продуктовый путь. `gpu-next` (`opengl-next`,
+  патченный libmpv) — экспериментальный, по умолчанию выключен, релиз не блокирует.
+- У агента нет GPU, Wayland и HDR-монитора. Всё, что требует экрана, выполняет
+  владелец по инструкции агента (§8). Агент никогда не утверждает результат
+  аппаратной проверки, которую не видел.
+
+## 2. Окружение и команды
+
+Проверки по типу изменения (перед коммитом):
+- только `docs/` или `*.md`      → ничего;
+- только `tests/`, `tools/`      → `meson test -C build`;
+- `src/`                         → `meson test` + `ruff check` + оба grep ниже;
+- файлы §4 (рендер-путь)         → то же + smoke владельца (L2) до закрытия задачи.
+
+Нативная сборка и тесты:
+
+```bash
+meson setup build            # один раз
+meson compile -C build
+meson test -C build --print-errorlogs
+ruff check src tests tools
+python3 run_dev.py /path/to/video.mkv    # ручной smoke — выполняет владелец
+```
+
+Flatpak (продуктовая сборка; её же использует владелец для аппаратных проверок):
+
+```bash
+flatpak-builder --user --install --force-clean build-dir \
+  build-aux/flatpak/io.github.rusmikev.CineHDR.json
+flatpak run io.github.rusmikev.CineHDR
+```
+
+Версии зависимостей проверяются в runtime, не по памяти:
+
+```bash
+flatpak run --command=python3 io.github.rusmikev.CineHDR -c \
+ "import gi; gi.require_version('Gtk','4.0'); from gi.repository import Gtk, Gdk;
+  print(Gtk.get_major_version(), Gtk.get_minor_version(), Gtk.get_micro_version());
+  print(hasattr(Gdk.GLTextureBuilder,'set_sync'), hasattr(Gdk.ColorState,'get_rec2100_pq'))"
+flatpak run --command=python3 io.github.rusmikev.CineHDR -c \
+ "import mpv; m=mpv.MPV(vo='null', ao='null'); print(m.mpv_version)"
+```
+
+Инварианты структуры (запускать перед коммитом в `src/`, оба вывода пустые):
+
+```bash
+# каждый src/*.py объявлен в src/meson.build
+diff <(ls src/*.py | xargs -n1 basename | sort) \
+     <(grep -o "'[a-z_]*\.py'" src/meson.build | tr -d "'" | sort)
+# приватный API python-mpv не используется
+grep -rn "_get_property\|self\.mpv\._\|player\._" src/
+```
+
+## 3. Границы модулей [MUST]
+
+| Модуль | Отвечает за | Запрещено в нём |
+|---|---|---|
+| `hdr_detection.py` | детекция HDR-контента и возможностей системы; единственный кэш решения «HDR возможен»; гейт `auto` | хранить UI/mpv-состояние; дублировать логику в других модулях |
+| `hdr_controller.py` | состояние HDR, GSettings, установка `target-*` в mpv, committed output state | OpenGL; знание о виджетах |
+| `gtk_cm_policy.py` | модель политики GTK для color management; GSK renderer policy; opt-in | импорт `gi` |
+| `wayland_cm_probe.py`, `wayland_output_hdr.py` | ctypes-доступ к Wayland registry и image description выходов | GTK-логика, mpv |
+| `gl_bindings.py` | ctypes-биндинги GL/EGL, константы | логика приложения |
+| `gl_renderer.py` | пул FBO/текстур, RAII | знание об mpv и GTK-виджетах |
+| `render_backend.py` | выбор API libmpv и создание контекста, диагностика runtime | рендер кадра |
+| `video_widget.py` | mpv ↔ GTK scene graph; публикация текстур; точки подключения измерений | бизнес-логика HDR (только через контроллер) |
+| `diagnostics_report.py` | единственный сборщик фактов и форматтер отчёта | UI-виджеты; запись файлов (это `tools/validation`) |
+| `hdr_menu.py`, `hdr_diagnostics.py` | UI | прямая запись свойств mpv; собственные сборщики фактов |
+
+Нарушение границ (`from .window import CineWindow` в callback, GL-вызовы в
+контроллере, mpv в диагностике мимо контроллера) — отказ на ревью.
+
+## 4. Инварианты рендер-пути [MUST]
+
+Ошибки здесь проявляются как недетерминированные артефакты на конкретных
+драйверах и тестами не ловятся. Любое изменение `video_widget.py`,
+`gl_renderer.py`, `gl_bindings.py`, `hdr_controller.py` требует аппаратного
+smoke по §8 до того, как задача считается закрытой.
+
+1. Текстура, отданная GTK через `builder.build()`, не модифицируется, пока GTK не
+   вернул её (destroy-notify). Fence (`set_sync` / `glClientWaitSync`)
+   синхронизирует запись и чтение, но не даёт права перезаписать удерживаемую
+   текстуру. Один и тот же texture id никогда не перерисовывается между кадрами
+   без прохождения через пул.
+2. `do_snapshot` только прикладывает готовую текстуру. В нём запрещены
+   `mpv_ctx.render()`, `make_current()`, создание/ресайз FBO, любые блокирующие
+   GL-вызовы. Рендер — в idle-обработчике, инициированном `update_cb`.
+3. Per-frame код (snapshot, `_render_pending_frame` и всё, что из них
+   вызывается): запрещены capability-запросы (`check_hdr_support`,
+   `Gdk.Display.get_default`), Wayland roundtrip, чтение свойств mpv (кроме
+   `mpv_ctx.update()` и одноразового `media_frame_evidence` до первого
+   медиа-кадра), импорты, `logging` выше DEBUG без одноразового флага,
+   форматирование строк, создание лямбд/замыканий. Новая аллокация объекта на
+   кадр допустима только если названа и обоснована в коммите. Точки
+   подключения измерений при значении `None` не добавляют работы.
+4. `glClientWaitSync` — только с конечным таймаутом (`GL_CLIENT_WAIT_TIMEOUT_NS`);
+   `GL_TIMEOUT_IGNORED` запрещён. При `GL_TIMEOUT_EXPIRED`/`GL_WAIT_FAILED` кадр
+   пропускается, не публикуется.
+5. Порядок завершения: `mpv_render_context_free()` → `mpv.quit()` →
+   `wait_for_shutdown()`. Порядок явный в коде и подтверждён комментарием.
+6. Рендер-контекст создаётся один раз на realize. Смена backend в процессе
+   работы запрещена; переключение требует перезапуска приложения.
+7. ctypes-значения не сравниваются с примитивами напрямую: `x.value == 0`,
+   не `x == 0`.
+8. Любая загрузка `CDLL("libGL…")`, `CDLL("libwayland…")` обёрнута в `try/except
+   OSError`; при неудаче приложение работает в SDR и логирует предупреждение.
+
+## 5. Единственный источник истины [MUST]
+
+1. Одна функция на одно понятие. Перед добавлением функции — `grep -rn` по
+   `src/`; похожая есть — расширяй её.
+2. Один наблюдатель на одно свойство mpv на процесс. `video-params` наблюдает
+   только `HdrController`; UI получает изменения через его callback.
+3. Один ключ настроек на одно понятие: `hdr-mode` (`auto|force-hdr|force-sdr`).
+   Производные значения вычисляются, не хранятся.
+4. HDR-контент = трансфер PQ или HLG в `video-params`. `sig-peak` и primaries
+   сами по себе HDR не означают. Изменение критерия — только вместе с тестом на
+   WCG-SDR (bt.2020 + bt.1886 → не HDR).
+5. Один кэш решения «HDR возможен» — в `hdr_detection`. Другие модули его не
+   трогают напрямую; есть `invalidate_*()`.
+6. Факты о runtime (версия GTK, наличие `set_sync`, caps композитора) читаются
+   один раз и кэшируются; неизвестное остаётся `None`, а не угадывается
+   значением по умолчанию.
+
+## 6. API: не выдумывать, не лезть в приватное [MUST]
+
+Главный источник ошибок ИИ-разработчика — галлюцинированные или устаревшие API.
+
+1. Любое новое свойство mpv, метод GTK/GDK, enum протокола Wayland перед
+   использованием проверяется в документации конкретной версии или в исходниках,
+   а не по памяти:
+   - mpv: `DOCS/man/options.rst`, `input.rst` на пиннованном коммите;
+   - GTK: `docs.gtk.org/gdk4` с пометкой «Available since» ≤ версии из
+     runtime (§2), или исходники GTK этой версии;
+   - Wayland: `wayland.app/protocols/color-management-v1`.
+   В теле коммита указывается ссылка или путь `файл:строка`.
+2. Приватный API запрещён: `mpv._get_property`, атрибуты вида `self.mpv._x`,
+   обход внутренностей GTK-виджетов через `get_first_child()` (кроме
+   унаследованного upstream-кода, который не трогаем). Чтение свойств mpv —
+   только через `player[name]` в `try/except (AttributeError, RuntimeError,
+   mpv.ShutdownError)` через единый helper в `utils.py`.
+3. Проверки возможностей — через `hasattr`/версии в одном месте
+   (`hdr_detection`/`gtk_cm_policy`) с комментарием «какая версия вводит API».
+4. Если утверждение об API нельзя подтвердить ссылкой — это галлюцинация;
+   перепроверь, прежде чем писать код.
+5. Веб-поиск не заменяет чтение исходников: статьи описывают другие версии.
+   Для вопросов «что делает GTK 4.2x при …» — читать исходники GTK версии из
+   runtime.
+
+## 7. Ошибки и логирование [MUST]
+
+- `except Exception` допустим только на границах: callbacks из C (GTK/mpv/ctypes
+  listener), завершение приложения, диагностический UI. В остальных местах —
+  конкретные исключения.
+- Каждый `except` либо осмысленно восстанавливает состояние, либо логирует с
+  уровнем и контекстом через `logging.getLogger(__name__)`. `print()` запрещён.
+  `except …: pass` запрещён, кроме явно прокомментированного случая
+  «освобождение ресурса при завершении».
+- Guard-условия явные (`if not caps: return`), не «попробуем и проглотим».
+- Сообщения логов и UI — только английские. Русский и другие языки попадают в
+  приложение только через `po/`.
+
+## 8. Доказательства и аппаратные проверки
+
+Факт — это то, что наблюдал владелец и вернул агенту, либо артефакт,
+записанный инструментом из `tools/validation/`. Всё остальное — гипотеза.
+
+### Уровни доказательств
+
+Каждый уровень доказывает только то, что перечислено.
+
+| Уровень | Что доказывает | Что не доказывает |
+|---|---|---|
+| L1 unit/static (`meson test`, `ruff`) | логику функций без дисплея | что путь работает в живом процессе |
+| L2 smoke владельца (`run_dev.py` / Flatpak, SDR-файл) | запуск, кадры, управление, завершение без краша | HDR |
+| L3 сценарий ячейки матрицы (`docs/TESTING.md`) | поведение на конкретном DE/GPU; состояние конвейера по Copy Report / автоснимку | что композитор получил HDR-описание; фотоны |
+| L3p протокольная трасса (`WAYLAND_DEBUG=1` + `tools/validation/parse_wayland_color_trace.py`) | клиент отправил композитору HDR-описание цвета для поверхности, несущей видео, и зафиксировал его commit без ошибки протокола | что композитор его применил; фотоны |
+| L4 визуальная приёмка | HDR доставлен на дисплей в пользовательском смысле — по заранее заданным критериям сравнения с проверенным эталоном | колориметрическую точность; причину расхождения |
+
+HDR в ячейке подтверждён при L3p PASS **и** L4 PASS. Ни один из них по
+отдельности не является доказательством доставки HDR.
+
+### L3p — протокольная трасса
+
+- Проверяется описание цвета **той поверхности, которая несёт видео**.
+  Фактический путь (композитный toplevel или offload-подповерхность)
+  определяется по трассе, а не по настройке: `GtkGraphicsOffload = enabled`
+  — разрешение, не доказательство перехода на подповерхность. В запросе
+  проверки записывается ожидаемый путь; расхождение с наблюдённым — UNCLEAR
+  с указанием наблюдённого пути. Парсер резолвит поверхность по цепочке
+  `get_xdg_surface → get_toplevel → set_app_id` либо `get_subsurface`.
+- Для наблюдаемого представления цвета проверяется его семантика по
+  используемой версии протокола. Варианты, которые парсер распознаёт
+  (`tf_named ∈ {st2084_pq, hlg}`; `ext_linear` с `luminances`, где
+  `max_lum > reference_lum`; предопределённые описания вроде
+  `create_windows_scrgb`), имеют положительный и отрицательный контроль в
+  его тестах; нераспознанное представление даёт UNCLEAR, не FAIL. Отсутствие
+  именно PQ не является доказательством отсутствия HDR.
+- PASS: на этой поверхности после `ready`/`ready2` есть `set_image_description`
+  с распознанным HDR-описанием и последующий `commit`. FAIL: описание
+  распознано как SDR или отсутствует при HDR-контенте в `auto` с открытым
+  гейтом. `wp_image_description_v1.failed` оценивается относительно проверяемой цепочки
+  описания цвета. `wl_display.error` на соединении, несущем проверяемую
+  поверхность, исключает PASS прогона независимо от указанного объекта —
+  это фатальная ошибка соединения. Ошибка заведомо другого соединения
+  фиксируется отдельно. Если принадлежность соединению установить нельзя —
+  UNCLEAR. UNCLEAR: поверхность не резолвится, трасса неполна,
+  представление не распознано, путь не совпал с ожидаемым.
+
+### L4 — визуальная приёмка
+
+- PASS — выполнены заранее заданные критерии визуального сравнения с
+  проверенным эталоном. FAIL — эти критерии воспроизводимо нарушены при
+  корректных условиях сравнения. UNCLEAR — эталон, условия или наблюдение не
+  позволяют сделать вывод. Результат относится к визуальной приёмке и не
+  является заявлением о колориметрической точности.
+- Критерии задаются до запуска и записываются в запросе проверки. Для
+  CineHDR: различимость заранее выбранных ступеней паттерна (например, три
+  ступени 600/800/1000 нит различимы, как в эталоне) и отсутствие клиппинга
+  (ступень 1000 нит не слита с 800). «Патч 1000 ярче патча 203» сам по себе
+  критерием не является — различие сохраняется и после преобразования в SDR.
+- Эталон проверяется по данным его фактического выходного пути, а не по
+  параметрам запуска: (1) лог mpv показывает выбранные API/контекст;
+  (2) L3p-трасса собственной поверхности mpv (тот же парсер, app_id `mpv`)
+  показывает распознанное HDR-описание и commit. HDR-индикатор монитора/DE
+  фиксирует условия эксперимента, но не подтверждает HDR-передачу конкретного
+  окна. Запрошенные параметры командной строки подтверждением не являются.
+  Команда эталона — зафиксированная в `docs/TESTING.md`; при недостаточных
+  данных всё сравнение — UNCLEAR.
+- Условия: fullscreen без UI, синтетический паттерн с подписанными патчами
+  (не кино), тот же монитор, размер и настройки DE для эталона и CineHDR,
+  последовательное сравнение без смены настроек между ними.
+- Ожидания вроде «force-hdr при выключенном HDR даёт выцветшую картинку» в
+  общие правила не входят: такое ожидание сначала подтверждается наблюдением
+  для конкретной конфигурации (DE + композитор + GPU) и только после этого
+  используется как негативный контроль для неё.
+
+### Запрос аппаратной проверки
+
+Агент оформляет одним блоком в отчёте:
+
+```
+### Проверка на железе
+Гипотеза: <что изменилось и что должно стать видно>
+Коммит/сборка: <sha> ; <run_dev.py | flatpak-builder …>
+Окружение: <GNOME|KDE>, <GPU>, HDR в DE: <on|off>, файл: <паттерн HDR10 / HLG / SDR / WCG-SDR / DoVi P8>
+Путь (для L3p): <композитный toplevel | offload-подповерхность>
+Критерии (для L4): <ступени, клиппинг — что считается PASS/FAIL>
+Шаги: 1. … 2. … 3. …
+Вернуть: Copy Report из HDR Diagnostics (+ трасса/артефакты tools/validation, если запрошены)
+         + 1–2 строки наблюдения (+ фото при визуальной проверке)
+```
+
+Правила:
+- Один запрос — одна гипотеза. Повторный запуск без изменения кода/окружения
+  запрещён: «попробуй ещё раз» не является гипотезой.
+- Владелец возвращает отчёт. Агент классифицирует PASS / FAIL / UNCLEAR
+  (с причиной и следующим шагом) и обновляет ячейку в `docs/TESTING.md`:
+  статус, дата, коммит. Полные отчёты лежат локально в `validation-reports/`
+  (в `.gitignore`).
+- Утверждение «протестировано/работает» без отчёта владельца или артефакта
+  инструмента запрещено. Непроверенное помечается `NOT_RUN`.
+- Отчёты и документация не содержат личных путей, названий медиа и
+  идентификаторов машины; Copy Report уже их не включает — не добавлять.
+- Агент никогда не просит доступ к `/dev/dri`, не устанавливает драйверы и не
+  меняет настройки DE владельца.
+- Автоматические сценарии и оракулы (`tools/validation/`) не входят в
+  устанавливаемый продукт, включаются только `CINEHDR_GPU_VALIDATION` и без
+  неё не выполняют измерений. Автоэкспорт снимка на первом опубликованном
+  кадре ручным Copy Report не заменяется: пользователь может скопировать
+  отчёт уже после исчезновения дефекта.
+- Инструмент валидации сохраняется, если защищает актуальный инвариант и
+  выявляет конкретный дефект — исторический либо намеренно внесённый
+  отрицательный контроль. Перечень — `tools/validation/README.md`.
+
+## 9. Диагностика [MUST]
+
+- HDR Diagnostics и Copy Report — единственное место, где пользователь видит
+  состояние конвейера. Любой новый факт конвейера (backend, формат FBO, color
+  state текстуры, caps композитора, TF/пик монитора, `target-*` mpv, hwdec,
+  причина fallback, состояние гейта `auto`) добавляется туда, а не в новые
+  логи/файлы.
+- `collect_video_output_facts()` и `build_video_output_report()` в
+  `diagnostics_report.py` — единственный сборщик фактов и форматтер. Диалог,
+  Copy Report и автоэкспорт снимка (`tools/validation/`) используют только их;
+  второй сборщик или дублирующие форматтеры запрещены.
+- Различать: сконфигурировано ↔ активно; опубликована текстура ↔ показан кадр;
+  метаданные композитора ↔ измеренный вывод. Недоступное — `Unknown`, не ноль и
+  не `OK`.
+- Открытие диалога не блокирует GTK, не меняет воспроизведение, не запускает
+  probe с roundtrip.
+- Точки подключения измерений в продукте — callback-слот захвата FBO в момент
+  публикации, callback первого опубликованного медиа-кадра, счётчик поколений
+  загрузки медиа — сохраняются, чтобы измерить **тот же FBO в тот же момент
+  публикации**; по умолчанию `None`/выключены и без подключения не аллоцируют
+  и не читают свойств. Их перечень фиксируется в `tools/validation/README.md`;
+  удаление точки подключения — только по правилу PLAN §6.
+
+## 10. Стиль кода и борьба с шумом [MUST]
+
+- `getattr(self, "attr", default)` и `hasattr(self, "attr")` на атрибутах,
+  которые задаёт `__init__` своего класса, запрещены. Атрибут гарантирован
+  конструктором — обращение прямое.
+- `try/except` вокруг `connect()`, вокруг чтения собственных атрибутов и вокруг
+  чистых функций запрещён.
+- Новые модули, классы, сервисы, таймеры, кэши, ключи настроек, env-переменные,
+  скрипты, схемы отчётов и документы — только при конкретной, названной в
+  коммите, неудовлетворённой потребности. Сначала расширяй существующее.
+- Новые файлы в корне репозитория запрещены. Инструменты — `tools/`, документы
+  — `docs/`.
+- Импорты `gi.repository` — только на уровне модуля после `gi.require_version`,
+  объявленного в самом верху файла.
+- Типизация — как в upstream (аннотации там, где они уже есть; `pyright
+  standard` не должен давать новых ошибок в изменённых файлах).
+- `ruff`: правила `F` и `E9` обязательны; перед удалением «неиспользуемого»
+  символа — `grep`, символ может использоваться динамически.
+- Размер: функция > 80 строк или модуль > 800 строк — повод разделить в
+  отдельном `refactor:`-коммите, не в том же коммите с фичей.
+
+## 11. Тесты [MUST]
+
+- Тесты герметичны: не зависят от dconf, системных схем, дисплея, GPU, сетевых
+  ресурсов и соседней сборки mpv. GSettings — через `GSETTINGS_SCHEMA_DIR` +
+  `GSETTINGS_BACKEND=memory`. Тесты, требующие gresource, пропускаются через
+  `@unittest.skipUnless(...)`, когда ресурс недоступен.
+- Тест проверяет поведение кода. Тесты, проверяющие текст документов,
+  наличие фраз в markdown или содержимое `.gitignore`, запрещены.
+- Обязательное покрытие: `is_hdr_content` (PQ, HLG, SDR, WCG-SDR, DoVi),
+  политика `gtk_cm_policy` (opt-in парсинг `GDK_DEBUG`, caps → решение),
+  гейт `auto` (`hdr_output_allowed` по всем комбинациям входов),
+  `classify_hdr`, выбор backend и fallback, `CommittedOutputState` переходы,
+  регрессия «старые HDR-пиксели после перехода HDR → SDR на паузе»,
+  манифест Flatpak (пиннованные версии), оракулы `tools/validation` с
+  отрицательными контролями.
+- Падающий тест чинится в коде или тесте, не отключается. Отключение — только с
+  обоснованием и записью в `docs/PLAN.md`.
+
+## 12. Коммиты, ветки, размер задач [SHOULD]
+
+- Один коммит — одна тема. `feat:`, `fix:`, `refactor:`, `test:`, `docs:`,
+  `ci:`, `i18n:`, `build:`, `upstream-diverge:` (§13). Тело: что и почему;
+  ссылка на пункт правил (`per AGENTS.md §4.2`) там, где это объясняет
+  решение. Без самоотчётов («remediate audit findings»).
+- Задача = ветка `task/<короткое-имя>` от `main`. Целевой размер — до ~400
+  строк содержательного диффа; удаления не считаются. Больше — делить.
+- Документация и `metainfo` обновляются в том же коммите, что меняет поведение.
+- Никаких `push`, PR, тегов, правок remote без явного разрешения владельца.
+  Правки `AGENTS.md`, `GEMINI.md`, `docs/PLAN.md` (кроме статусов задач),
+  `docs/TESTING.md` (кроме статусов ячеек) — только владелец.
+
+## 13. Upstream-совместимость и переводы [MUST]
+
+- Изменение поведения upstream-функции допустимо только с перечислением всех
+  вызывающих (`grep -rn`), подтверждением, что их поведение сохранено, и
+  пометкой `upstream-diverge:` в заголовке коммита. Без этого — новая функция
+  с новым именем. Прецедент: переписанный `idle_add_once` молча изменил все
+  вызовы upstream-кода.
+- Разделять ребрендинг и функциональность по отдельным `brand:`-коммитам не
+  требуется (D1).
+- Upstream `main` вливается в форк перед каждым релизом (`git merge
+  upstream/main`), конфликты решаются в пользу upstream везде, где не затронут
+  HDR-путь.
+- `po/`: английские msgid в коде; `.po`/`.pot` обновляются только скриптом
+  `update_translations.sh` в отдельных `i18n:`-коммитах (D6). Ручная правка
+  `.po` запрещена.
+
+## 14. Документы проекта
+
+Каноничный набор; всё остальное подлежит удалению по PLAN C1 (D4); новые файлы — только с разрешения владельца.
+
+| Файл | Содержимое |
+|---|---|
+| `README.md` | установка, требования, таблица поддержки DE/GPU, известные ограничения |
+| `AGENTS.md` | этот файл |
+| `GEMINI.md` | ссылка на AGENTS.md |
+| `docs/ARCHITECTURE.md` | конвейер HDR: mpv → FBO → GdkGLTexture → GSK → Wayland; где какой инвариант |
+| `docs/PLAN.md` | план до релиза, статусы задач |
+| `docs/TESTING.md` | матрица DE × GPU × сценарий, статусы ячеек, условия L3p/L4 |
+| `docs/adr/0001…`, `0004…`, `0007…`, `0008…` | технические ADR (render API; FBO pixel oracle; committed output state и гейт auto; scope релиза и протокол доказательств) |
+| `tools/validation/README.md` | что доказывает каждый инструмент, как запускать, точки подключения в продукте, перечень «известный дефект → проверка» |
+| `CHANGELOG.md` | изменения по релизам |
+
+Документ, противоречащий коду, исправляется в том же PR, где обнаружено
+расхождение; если исправить нельзя — в отчёте агента.
+
+## 15. Формат задачи и отчёта
+
+Задача от владельца (минимум):
+
+```
+Цель: …
+Файлы: … (только эти; остальное — out of scope)
+Ограничения: …
+Готово, когда: …  (наблюдаемый критерий)
+Проверка: <команды из §2> [+ запрос §8, если нужен экран]
+```
+
+Отчёт агента по задаче (обязательные разделы, кратко):
+
+```
+Сделано: <что изменилось, по файлам>
+Проверено: <какие команды/тесты запускал, результат>
+НЕ проверено: <что требует экрана/железа — и готовый блок §8>
+Отклонения от правил: <нет | какие и почему>
+Открытые вопросы: <решения, которые должен принять владелец>
+```
+
+Отчёт без раздела «НЕ проверено» считается неполным.
+
+## 16. Запрещено (сводка)
+
+push/PR/теги без разрешения · правка файлов правил и планов · утверждения о
+результатах на железе без отчёта владельца или артефакта инструмента ·
+повторный аппаратный прогон без изменения · `mpv._get_property` и прочий
+приватный API · `print()` · `except: pass` вне границ · GL/mpv-вызовы в
+`do_snapshot` · capability-запросы в per-frame коде · `GL_TIMEOUT_IGNORED` ·
+новые файлы в корне · новые governance-документы, гейты, роли, формы отчётов ·
+тесты на текст документов · ручная правка `.po` · русские строки в
+коде/логах/UI · угаданные значения вместо `None`/`Unknown` · второй сборщик
+фактов диагностики · пакетное удаление валидационных механизмов · удаляющий
+коммит без строк «теряем / замена» · удаление точек подключения измерений без
+правила PLAN §6.
+
+## 17. Чек-лист перед коммитом
+
+- [ ] проверки по типу изменения из §2 выполнены (для `src/` — оба grep пустые)
+- [ ] новые файлы `src/` внесены в `src/meson.build`
+- [ ] использованные API подтверждены ссылкой/версией (§6)
+- [ ] в per-frame коде нет новых запросов, импортов, необоснованных аллокаций (§4.3)
+- [ ] текстуры, отданные GTK, не модифицируются без пула/fence (§4.1)
+- [ ] изменение upstream-функции — только с перечнем вызывающих и `upstream-diverge:` (§13)
+- [ ] нет `getattr/hasattr` на собственных атрибутах, нет `except: pass` (§7, §10)
+- [ ] README/metainfo/ARCHITECTURE соответствуют поведению (§14)
+- [ ] коммит однотемный, ≤ ~400 строк (§12)
+- [ ] удаляющий коммит содержит «теряем: …» и «замена: … | не нужна: …» (PLAN §6)
+- [ ] отчёт содержит «НЕ проверено» и, если нужно, блок §8 (§15)
