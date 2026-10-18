@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO_DIR))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from parse_wayland_color_trace import (
+    DEFAULT_APP_ID,
     MULTIPHASE_REVISION,
     MULTIPHASE_SCOPE,
     PRIMARY_COMPOSITE_REVISION,
@@ -1467,6 +1468,311 @@ class TestGtkCmPolicy(unittest.TestCase):
             validate_composite_window_trace(trace)
         self.assertIn("was recreated in the trace", str(cm.exception))
         self.assertIn("ID reuse is rejected as insufficient", str(cm.exception))
+
+    def test_composite_window_with_custom_app_id_and_default_fallback(self):
+        trace = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.012]  wp_image_description_v1#31.ready(101)
+[ 1042.013]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.014]  -> wl_surface#61.commit()
+        """.strip()
+        # Matching app_id passes
+        evidence = validate_composite_window_trace(trace, expected_app_id="mpv")
+        self.assertEqual(evidence["status"], "PASS")
+        self.assertEqual(evidence["matched"]["surface"]["app_id"], "mpv")
+
+        # Default CineHDR fails on mpv trace
+        with self.assertRaises(TraceValidationError) as cm:
+            validate_composite_window_trace(trace)
+        self.assertIn("no toplevel surface was attributed to CineHDR", str(cm.exception))
+        self.assertIn("app_id 'io.github.rusmikev.CineHDR' not found", str(cm.exception))
+
+        # Different expected app_id fails with matching message
+        with self.assertRaises(TraceValidationError) as cm:
+            validate_composite_window_trace(trace, expected_app_id="org.other.Player")
+        self.assertIn("no toplevel surface was attributed to org.other.Player", str(cm.exception))
+        self.assertIn("app_id 'org.other.Player' not found", str(cm.exception))
+
+    def test_multiphase_with_custom_app_id_and_default_fallback(self):
+        trace = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.009]  -> wl_compositor#1.create_surface(new id wl_surface#71)
+[ 1042.010]  -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#72, wl_surface#71, wl_surface#61)
+[ 1042.011]  -> wp_viewporter#12.get_viewport(new id wp_viewport#75, wl_surface#71)
+[ 1042.012]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#71)
+[ 1042.013]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.014]  -> wp_image_description_creator_params_v1#50.set_primaries_named(1)
+[ 1042.015]  -> wp_image_description_creator_params_v1#50.set_tf_named(9)
+[ 1042.016]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.017]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#52)
+[ 1042.018]  -> wp_image_description_creator_params_v1#52.set_primaries_named(6)
+[ 1042.019]  -> wp_image_description_creator_params_v1#52.set_tf_named(11)
+[ 1042.020]  -> wp_image_description_creator_params_v1#52.create(new id wp_image_description_v1#32)
+[ 1042.021]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#54)
+[ 1042.022]  -> wp_image_description_creator_params_v1#54.set_primaries_named(1)
+[ 1042.023]  -> wp_image_description_creator_params_v1#54.set_tf_named(9)
+[ 1042.024]  -> wp_image_description_creator_params_v1#54.create(new id wp_image_description_v1#33)
+[ 1042.025]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#56)
+[ 1042.026]  -> wp_image_description_creator_params_v1#56.set_primaries_named(6)
+[ 1042.027]  -> wp_image_description_creator_params_v1#56.set_tf_named(11)
+[ 1042.028]  -> wp_image_description_creator_params_v1#56.create(new id wp_image_description_v1#34)
+[ 1042.029]  wp_image_description_v1#31.ready(101)
+[ 1042.030]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.031]  -> wl_surface#71.attach(wl_buffer#81, 0, 0)
+[ 1042.032]  -> wl_surface#71.commit()
+[ 1042.033]  wp_image_description_v1#32.ready(102)
+[ 1042.034]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#32, 0)
+[ 1042.035]  -> wl_surface#71.attach(wl_buffer#82, 0, 0)
+[ 1042.036]  -> wl_surface#71.commit()
+[ 1042.037]  wp_image_description_v1#33.ready(103)
+[ 1042.038]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#33, 0)
+[ 1042.039]  -> wl_surface#71.attach(wl_buffer#83, 0, 0)
+[ 1042.040]  -> wl_surface#71.commit()
+[ 1042.041]  wp_image_description_v1#34.ready(104)
+[ 1042.042]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#34, 0)
+[ 1042.043]  -> wl_surface#71.attach(wl_buffer#84, 0, 0)
+[ 1042.044]  -> wl_surface#71.commit()
+        """.strip()
+        # Matching app_id passes
+        evidence = validate_multiphase_trace(trace, expected_app_id="mpv")
+        self.assertEqual(evidence["status"], "PASS")
+        self.assertTrue(evidence["matched"]["surface"]["subsurface_video_chain_proven"])
+        self.assertEqual(evidence["matched"]["surface"]["app_id"], "mpv")
+
+        # Default CineHDR returns UNKNOWN
+        evidence_default = validate_multiphase_trace(trace)
+        self.assertEqual(evidence_default["status"], "UNKNOWN")
+        self.assertFalse(evidence_default["matched"]["surface"]["subsurface_video_chain_proven"])
+        self.assertIn("target surface cannot be attributed to CineHDR", evidence_default["reason"])
+
+        # Different app_id returns UNKNOWN with corresponding message
+        evidence_other = validate_multiphase_trace(trace, expected_app_id="org.other.App")
+        self.assertEqual(evidence_other["status"], "UNKNOWN")
+        self.assertIn("target surface cannot be attributed to org.other.App", evidence_other["reason"])
+
+    def test_multi_app_trace_selects_only_specified_app(self):
+        trace = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.009]  -> wl_compositor#1.create_surface(new id wl_surface#81)
+[ 1042.010]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#87, wl_surface#81)
+[ 1042.011]  -> xdg_surface#87.get_toplevel(new id xdg_toplevel#88)
+[ 1042.012]  -> xdg_toplevel#88.set_app_id("io.github.rusmikev.CineHDR")
+[ 1042.013]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.014]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.015]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.016]  wp_image_description_v1#31.ready(101)
+[ 1042.017]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.018]  -> wl_surface#61.commit()
+[ 1042.019]  -> wl_surface#81.commit()
+        """.strip()
+        # When expecting CineHDR, mpv's color management does not satisfy it
+        with self.assertRaises(TraceValidationError) as cm:
+            validate_composite_window_trace(trace, expected_app_id="io.github.rusmikev.CineHDR")
+        self.assertIn("wp_color_manager_v1.get_surface was not called for CineHDR's toplevel window surface", str(cm.exception))
+
+        # When expecting mpv, mpv's surface passes
+        evidence = validate_composite_window_trace(trace, expected_app_id="mpv")
+        self.assertEqual(evidence["status"], "PASS")
+        self.assertEqual(evidence["matched"]["surface"]["wl_surface_id"], 61)
+        self.assertEqual(evidence["matched"]["surface"]["app_id"], "mpv")
+
+    def test_cli_and_report_propagate_app_id(self):
+        trace = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.012]  wp_image_description_v1#31.ready(101)
+[ 1042.013]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.014]  -> wl_surface#61.commit()
+        """.strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv.trace.log"
+            report_path = root / "gate2-wayland-publication-gpu-next.txt"
+            out_pass = root / "pass.json"
+            out_fail = root / "fail.json"
+
+            trace_path.write_text(trace, encoding="utf-8")
+            report_path.write_text(
+                "Overall result: PASS\nExpected backend: gpu-next\n",
+                encoding="utf-8",
+            )
+
+            # create_evidence_report with expected_app_id="mpv"
+            rep_evidence = create_evidence_report(
+                trace_path, report_path, "gpu-next",
+                oracle="composite_window",
+                expected_app_id="mpv",
+            )
+            self.assertEqual(rep_evidence["status"], "PASS")
+            self.assertEqual(rep_evidence["matched"]["surface"]["app_id"], "mpv")
+
+            # create_evidence_report without app_id fails (default CineHDR)
+            with self.assertRaises(TraceValidationError):
+                create_evidence_report(
+                    trace_path, report_path, "gpu-next",
+                    oracle="composite_window",
+                )
+
+            # CLI with --app-id mpv succeeds
+            status = main([
+                "--trace", str(trace_path),
+                "--publication-report", str(report_path),
+                "--backend", "gpu-next",
+                "--oracle", "composite_window",
+                "--app-id", "mpv",
+                "--output", str(out_pass),
+            ])
+            self.assertEqual(status, 0)
+            data_pass = json.loads(out_pass.read_text(encoding="utf-8"))
+            self.assertEqual(data_pass["status"], "PASS")
+            self.assertEqual(data_pass["matched"]["surface"]["app_id"], "mpv")
+
+            # CLI without --app-id fails (default CineHDR)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status_fail = main([
+                    "--trace", str(trace_path),
+                    "--publication-report", str(report_path),
+                    "--backend", "gpu-next",
+                    "--oracle", "composite_window",
+                    "--output", str(out_fail),
+                ])
+            self.assertEqual(status_fail, 1)
+            data_fail = json.loads(out_fail.read_text(encoding="utf-8"))
+            self.assertEqual(data_fail["status"], "FAIL")
+
+    def test_empty_app_id_and_legacy_combination_rejected(self):
+        trace = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.012]  wp_image_description_v1#31.ready(101)
+[ 1042.013]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.014]  -> wl_surface#61.commit()
+        """.strip()
+        # Empty and whitespace-only app_id rejected
+        for empty_val in ("", "   ", "\t"):
+            with self.assertRaises(TraceValidationError) as cm:
+                validate_composite_window_trace(trace, expected_app_id=empty_val)
+            self.assertIn("cannot be empty or whitespace-only", str(cm.exception))
+
+            with self.assertRaises(TraceValidationError) as cm:
+                validate_multiphase_trace(trace, expected_app_id=empty_val)
+            self.assertIn("cannot be empty or whitespace-only", str(cm.exception))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "trace.log"
+            report_path = root / "gate2-wayland-publication-legacy.txt"
+            out = root / "out.json"
+
+            trace_path.write_text(VALID_TRACE, encoding="utf-8")
+            report_path.write_text(
+                "Overall result: PASS\nExpected backend: legacy\n",
+                encoding="utf-8",
+            )
+
+            # create_evidence_report with empty app_id rejected
+            with self.assertRaises(TraceValidationError) as cm:
+                create_evidence_report(
+                    trace_path, report_path, "legacy",
+                    oracle="composite_window",
+                    expected_app_id="",
+                )
+            self.assertIn("cannot be empty or whitespace-only", str(cm.exception))
+
+            # Legacy oracle does not support app_id (neither custom nor CineHDR)
+            with self.assertRaises(TraceValidationError) as cm:
+                create_evidence_report(
+                    trace_path, report_path, "legacy",
+                    oracle="legacy",
+                    expected_app_id="mpv",
+                )
+            self.assertIn("legacy oracle does not support app_id attribution", str(cm.exception))
+
+            with self.assertRaises(TraceValidationError) as cm:
+                create_evidence_report(
+                    trace_path, report_path, "legacy",
+                    oracle="legacy",
+                    expected_app_id="io.github.rusmikev.CineHDR",
+                )
+            self.assertIn("legacy oracle does not support app_id attribution", str(cm.exception))
+
+            with self.assertRaises(TraceValidationError) as cm:
+                create_evidence_report(
+                    trace_path, report_path, "legacy",
+                    expected_app_id="mpv",
+                )
+            self.assertIn("legacy oracle does not support app_id attribution", str(cm.exception))
+
+            # CLI with legacy and app-id returns 1
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status_legacy_app = main([
+                    "--trace", str(trace_path),
+                    "--publication-report", str(report_path),
+                    "--backend", "legacy",
+                    "--oracle", "legacy",
+                    "--app-id", "mpv",
+                    "--output", str(out),
+                ])
+            self.assertEqual(status_legacy_app, 1)
+            self.assertIn("legacy oracle does not support app_id attribution", stderr.getvalue())
+
+            # CLI with empty app-id returns 1
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status_empty = main([
+                    "--trace", str(trace_path),
+                    "--publication-report", str(report_path),
+                    "--backend", "legacy",
+                    "--oracle", "composite_window",
+                    "--app-id", "  ",
+                    "--output", str(out),
+                ])
+            self.assertEqual(status_empty, 1)
+            self.assertIn("cannot be empty or whitespace-only", stderr.getvalue())
 
 
 if __name__ == "__main__":

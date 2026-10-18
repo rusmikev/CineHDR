@@ -672,10 +672,22 @@ def _extract_image_descriptions_info(calls: list[TraceCall]) -> dict[int, dict[s
     return descs
 
 
+DEFAULT_APP_ID = "io.github.rusmikev.CineHDR"
+
+
+def _validate_app_id(app_id: str | None) -> str:
+    if app_id is None:
+        return DEFAULT_APP_ID
+    if not isinstance(app_id, str) or not app_id.strip():
+        raise TraceValidationError("expected_app_id cannot be empty or whitespace-only")
+    return app_id
+
+
 def validate_composite_window_trace(
     trace: str,
-    expected_app_id: str = "io.github.rusmikev.CineHDR",
+    expected_app_id: str = DEFAULT_APP_ID,
 ) -> dict[str, Any]:
+    expected_app_id = _validate_app_id(expected_app_id)
     """Validate passive Wayland color-management submission for CineHDR's composite window.
 
     Full ADR-0004 criteria for dynamically found window surface:
@@ -775,7 +787,7 @@ def validate_composite_window_trace(
         raise TraceValidationError("wp_color_manager_v1 was advertised but not bound")
 
     toplevel_surfaces, subsurfaces, surface_attaches, viewport_surfaces = _surface_roles_and_attaches(calls)
-    cinehdr_window_surfaces = [
+    target_window_surfaces = [
         surf for surf, app in toplevel_surfaces.items()
         if app == expected_app_id
     ]
@@ -844,7 +856,7 @@ def validate_composite_window_trace(
             )
 
         for get_surface, color_surface_id, wl_surface_id in surfaces:
-            if wl_surface_id not in cinehdr_window_surfaces:
+            if wl_surface_id not in target_window_surfaces:
                 continue
             has_get_surface_window = True
 
@@ -1093,9 +1105,10 @@ def validate_composite_window_trace(
                     },
                 }
 
-    if not cinehdr_window_surfaces:
+    if not target_window_surfaces:
+        app_name = "CineHDR" if expected_app_id == DEFAULT_APP_ID else expected_app_id
         raise TraceValidationError(
-            f"no toplevel surface was attributed to CineHDR (app_id {expected_app_id!r} not found)"
+            f"no toplevel surface was attributed to {app_name} (app_id {expected_app_id!r} not found)"
         )
     if not has_perceptual:
         raise TraceValidationError(
@@ -1106,19 +1119,25 @@ def validate_composite_window_trace(
             "bound wp_color_manager_v1 did not complete capability burst with done()"
         )
     if not has_get_surface_window:
+        app_name = "CineHDR's" if expected_app_id == DEFAULT_APP_ID else f"{expected_app_id}'s"
         raise TraceValidationError(
-            "wp_color_manager_v1.get_surface was not called for CineHDR's toplevel window surface"
+            f"wp_color_manager_v1.get_surface was not called for {app_name} toplevel window surface"
         )
     if order_error:
         raise TraceValidationError(order_error)
 
+    app_name = "CineHDR's" if expected_app_id == DEFAULT_APP_ID else f"{expected_app_id}'s"
     raise TraceValidationError(
         "no bound wp_color_manager_v1 proved perceptual intent, done, ready "
-        "image description, and later commit on CineHDR's toplevel window surface"
+        f"image description, and later commit on {app_name} toplevel window surface"
     )
 
 
-def validate_multiphase_trace(trace: str) -> dict[str, Any]:
+def validate_multiphase_trace(
+    trace: str,
+    expected_app_id: str = DEFAULT_APP_ID,
+) -> dict[str, Any]:
+    expected_app_id = _validate_app_id(expected_app_id)
     """Validate 4-phase SDR->HDR->SDR->HDR color-management sequence and video surface attribution.
 
     Rejects count-based heuristics (simply counting 4 set_image_description calls).
@@ -1347,7 +1366,7 @@ def validate_multiphase_trace(trace: str) -> dict[str, Any]:
             toplevel_wl_id, toplevel_app_id = _find_toplevel_ancestor(
                 wl_surface_id, subsurfaces, toplevel_surfaces
             )
-            is_cinehdr_app = (toplevel_app_id == "io.github.rusmikev.CineHDR")
+            is_target_app = (toplevel_app_id == expected_app_id)
 
             is_subsurface = wl_surface_id in subsurfaces
             has_viewport = wl_surface_id in viewport_surfaces
@@ -1356,7 +1375,7 @@ def validate_multiphase_trace(trace: str) -> dict[str, Any]:
             is_toplevel = wl_surface_id in toplevel_surfaces
 
             subsurface_video_chain_proven = (
-                is_cinehdr_app
+                is_target_app
                 and is_subsurface
                 and has_viewport
                 and has_buffers
@@ -1408,9 +1427,10 @@ def validate_multiphase_trace(trace: str) -> dict[str, Any]:
                     "matched": base_matched,
                 }
             else:
-                if not is_cinehdr_app:
+                if not is_target_app:
+                    app_name = "CineHDR" if expected_app_id == DEFAULT_APP_ID else expected_app_id
                     reason = (
-                        f"target surface cannot be attributed to CineHDR: ancestor toplevel app_id "
+                        f"target surface cannot be attributed to {app_name}: ancestor toplevel app_id "
                         f"is foreign or unobserved ({toplevel_app_id!r})"
                     )
                 elif len(set(desc_ids)) < 2:
@@ -1477,6 +1497,8 @@ def create_evidence_report(
     *,
     oracle: str | None = None,
     multiphase: bool = False,
+    expected_app_id: str | None = None,
+    app_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate trace and prerequisite publication report without copying either."""
     if backend not in {"legacy", "gpu-next"}:
@@ -1486,11 +1508,24 @@ def create_evidence_report(
         raise TraceValidationError("publication prerequisite report did not PASS")
     if f"Expected backend: {backend}" not in report_lines:
         raise TraceValidationError("publication prerequisite report backend did not match")
+
+    chosen_app_id = expected_app_id if expected_app_id is not None else app_id
+    if chosen_app_id is not None and (not isinstance(chosen_app_id, str) or not chosen_app_id.strip()):
+        raise TraceValidationError("expected_app_id cannot be empty or whitespace-only")
+
+    is_legacy = (not multiphase) and (oracle not in ("primary_composite", "composite_window", "strict_multiphase"))
+    if is_legacy and chosen_app_id is not None:
+        raise TraceValidationError(
+            f"legacy oracle does not support app_id attribution ({chosen_app_id!r} specified)"
+        )
+
+    target_app_id = chosen_app_id if chosen_app_id is not None else DEFAULT_APP_ID
+
     trace_text = trace_path.read_text(encoding="utf-8", errors="replace")
     if multiphase or oracle == "strict_multiphase":
-        evidence = validate_multiphase_trace(trace_text)
+        evidence = validate_multiphase_trace(trace_text, expected_app_id=target_app_id)
     elif oracle in ("primary_composite", "composite_window"):
-        evidence = validate_composite_window_trace(trace_text)
+        evidence = validate_composite_window_trace(trace_text, expected_app_id=target_app_id)
     else:
         evidence = validate_trace(trace_text)
     evidence.update(
@@ -1511,6 +1546,8 @@ def create_failure_evidence(
     *,
     oracle: str | None = None,
     multiphase: bool = False,
+    expected_app_id: str | None = None,
+    app_id: str | None = None,
 ) -> dict[str, Any]:
     """Build hash-linked failure evidence without exposing a successful chain.
 
@@ -1551,6 +1588,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Color management validation oracle (default: composite_window if requested or legacy)",
     )
     parser.add_argument(
+        "--app-id",
+        default=None,
+        help="Expected Wayland app_id for surface attribution (default: io.github.rusmikev.CineHDR)",
+    )
+    parser.add_argument(
         "--multiphase",
         action="store_true",
         default=False,
@@ -1564,6 +1606,7 @@ def main(argv: list[str] | None = None) -> int:
             args.publication_report,
             args.backend,
             oracle=effective_oracle,
+            expected_app_id=args.app_id,
         )
         args.output.write_text(
             json.dumps(evidence, indent=2, sort_keys=True) + "\n",
@@ -1584,6 +1627,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.backend,
                 error,
                 oracle=effective_oracle,
+                expected_app_id=args.app_id,
             )
             args.output.write_text(
                 json.dumps(failure_evidence, indent=2, sort_keys=True) + "\n",

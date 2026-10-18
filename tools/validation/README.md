@@ -152,10 +152,10 @@
 - `tools/validation/parse_wayland_color_trace.py` *(до `C2a`: `tests/parse_wayland_color_trace.py`)*:
   - `validate_trace(trace: str)`
   - `validate_composite_window_trace(trace: str, expected_app_id="io.github.rusmikev.CineHDR")`
-  - `validate_multiphase_trace(trace: str)`
-  - `create_evidence_report(trace_path, publication_report_path, backend, *, oracle=None, multiphase=False)`
-  - `create_failure_evidence(trace_path, publication_report_path, backend, error, *, oracle=None, multiphase=False)`
-  - `main(argv)` — CLI с обязательными аргументами `--trace`, `--publication-report`, `--backend {legacy,gpu-next}`, `--output` и опциональным выбором оракула `--oracle {composite_window,primary_composite,strict_multiphase,legacy}` (или `--multiphase` как синонимом `--oracle strict_multiphase`).
+  - `validate_multiphase_trace(trace: str, expected_app_id="io.github.rusmikev.CineHDR")`
+  - `create_evidence_report(trace_path, publication_report_path, backend, *, oracle=None, multiphase=False, expected_app_id=None, app_id=None)`
+  - `create_failure_evidence(trace_path, publication_report_path, backend, error, *, oracle=None, multiphase=False, expected_app_id=None, app_id=None)`
+  - `main(argv)` — CLI с обязательными аргументами `--trace`, `--publication-report`, `--backend {legacy,gpu-next}`, `--output`, опциональным выбором ожидаемого приложения `--app-id` (по умолчанию `io.github.rusmikev.CineHDR`) и опциональным выбором оракула `--oracle {composite_window,primary_composite,strict_multiphase,legacy}` (или `--multiphase` как синонимом `--oracle strict_multiphase`).
 - `src/gtk_cm_policy.py`: `COLOR_MGMT_OPT_IN_ENV = "CINEHDR_EXPERIMENTAL_COLOR_MGMT"`, `COLOR_MGMT_OPT_IN_FLAG = "--experimental-color-mgmt"`, `CmCaps`, `gtk_cm_opted_in`, `apply_color_mgmt_opt_in`, `apply_gsk_renderer_policy`, `gtk_color_managed`, `gtk_can_tag_hdr`, `preferred_gsk_renderer`.
 - `tools/validation/test_wayland_color_trace.py` *(до `C2a`: `tests/test_wayland_color_trace.py`)*: классы `TestGtkCmPolicy`, `WaylandColorTraceTests`.
 
@@ -186,6 +186,12 @@
   - `WaylandColorTraceTests.test_ready_after_set_and_wrong_surface_commit_are_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `WaylandColorTraceTests.test_failed_description_display_error_and_protocol_disconnect_are_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `WaylandColorTraceTests.test_ready2_is_accepted_and_records_the_64_bit_identity` (`tools/validation/test_wayland_color_trace.py`)
+- **Контроли выбора ожидаемого `app_id` (параметризация поверхностей, изоляция приложений, валидация аргумента и несовместимость с legacy-оракулом)**:
+  - `WaylandColorTraceTests.test_composite_window_with_custom_app_id_and_default_fallback` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_multiphase_with_custom_app_id_and_default_fallback` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_multi_app_trace_selects_only_specified_app` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_cli_and_report_propagate_app_id` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_empty_app_id_and_legacy_combination_rejected` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).
@@ -202,7 +208,7 @@
     --oracle composite_window \
     --output /path/to/gate2-wayland-color-management-gpu-next.json
   ```
-  *(Доступные значения `--oracle`: `composite_window`, `primary_composite`, `strict_multiphase`, `legacy`; флаг `--multiphase` эквивалентен `--oracle strict_multiphase`.)*
+  *(Доступные значения `--oracle`: `composite_window`, `primary_composite`, `strict_multiphase`, `legacy`; флаг `--multiphase` эквивалентен `--oracle strict_multiphase`. Опция `--app-id <app_id>` позволяет переопределить ожидаемый идентификатор приложения, по умолчанию `io.github.rusmikev.CineHDR`.)*
 
 #### 2.6. Что результат доказывает и чего НЕ доказывает
 - **Что доказывают модульные тесты (`tools/validation/test_wayland_color_trace.py`)**:
@@ -211,6 +217,7 @@
   - При `PASS` выбранного оракула в переданной трассе найдена цепочка manager → ready → set → commit. Для `composite_window` поверхность определяется по app_id; `strict_multiphase` дополнительно проверяет четыре фазы и цепочку subsurface/viewport/attach. Отчёт содержит SHA-256 обоих входных файлов и проверку строк `Overall result: PASS` / `Expected backend` в отчёте публикации.
   - Текущий `composite_window` не проверяет семантику HDR-трансфера и не требует attach буфера; один его `PASS` ещё не равен целевому L3p PASS. `strict_multiphase` распознаёт ограниченный набор SDR/PQ-описаний. Поддержка других HDR-представлений и контроли к ним относятся к C2a.
   - `_fatal_error()` сейчас отклоняет весь лог при найденных `failed` / `wl_display.error`, без разделения соединений. Единый stderr не содержит надёжного идентификатора соединения: проверки происхождения объектов и запрет неоднозначного переиспользования ID не доказывают изоляцию всех соединений. Уточнение области ошибок по правилам также относится к C2a.
+- **Важная граница CLI и эталонного mpv**: CLI парсера сохраняет обязательные требования наличия отчёта публикации (`--publication-report`) и бэкенда CineHDR (`--backend {legacy,gpu-next}`). Добавление выбора `--app-id` позволяет проверять принадлежность поверхностей целевому приложению (в том числе `mpv` в протокольных трассах), но само по себе ещё не делает CLI самостоятельным валидатором эталонного mpv без отчёта CineHDR; полностью автономный режим валидации эталона потребует отдельного изменения.
 - **Чего НЕ доказывает**:
   - Что два входных файла получены из одного процесса или сессии: `create_evidence_report` самостоятельно не проверяет такую связь; для неё нужны отдельные артефакты запуска. Хеширование файлов фиксирует их содержимое, а не происхождение.
   - Какие именно пиксели были записаны в FBO до создания текстуры (это проверяет пиксельный оракул FBO, раздел 1).
