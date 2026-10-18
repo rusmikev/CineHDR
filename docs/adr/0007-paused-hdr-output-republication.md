@@ -13,7 +13,7 @@ SDR→HDR publication, then failed HDR→SDR. At the failed sample, the controll
 reported an SDR source and inactive HDR output, but the FBO target and actual
 `GdkGLTexture` still had 16-bit Rec.2100 PQ state. A frame had been published
 after the playlist switch, so merely waiting for *a* new frame is insufficient.
-The raw report and trace retain exact provenance in `docs/GPU_NEXT_DEVELOPMENT.md`.
+The raw report and trace retain exact provenance in [45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md](45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md) (and tools/validation/README.md §1.2).
 
 The publication fixture is paused. The libmpv update callback can schedule a
 render before the `video-params` observer has applied the new output decision.
