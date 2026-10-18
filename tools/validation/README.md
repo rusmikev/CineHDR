@@ -2,6 +2,8 @@
 
 Этот документ фиксирует проверяемую связь **«инвариант → исторический дефект или синтетический отрицательный контроль → инструмент и функции → регрессионный тест → команда воспроизведения → границы доказательства → точки подключения в продукте»** перед удалением governance-документов в задаче `C1` и переносом кода валидации в задачах `C2`, `C3` и `C4` (`docs/PLAN.md`, решение `D7`, `docs/adr/0008-release-scope-and-evidence.md`).
 
+> **Примечание о ссылках на документы, удаляемые в `C1`**: ссылки на `docs/GPU_NEXT_DEVELOPMENT.md`, `docs/MODEL_USAGE_LOG.md` и `docs/adr/0006-bounded-validation-governance.md` ниже привязаны к базовому коммиту `45fb026e891a21ceb3150808b140085b10138988` (а также к коммитам, в которых были зафиксированы соответствующие свидетельства) и точным заголовкам разделов, чтобы оставаться воспроизводимыми через `git show <commit>:<path>` после выполнения `C1`.
+
 ## Разграничение текущего расположения (`C0`) и целевого переноса (`C2`/`C3`/`C4`)
 
 На этапе `C0` код продукта, тесты и скрипты запуска **не перемещаются**. Все пути и команды воспроизведения ниже разделены на **текущее расположение (на коммите `C0`)** и **целевое расположение после `C2`/`C3`/`C4`**:
@@ -26,12 +28,12 @@
   2. содержать фактические пиксели в вызывающем FBO (`glReadPixels` из 8 канонических патчей `CANONICAL_8_PATCHES`), где `return_sdr` возвращается к эталону `initial_sdr` в пределах калиброванного допуска `DEFAULT_SDR_REPEAT_TOLERANCE = 0.020`, а `hdr` отличается от `initial_sdr` на `reference_white` / `peak_white` не менее чем на `DEFAULT_MIN_HDR_DISTINCTION = 0.150`;
   3. не затираться последующими («восстанавливающимися») кадрами той же фазы.
 - **Конкретные исторические дефекты и отрицательные контроли**:
-  1. **Дефект 1A (основной исторический дефект — устаревшие HDR-пиксели и `GL_RGBA16F`/`rec2100-pq` после перехода `HDR → SDR` на паузе)**:
+  1. **Дефект 1A (основной исторический дефект — устаревшие HDR-пиксели и `GL_RGBA16F`/`rec2100-pq` после перехода `HDR → SDR` на паузе, `2026-10-04`)**:
      В авторизованном прогоне GNOME Gate 2W Run 6 на Candidate v7 (`2026-10-04`) переходы `initial_sdr` и `SDR → HDR` прошли, но переход `HDR → SDR` на паузе завершился `FAIL`: контроллер сообщил об SDR-источнике и `hdr_active = False` (`target-trc = auto`), однако опубликованная текстура и целевой FBO остались в состоянии `GL_RGBA16F` / `rec2100-pq` со старыми PQ-пикселями (в симуляции и отрицательном контроле `reference_white = 0.5807` вместо SDR `1.0`), поскольку `mpv` сгенерировал ранний update до применения `video-params`, а `_on_hdr_controller_change()` вызывал только `queue_draw()` старой текстуры без принудительного перерендера FBO.
-  2. **Дефект 1B (перепутанная ориентация строк патчей в координатах `glReadPixels` в Run 7 Candidate v12)**:
-     В прогоне Run 7 Candidate v12 (`2026-10-11`, `docs/GPU_NEXT_DEVELOPMENT.md` §15 / `docs/MODEL_USAGE_LOG.md`) `compute_patch_centers()` вычислял центры нижнего ряда патчей (`red_primary`, `green_primary`, `blue_primary`, `neutral_gradient`) в координатах сверху вниз (`y = 3 * height // 4`), тогда как `glReadPixels` в OpenGL использует начало координат в левом нижнем углу (`y = 0` внизу). В результате в нижнем ряду считывался верхний ряд (`black`, `near_black`, `reference_white`, `peak_white`), и `red_primary`/`green_primary`/`blue_primary` давали `(0.0, 0.0, 0.0)` / `(1.0, 1.0, 1.0)` вместо чистых праймариз.
-  3. **Дефект 1C (захват кадра до `step 0` или маскировка дефектного первого опубликованного кадра последующим кадром в Run 7 Candidate v8–v12)**:
-     В Candidate v8–v12 (`2026-10-10` — `2026-10-11`) до введения привязки к `_pending_render_frame_generation` и сохранения первого вердикта фазы в `_step_first_publication_captures` ранний кадр до `step 0` мог переиспользоваться как `initial_sdr`, либо ошибочный первый кадр перехода мог быть перезаписан следующим тиком рендера.
+  2. **Дефект 1B (перепутанная ориентация строк патчей в координатах `glReadPixels` в Run 7 Candidate v12, `2026-10-11`)**:
+     В прогоне Run 7 Candidate v12 (`2026-10-11`) `compute_patch_centers()` вычислял центры нижнего ряда патчей (`red_primary`, `green_primary`, `blue_primary`, `neutral_gradient`) в координатах сверху вниз (`y = 3 * height // 4`), тогда как `glReadPixels` в OpenGL использует начало координат в левом нижнем углу (`y = 0` внизу). В результате в нижнем ряду считывался верхний ряд (`black`, `near_black`, `reference_white`, `peak_white`), и праймариз давали `(0.0, 0.0, 0.0)` / `(1.0, 1.0, 1.0)` вместо чистых цветов.
+  3. **Дефект 1C (захват кадра до `step 0` или маскировка дефектного первого опубликованного кадра последующим кадром в Run 7 Candidate v8–v12, `2026-10-10` — `2026-10-11`)**:
+     До введения привязки к `_pending_render_frame_generation` и сохранения первого вердикта фазы в `PausedTransitionPixelOracle` ранний кадр до `step 0` мог переиспользоваться как `initial_sdr`, либо ошибочный первый кадр перехода мог быть перезаписан следующим тиком рендера.
   4. **Дефект 1D (ложный `FAIL` или потеря `UNVERIFIED` при отсутствии getter'ов `Gdk.GLTexture` на первом опубликованном кадре, `2026-10-17`)**:
      Если в окружении `Gdk.GLTexture` не предоставлял getter формата/цветового состояния на первом опубликованном кадре, проверка либо подменяла фактический тег текстуры намерением виджета, либо теряла статус `UNVERIFIED` при последующем перерендере.
   5. **Синтетические отрицательные контроли целостности артефакта `fbo_pixel_measurements.json` (`verify_fbo_pixel_measurements_artifact`)** — для случаев подделки `raw_samples_hash`, инжекции `NaN`/`Infinity`, неполного набора из 8 патчей или ошибки `glGetError != GL_NO_ERROR`: *исторический дефект не задокументирован*; защита опирается на явно реализованные синтетические отрицательные контроли в `PausedTransitionPixelOracle.evaluate(substitute_negative_hdr_pixels=True)` и `verify_fbo_pixel_measurements_artifact()`.
@@ -43,7 +45,10 @@
 - Коммит `91403edde152320fac42ce7a9dfe20c0b40e62db` (`docs(validation): publish bounded GNOME Run 7 adjudication`).
 - Коммит `feb0d405297f031d4a49db6f7ddf5cd5e7c612d1` (`fix(hdr): remove async property readback and preserve first published sample`).
 - Коммит `556da105a142ba8f014c961caeca011dd64fe5bf` (`docs: refine ADR-0007 synchronization details and packaged inspection findings`).
-- Документы: `docs/adr/0007-paused-hdr-output-republication.md` (разделы `Context`, `Accepted decision (2026-10-17 amendment)`, `Alternatives, falsifier, and rollback`, `Subsequent bounded validation`), `docs/adr/0004-gate2-fbo-pixel-validation.md`, `docs/GPU_NEXT_DEVELOPMENT.md` (разделы по Gate 2W Run 6 и Run 7 v8–v14), `docs/MODEL_USAGE_LOG.md` (записи `2026-10-04`, `2026-10-10`, `2026-10-11`, `2026-10-17`).
+- Сохраняемые ADR: `docs/adr/0007-paused-hdr-output-republication.md` (разделы `Context`, `Accepted decision (2026-10-17 amendment)`, `Alternatives, falsifier, and rollback`, `Subsequent bounded validation`), `docs/adr/0004-gate2-fbo-pixel-validation.md`.
+- Источники, удаляемые в `C1` (доступны в коммите `45fb026e891a21ceb3150808b140085b10138988`):
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md`, разделы `### Gate 2W Run 6 (Candidate v7) Execution Result (2026-10-04)` и `### Gate 2W Run 7 (Candidate v14) — Final Adjudication (2026-10-11)`.
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/MODEL_USAGE_LOG.md`, строка таблицы `2026-10-11 | Gate 2W Run 7 Candidate v14 final adjudication` и раздел `### 2026-10-17 First-frame republication simplification and multi-backend validation`.
 
 #### 1.3. Фактические текущие файлы и функции
 - `src/hdr_controller.py`: `CommittedOutputState`, `HdrController.apply_hdr_settings`, `HdrController.committed_output_state`, `HdrController.output_epoch`, `HdrController.is_publication_pending`, `HdrController.is_publication_suppressed`, `HdrController.state_gap_reason`.
@@ -52,52 +57,36 @@
 - `tests/test_hdr.py`: классы `TestPausedHdrOutputRepublication`, `TestPausedTransitionPixelOracle`.
 - `tests/test_gpu_validation.py`: класс `TestPublicationFboPixelValidationPipeline`.
 
-#### 1.4. Имена существующих регрессионных тестов и отрицательных контролей
-- В `tests/test_hdr.py`:
-  - `TestPausedHdrOutputRepublication.test_event_order_frame_rendered_then_state_change_sdr`
-  - `TestPausedHdrOutputRepublication.test_event_order_reverse_direction_sdr_to_hdr`
-  - `TestPausedHdrOutputRepublication.test_controlled_sequence_pause_sdr_hdr_sdr_full_cycle`
-  - `TestPausedHdrOutputRepublication.test_zero_mpv_update_flags_forces_render_when_scheduled`
-  - `TestPausedHdrOutputRepublication.test_partial_setter_failure_suppresses_publication`
-  - `TestPausedHdrOutputRepublication.test_superseded_epoch_discards_render`
-  - `TestPausedHdrOutputRepublication.test_repeated_notifications_do_not_cause_duplicate_render`
-  - `TestPausedHdrOutputRepublication.test_shutdown_cancels_pending_and_suppresses_publication`
-  - `TestPausedTransitionPixelOracle.test_paused_transition_defect_reproduction_and_resolution`
-  - `TestPausedTransitionPixelOracle.test_negative_control_substituting_hdr_pixels_fails`
-  - `TestPausedTransitionPixelOracle.test_first_published_transition_frame_cannot_be_hidden_by_recovery`
-  - `TestPausedTransitionPixelOracle.test_video_widget_fbo_pixel_readback_and_oracle_callback`
-  - `TestPausedTransitionPixelOracle.test_paused_single_frame_publication_and_oracle_capture`
-  - `TestPausedTransitionPixelOracle.test_fbo_dropped_after_readback_is_never_sent_to_oracle`
-  - `TestPausedTransitionPixelOracle.test_strict_canonical_8_patches_required`
-  - `TestPausedTransitionPixelOracle.test_strict_channel_count_and_provenance`
-  - `TestPausedTransitionPixelOracle.test_provenance_dimension_mismatch_fails`
-  - `TestPausedTransitionPixelOracle.test_hdr_not_distinguishable_from_sdr_fails`
-  - `TestPausedTransitionPixelOracle.test_missing_captures_return_unverified`
-  - `TestPausedTransitionPixelOracle.test_calibrated_tolerance_boundary`
-  - `TestPausedTransitionPixelOracle.test_oracle_rejects_invalid_phase`
-  - `TestPausedTransitionPixelOracle.test_oracle_rejects_stale_or_non_advancing_epoch`
-  - `TestPausedTransitionPixelOracle.test_oracle_rejects_fixture_hash_and_media_mismatch`
-  - `TestPausedTransitionPixelOracle.test_oracle_rejects_empty_or_unconfirmed_target_properties`
-  - `TestPausedTransitionPixelOracle.test_oracle_rejects_overwrite_attempt`
-  - `TestPausedTransitionPixelOracle.test_oracle_unknown_provenance_returns_unverified`
-- В `tests/test_gpu_validation.py` (`TestPublicationFboPixelValidationPipeline`):
-  - `test_strict_rejection_on_negative_control_mismatch`
-  - `test_transition_rejects_stale_hdr_surface_on_sdr`
-  - `test_fbo_patch_centers_match_live_fixture_row_orientation`
-  - `test_initial_paused_publication_requests_and_requires_fresh_frame`
-  - `test_first_new_publication_mismatch_survives_later_recovery`
-  - `test_first_published_unavailable_texture_evidence_survives_recovery_as_unverified`
-  - `test_missing_actual_texture_getter_is_unavailable_not_intended_state`
-  - `test_strict_rejection_when_samples_missing_or_incomplete_phases`
-  - `test_strict_rejection_on_readback_error`
-  - `test_fbo_pixel_measurements_serialization_complete`
-  - `test_fbo_pixel_measurements_serialization_on_fail_preserves_partial_data`
-  - `test_verify_fbo_pixel_measurements_artifact`
-  - `test_verify_fbo_pixel_measurements_negative_cases`
-  - `test_negative_session_write_report_fails_when_artifact_corrupted`
+#### 1.4. Карта «дефект / контроль → конкретный регрессионный тест»
+- **Дефект 1A (перерисовка FBO и публикация при `HDR ↔ SDR` на паузе и `update_flags == 0`)**:
+  - `TestPausedHdrOutputRepublication.test_event_order_frame_rendered_then_state_change_sdr` (`tests/test_hdr.py`)
+  - `TestPausedHdrOutputRepublication.test_controlled_sequence_pause_sdr_hdr_sdr_full_cycle` (`tests/test_hdr.py`)
+  - `TestPausedHdrOutputRepublication.test_zero_mpv_update_flags_forces_render_when_scheduled` (`tests/test_hdr.py`)
+  - `TestPausedHdrOutputRepublication.test_partial_setter_failure_suppresses_publication` (`tests/test_hdr.py`)
+  - `TestPausedHdrOutputRepublication.test_superseded_epoch_discards_render` (`tests/test_hdr.py`)
+  - `TestPausedHdrOutputRepublication.test_shutdown_cancels_pending_and_suppresses_publication` (`tests/test_hdr.py`)
+  - `TestPausedTransitionPixelOracle.test_paused_transition_defect_reproduction_and_resolution` (`tests/test_hdr.py`)
+- **Дефект 1B (ориентация строк патчей в координатах `glReadPixels`, `y=0` внизу)**:
+  - `TestPublicationFboPixelValidationPipeline.test_fbo_patch_centers_match_live_fixture_row_orientation` (`tests/test_gpu_validation.py`)
+- **Дефект 1C (запрет переиспользования кадра до `step 0` и запрет маскировки дефектного первого кадра последующим кадром)**:
+  - `TestPublicationFboPixelValidationPipeline.test_initial_paused_publication_requests_and_requires_fresh_frame` (`tests/test_gpu_validation.py`)
+  - `TestPublicationFboPixelValidationPipeline.test_first_new_publication_mismatch_survives_later_recovery` (`tests/test_gpu_validation.py`)
+  - `TestPausedTransitionPixelOracle.test_first_published_transition_frame_cannot_be_hidden_by_recovery` (`tests/test_hdr.py`)
+  - `TestPausedTransitionPixelOracle.test_fbo_dropped_after_readback_is_never_sent_to_oracle` (`tests/test_hdr.py`)
+  - `TestPausedTransitionPixelOracle.test_oracle_rejects_overwrite_attempt` (`tests/test_hdr.py`)
+- **Дефект 1D (сохранение `UNVERIFIED` при отсутствии getter'а `Gdk.GLTexture` на первом опубликованном кадре)**:
+  - `TestPublicationFboPixelValidationPipeline.test_first_published_unavailable_texture_evidence_survives_recovery_as_unverified` (`tests/test_gpu_validation.py`)
+- **Синтетические отрицательные контроли пиксельного оракула и артефакта `fbo_pixel_measurements.json`**:
+  - `TestPausedTransitionPixelOracle.test_negative_control_substituting_hdr_pixels_fails` (`tests/test_hdr.py`)
+  - `TestPausedTransitionPixelOracle.test_hdr_not_distinguishable_from_sdr_fails` (`tests/test_hdr.py`)
+  - `TestPausedTransitionPixelOracle.test_oracle_rejects_stale_or_non_advancing_epoch` (`tests/test_hdr.py`)
+  - `TestPublicationFboPixelValidationPipeline.test_strict_rejection_on_negative_control_mismatch` (`tests/test_gpu_validation.py`)
+  - `TestPublicationFboPixelValidationPipeline.test_strict_rejection_on_readback_error` (`tests/test_gpu_validation.py`)
+  - `TestPublicationFboPixelValidationPipeline.test_verify_fbo_pixel_measurements_negative_cases` (`tests/test_gpu_validation.py`)
+  - `TestPublicationFboPixelValidationPipeline.test_negative_session_write_report_fails_when_artifact_corrupted` (`tests/test_gpu_validation.py`)
 
 #### 1.5. Команда воспроизведения и предусловия
-- **Предусловия**: Python 3, установленные PyGObject (`gi.repository.Gtk`, `Gdk`, `Adw`, `GLib`, `Gio`) и тестовое окружение репозитория; физический GPU или активная сессия Wayland для юнит-тестов **не требуются** (GL readback и текстуры мокируются детерминированно).
+- **Предусловия для юнит-тестов**: Python 3, установленные PyGObject (`gi.repository.Gtk`, `Gdk`, `Adw`, `GLib`, `Gio`) и тестовое окружение репозитория; физический GPU или активная сессия Wayland для юнит-тестов **не требуются** (GL readback и текстуры мокируются детерминированно).
 - **Команда воспроизведения (текущее расположение `C0`)**:
   ```bash
   python3 -m unittest \
@@ -108,10 +97,11 @@
 - **После переноса в `C4`**: те же тест-классы запускаются через `meson test` / `python3 -m unittest` с импортом `PausedTransitionPixelOracle` и функций артефакта из `tools/validation/gpu_validation.py`.
 
 #### 1.6. Что результат доказывает и чего НЕ доказывает
-- **Доказывает**:
-  - На уровне вызывающего FBO (`glReadPixels`) и `Gdk.GLTextureBuilder` смена эпохи `CommittedOutputState` на паузе принудительно перерисовывает FBO в целевом формате (`GL_RGBA8` или `GL_RGBA16F`) и публикует новую текстуру с согласованным `Gdk.ColorState`.
-  - Пиксели фазы `return_sdr` возвращаются к SDR-эталону `initial_sdr` в пределах `<= 0.020`, а подстановка устаревших HDR-пикселей (`substitute_negative_hdr_pixels=True`) или сбой на первом опубликованном кадре детерминированно отклоняется (`FAIL`), даже если следующий кадр восстановился.
-- **НЕ доказывает**:
+- **Что доказывают модульные тесты (на моках)**:
+  - Детерминированную логику смены эпох `CommittedOutputState`, принудительного планирования `_schedule_render(force_redraw=True)` при `update_flags == 0`, вычисления координат патчей `compute_patch_centers()`, сохранения первого опубликованного образца фазы без перезаписи и отбраковки невалидных/подделанных данных в `PausedTransitionPixelOracle` и `verify_fbo_pixel_measurements_artifact()`.
+- **Что доказывает живой запуск оракула в сценарии `publication` (на реальном GPU)**:
+  - Что в реальном OpenGL/libmpv контексте (`opengl` или `opengl-next`) первый опубликованный кадр каждой фазы (`initial_sdr`, `hdr`, `return_sdr`) отрендерен в целевой FBO (`GL_RGBA8` или `GL_RGBA16F`), а считанные через `glReadPixels` пиксели 8 патчей возвращаются в `return_sdr` к `initial_sdr` в пределах `<= 0.020` и отличаются от `hdr` не менее чем на `0.150`.
+- **Чего НЕ доказывает (ни модульный тест, ни живой FBO readback)**:
   - Что GTK/GSK прикрепил `wp_image_description_v1` к поверхности Wayland (`wl_surface`) и выполнил `wl_surface.commit()` (это область парсера трассы L3p, раздел 2).
   - Что композитор Wayland или физический монитор реально отобразили HDR-сигнал без клиппинга или тон-маппинга (это область L4).
 
@@ -126,21 +116,23 @@
 ### 2. Парсер трассы протокола Wayland и его тесты (`L3p`)
 
 #### 2.1. Защищаемый инвариант и конкретные дефекты
-- **Защищаемый инвариант (`AGENTS.md` §8, `docs/TESTING.md` §L3p, `docs/adr/0006-bounded-validation-governance.md`)**:
+- **Защищаемый инвариант (`AGENTS.md` §8, `docs/TESTING.md` §L3p, `45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md` §`Gate 2W multi-phase provenance and execution amendment (2026-10-04)`)**:
   Клиентская публикация `Gdk.ColorState` в `Gdk.GLTextureBuilder` не доказывает отправку HDR-метаданных композитору. Передача HDR-описания поверхности композитору Wayland считается подтверждённой (`PASS` на уровне L3p) только тогда, когда в сырой трассе `WAYLAND_DEBUG` данного процесса в рамках одной жизни `wl_registry` зафиксирована полная без сбоев цепочка:
   1. биндинг `wp_color_manager_v1` и получение `wp_color_management_surface_v1` через `get_surface(wl_surface)` для поверхности, несущей видео (toplevel `xdg_toplevel` при композитном пути или связанный `wl_subsurface` при offload, с реальным `wl_surface.attach(wl_buffer != 0)`);
-  2. создание описания изображения с HDR-трансфером (параметрический PQ `tf_named(11)` + `primaries_named(3)` BT.2020 или поддерживаемое представление по `AGENTS.md` §8) и получение события `wp_image_description_v1.ready(identity)` / `ready2(hi, lo)` **до** вызова `set_image_description`;
-  3. вызов `wp_color_management_surface_v1.set_image_description(desc, render_intent)` без промежуточного `unset_image_description` или `wl_display.delete_id(desc)` до коммита;
+  2. создание описания изображения с HDR-трансфером (параметрический PQ `tf_named(11)` + `primaries_named(6)` BT.2020 или поддерживаемое представление по `AGENTS.md` §8) и получение события `wp_image_description_v1.ready(identity)` / `ready2(hi, lo)` **до** вызова `set_image_description`;
+  3. вызов `wp_color_management_surface_v1.set_image_description(desc, render_intent)` без промежуточного `unset_image_description` или повторного создания/переиспользования ID описания до коммита;
   4. последующий `wl_surface.commit()` на той же самой поверхности и в той же эпохе `wl_registry`, при отсутствии `wp_image_description_v1.failed`, `wl_display.error` и разрыва соединения.
-- **Конкретные исторические дефекты и отрицательные контроли**:
-  1. **Дефект 2A (отсутствие `GDK_DEBUG=color-mgmt` и несовместимость capability-гейта GTK с KWin 6.7.4 без `TF srgb`, `2026-08-23`)**:
-     Без `GDK_DEBUG=color-mgmt` в GTK 4.16–4.22 (и в KWin 6.7.4, который в `wp_color_manager_v1.supported_tf_named` объявлял `gamma22`, но не `srgb`), GTK уничтожал `wp_color_manager_v1` при инициализации (`gdk_wayland_color_New` → `destroy`), никогда не вызывал `get_surface` / `set_image_description`, и композитор интерпретировал 16-битный буфер Rec.2100 PQ как неразмеченный sRGB (выцветшая картинка). В Run 1 (`wayland-trace-cW5kFA`) и Run 2 (`wayland-trace-MgsoJA`, `2026-09-24`) на GTK 4.22.4 выяснилось также, что даже при успешном `wp_color_manager_v1.done()` GTK создавал sRGB-описание, но не вызывал `get_surface` для окна приложения.
+- **Конкретные исторические дефекты и отрицательные контроли (с разграничением отказа KWin/GTK 4.22.4 и прогона GNOME Run 2)**:
+  1. **Дефект 2A (отсутствие opt-in `GDK_DEBUG=color-mgmt` и отказ capability-гейта GTK 4.22.4 на KWin 6.7.4 без `TF srgb`, `2026-08-23`)**:
+     - В первом живом трассировочном прогоне на KWin 6.7.4 / GTK 4.22.4 (`2026-08-23`) без `GDK_DEBUG=color-mgmt` GTK вообще не связывал `wp_color_manager_v1`.
+     - Во втором прогоне с `GDK_DEBUG=color-mgmt` на KWin 6.7.4 (который в `wp_color_manager_v1.supported_tf_named` объявлял `gamma22` и `pq`, но не объявлял `TF srgb`) GTK связывал `wp_color_manager_v1` и получал `done()`, но затем уничтожал менеджер (`destroy`) **до** вызова `get_surface` или `set_image_description` (`gate2-wayland-color-management-legacy-20260823-153023.json`, статус `FAIL`), из-за чего композитор интерпретировал буфер Rec.2100 PQ как sRGB.
+     - *Отличие от GNOME Run 2 (`wayland-trace-MgsoJA`, `2026-09-24`)*: на GNOME Shell / Mutter протокольная цепочка в Run 2, напротив, **прошла (`status: PASS`)** (`wp_color_manager_v1#32` → `wp_image_description_v1#51.ready` → `set_image_description` → `wl_surface#61.commit()`), а причина перевода Run 2 в `HOLD` заключалась исключительно в отсутствии синхронного снимка `Video Output Diagnostics` из той же сессии (`Active API` и `Session status` остались `Unknown`, см. Дефект 4A в разделе 4).
   2. **Дефект 2B (несколько `wl_registry` в одном процессе: приватные probe-соединения `wayland_cm_probe` / `wayland_output_hdr` и переиспользование object ID между реестрами, `2026-09-24` и `2026-10-04`)**:
-     В реальном процессе CineHDR создаются отдельные `wl_registry` (основной реестр GDK `wl_registry#2`, probe-реестры `wayland_cm_probe` и `wayland_output_hdr`). В ранней версии парсера глобальный поиск `wp_color_manager_v1` либо выбирал незавершённый приватный probe-менеджер вместо полного менеджера GDK, либо при переиспользовании object ID (`wl_registry#2`, `wp_image_description_v1#31`, `wl_callback#31.done()` → `wl_display#1.delete_id(31)`) между разными эпохами реестра ошибочно склеивал события от чужого реестра/менеджера с основным окном (выявлено ревью Astra high `2026-10-04` и исправлено в коммите `e41fbeb1dad3b1b463c40030efba587f2341bfb7`).
-  3. **Дефект 2C (привязка многофазной смены `SDR → HDR → SDR → HDR` к toplevel без проверки subsurface-цепочки или смешение HLG `tf=13` с PQ `tf=11`, `2026-10-04`)**:
-     При наличии offload видео могло выводиться на `wl_subsurface`, тогда как `xdg_toplevel` не получал `set_image_description`, либо наоборот — описание проверялось на чужой поверхности без привязанных буферов (`wl_surface.attach`).
+     В реальном процессе CineHDR создаются отдельные `wl_registry` (основной реестр GDK `wl_registry#2`, probe-реестры `wayland_cm_probe` и `wayland_output_hdr`). В ранней версии парсера глобальный поиск `wp_color_manager_v1` либо выбирал незавершённый приватный probe-менеджер вместо полного менеджера GDK, либо при переиспользовании object ID (`wl_registry#2`, `wp_image_description_v1#31`, `wl_callback#31.done()` → `wl_display#1.delete_id(31)`) между разными эпохами реестра ошибочно склеивал события от чужого реестра/менеджера с основным окном (выявлено ревью Astra high `2026-10-04` и исправлено в коммитах `e41fbeb1dad3b1b463c40030efba587f2341bfb7` и `6a88937df082193c93e11e5423a268e87c501850`).
+  3. **Дефект 2C (различение композитного окна `xdg_toplevel` и видео-subsurface `wl_subsurface` + `wp_viewport`, а также отбраковка HLG `tf=13` вместо PQ `tf=11`, `2026-10-04`)**:
+     В `validate_multiphase_trace` требовалось строго отличать 4-фазное чередование `SDR → HDR → SDR → HDR` на доказанном видео-subsurface (с `wl_subsurface`, `wp_viewport` и `wl_surface.attach`) от смены описания на `xdg_toplevel` без subsurface-цепочки (возвращает `UNKNOWN`), а также отклонять подмену PQ (`tf_named=11`) на HLG (`tf_named=13`).
   4. **Синтетические отрицательные контроли протокола (`unset_image_description` перед `commit`, `ready` после `set_image_description`, `wp_image_description_v1.failed`, `wl_display.error`, разрыв сокета, 64-битный `ready2`)**:
-     Для случаев `unset_image_description` между `set_image_description` и `wl_surface.commit()` и `wp_image_description_v1.failed` в живой трассе GNOME/KWin *исторический дефект не задокументирован* (поскольку GTK 4.22.4 в живых прогонах останавливался раньше — до `get_surface`/`set_image_description`); эти ветки защищены синтетическими отрицательными контролями в `tests/test_wayland_color_trace.py`.
+     Для случаев `unset_image_description` между `set_image_description` и `wl_surface.commit()` и `wp_image_description_v1.failed` в живой трассе GNOME/KWin *исторический дефект не задокументирован*; эти ветки защищены синтетическими отрицательными контролями в `tests/test_wayland_color_trace.py`.
 
 #### 2.2. Проверяемые источники
 - Коммит `074c38cf577183e57c36f64b9e40c78bcfd870a9` (`fix: bypass KWin/GTK color management deadlock via linear extended and graceful SDR fallback`).
@@ -148,67 +140,80 @@
 - Коммит `ee2d333c2645e943b4a131e0774a5ed455b6b700` (`fix: close color-management gate bypass, register main option, and add realize regression test`).
 - Коммит `e41fbeb1dad3b1b463c40030efba587f2341bfb7` (`fix(validation): track Wayland registry lifetimes in trace parser`).
 - Коммит `9010e5a4a473aa90ae35ef5bb22b27dacf373d6e` (`docs(validation): record GNOME trace evidence and Gate 2W hold`).
-- Документы: `docs/GPU_NEXT_DEVELOPMENT.md` (разделы по KWin/GTK `2026-08-23`, Attempt 1–4 `2026-09-24`–`2026-10-03`, GNOME Run 4–6 `2026-10-04`), `docs/MODEL_USAGE_LOG.md` (записи `2026-09-24`, `2026-09-25`, `2026-10-04`), `docs/adr/0006-bounded-validation-governance.md`.
+- Коммит `6a88937df082193c93e11e5423a268e87c501850` (`fix(validation): enforce multi-backend publication matrix and fixture verification`).
+- Источники, удаляемые в `C1` (доступны в коммите `45fb026e891a21ceb3150808b140085b10138988`):
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md`, разделы `## Wayland surface color-management protocol evidence (Gate 2W, 2026-08-23)` и `### Target Hardware GNOME Wayland Trace Capture (Run 2, 2026-09-24)`.
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/MODEL_USAGE_LOG.md`, разделы `### 2026-09-24 Wayland trace parser correction (offline)`, `### 2026-09-24 Target GNOME Wayland trace capture and Gate 2W audit`, `### 2026-09-26 Target GNOME Wayland trace capture Attempt 3 and Gate 2W narrow row acceptance`, `### 2026-10-04 Gate 2W Run 4 offline remediation of Astra high review blockers`.
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md`, раздел `## Gate 2W multi-phase provenance and execution amendment (2026-10-04)`.
 
 #### 2.3. Фактические текущие файлы и функции
 - `tests/parse_wayland_color_trace.py` *(целевой путь в `C2a`: `tools/validation/parse_wayland_color_trace.py`)*:
   - `validate_trace(lines)`
   - `validate_composite_window_trace(lines, expected_app_id=...)`
   - `validate_multiphase_trace(lines, expected_app_id=...)`
-  - `create_evidence_report(...)`
-  - `main()` (CLI с режимами `--composite-window`, `--multiphase`, `--json-out`, `--require-commit-after-set`).
-- `src/gtk_cm_policy.py`: `CmCaps`, `gtk_cm_opted_in`, `gtk_color_managed`, `gtk_can_tag_hdr`, `preferred_gsk_renderer`.
+  - `create_evidence_report(trace_path, publication_report_path, backend, *, oracle="composite_window")`
+  - `create_failure_evidence(trace_path, publication_report_path, backend, error, *, oracle="composite_window")`
+  - `main(argv)` — CLI с обязательными аргументами `--trace`, `--publication-report`, `--backend {legacy,gpu-next}`, `--output` и опциональным выбором оракула `--oracle {composite_window,primary_composite,strict_multiphase,legacy}` (или `--multiphase` как синонимом `--oracle strict_multiphase`).
+- `src/gtk_cm_policy.py`: `COLOR_MGMT_OPT_IN_ENV = "CINEHDR_EXPERIMENTAL_COLOR_MGMT"`, `COLOR_MGMT_OPT_IN_FLAG = "--experimental-color-mgmt"`, `CmCaps`, `gtk_cm_opted_in`, `apply_color_mgmt_opt_in`, `apply_gsk_renderer_policy`, `gtk_color_managed`, `gtk_can_tag_hdr`, `preferred_gsk_renderer`.
 - `tests/test_wayland_color_trace.py` *(целевой путь в `C2a`: `tools/validation/test_wayland_color_trace.py`)*: классы `TestGtkCmPolicy`, `WaylandColorTraceTests`.
 
-#### 2.4. Имена существующих регрессионных тестов и отрицательных контролей
-- В `tests/test_wayland_color_trace.py`:
-  - `TestGtkCmPolicy.test_gtk_color_managed_requires_opt_in`
-  - `TestGtkCmPolicy.test_gtk_color_managed_kwin_missing_srgb`
-  - `TestGtkCmPolicy.test_regression_kwin_caps_after_invalidate_blocks_hdr`
-  - `WaylandColorTraceTests.test_valid_trace_passes_strict_chain`
-  - `WaylandColorTraceTests.test_early_bind_survives_later_registry_id_reuse`
-  - `WaylandColorTraceTests.test_valid_trace_selects_a_complete_manager_not_private_probe_traffic`
-  - `WaylandColorTraceTests.test_reused_registry_or_chain_object_id_is_ambiguous`
-  - `WaylandColorTraceTests.test_ready_after_set_and_wrong_surface_commit_are_rejected`
-  - `WaylandColorTraceTests.test_failed_description_display_error_and_protocol_disconnect_are_rejected`
-  - `WaylandColorTraceTests.test_ready2_is_accepted_and_records_the_64_bit_identity`
-  - `WaylandColorTraceTests.test_composite_window_passes_strict_chain`
-  - `WaylandColorTraceTests.test_composite_window_rejects_wrong_surface`
-  - `WaylandColorTraceTests.test_composite_window_rejects_wrong_order`
-  - `WaylandColorTraceTests.test_composite_window_rejects_unset_image_description_before_commit`
-  - `WaylandColorTraceTests.test_composite_window_rejects_id_reuse_without_delete_id`
-  - `WaylandColorTraceTests.test_composite_window_rejects_delete_id_after_recreation`
-  - `WaylandColorTraceTests.test_composite_window_rejects_id_reuse_even_with_delete_id`
-  - `WaylandColorTraceTests.test_composite_window_rejects_id_reuse_with_foreign_callback_delete_id`
-  - `WaylandColorTraceTests.test_composite_window_rejects_ambiguous_delete_id_with_alien_destruction`
-  - `WaylandColorTraceTests.test_composite_window_rejects_foreign_registry_surface`
-  - `WaylandColorTraceTests.test_composite_window_rejects_foreign_manager_description`
-  - `WaylandColorTraceTests.test_multiphase_trace_four_phases_on_subsurface_with_buffers_passes`
-  - `WaylandColorTraceTests.test_multiphase_trace_four_phases_on_toplevel_without_subsurface_chain_returns_unknown`
-  - `WaylandColorTraceTests.test_multiphase_trace_hlg_transfer_rejected_for_pq`
+#### 2.4. Карта «дефект / контроль → конкретный регрессионный тест»
+- **Дефект 2A (политика opt-in `GDK_DEBUG=color-mgmt` и блокировка HDR на KWin 6.7.4 без `TF srgb`, в том числе после `invalidate_hdr_support_cache` на `realize`)**:
+  - `TestGtkCmPolicy.test_gtk_cm_opted_in` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_gtk_color_managed_requires_opt_in` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_gtk_color_managed_kwin_missing_srgb` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_regression_kwin_caps_after_invalidate_blocks_hdr` (`tests/test_wayland_color_trace.py`)
+- **Дефект 2B (отсев приватного probe-трафика `wayland_cm_probe` и защита от переиспользования object ID / `wl_registry` / чужих `delete_id`)**:
+  - `WaylandColorTraceTests.test_valid_trace_selects_a_complete_manager_not_private_probe_traffic` (`tests/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_early_bind_survives_later_registry_id_reuse` (`tests/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_reused_registry_or_chain_object_id_is_ambiguous` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_id_reuse_with_foreign_callback_delete_id` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_ambiguous_delete_id_with_alien_destruction` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_foreign_registry_surface` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_foreign_manager_description` (`tests/test_wayland_color_trace.py`)
+- **Дефект 2C (проверка subsurface-цепочки и чередования `SDR → HDR → SDR → HDR`, отбраковка HLG `tf=13` для PQ)**:
+  - `TestGtkCmPolicy.test_multiphase_trace_four_phases_on_subsurface_with_buffers_passes` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_multiphase_trace_four_phases_on_toplevel_without_subsurface_chain_returns_unknown` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_multiphase_trace_hlg_transfer_rejected_for_pq` (`tests/test_wayland_color_trace.py`)
+- **Позитивный контроль композитного окна (включая реплей трассы Attempt 3 `wayland-trace-Z4GghM`) и синтетические отрицательные контроли протокола**:
+  - `TestGtkCmPolicy.test_composite_window_synthetic_positive` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_attempt3_positive` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_wrong_surface` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_wrong_order` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_unset_image_description_before_commit` (`tests/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_ready_after_set_and_wrong_surface_commit_are_rejected` (`tests/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_failed_description_display_error_and_protocol_disconnect_are_rejected` (`tests/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_ready2_is_accepted_and_records_the_64_bit_identity` (`tests/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
-- **Предусловия**: только стандартный Python 3 (без GPU и без запущенного композитора Wayland).
-- **Команда воспроизведения (текущее расположение `C0`)**:
+- **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).
+- **Команда воспроизведения юнит-тестов (текущее расположение `C0`)**:
   ```bash
   python3 -m unittest tests.test_wayland_color_trace -v
   ```
-- **Команда запуска CLI парсера на сохранённом логе трассы**:
+- **Команда запуска CLI парсера на сохранённом логе трассы и отчёте публикации**:
   ```bash
-  python3 tests/parse_wayland_color_trace.py --composite-window /path/to/wayland-client.raw.log
+  python3 tests/parse_wayland_color_trace.py \
+    --trace /path/to/wayland-client.raw.log \
+    --publication-report /path/to/gate2-wayland-publication-gpu-next.txt \
+    --backend gpu-next \
+    --oracle composite_window \
+    --output /path/to/gate2-wayland-color-management-gpu-next.json
   ```
-  *(после `C2a`: `python3 tools/validation/parse_wayland_color_trace.py ...` и `python3 -m unittest tools/validation/test_wayland_color_trace.py -v`)*.
+  *(Доступные значения `--oracle`: `composite_window`, `primary_composite`, `strict_multiphase`, `legacy`; флаг `--multiphase` эквивалентен `--oracle strict_multiphase`. После `C2a`: `python3 tools/validation/parse_wayland_color_trace.py ...` и `python3 -m unittest tools/validation/test_wayland_color_trace.py -v`.)*
 
 #### 2.6. Что результат доказывает и чего НЕ доказывает
-- **Доказывает**:
-  - Наличие или отсутствие в клиентском протокольном логе `WAYLAND_DEBUG=client` валидной последовательности `wp_color_manager_v1` → `get_surface` → `create_parametric_creator` (HDR описание) → `ready`/`ready2` → `set_image_description` → `wl_surface.commit` на поверхности окна/subsurface с видео без протокольных ошибок и коллизий object ID.
-- **НЕ доказывает**:
+- **Что доказывают модульные тесты (`tests/test_wayland_color_trace.py`)**:
+  - Корректность грамматики и конечного автомата парсера на синтетических трассах (и сохранённом логе `wayland-trace-Z4GghM`), а также логику capability-гейта `gtk_color_managed()` на моках `CmCaps`.
+- **Что доказывает прогон CLI парсера на живом логе `WAYLAND_DEBUG=client` (`create_evidence_report`)**:
+  - Что в реальной сессии Wayland клиентский процесс связал `wp_color_manager_v1`, получил `ready`/`ready2` для созданного описания изображения, вызвал `set_image_description` на поверхности окна/subsurface CineHDR и зафиксировал её через `wl_surface.commit()` без протокольных ошибок и коллизий object ID, причём отчёт привязан по SHA-256 к прошедшему `PASS` отчёту публикации того же бэкенда.
+- **Чего НЕ доказывает**:
   - Какие именно пиксели были записаны в FBO до создания текстуры (это проверяет пиксельный оракул FBO, раздел 1).
   - Как композитор тон-маппит эту поверхность при композитинге и какова физическая яркость панели (уровень L4).
 
 #### 2.7. Точки подключения в продукте
-- В горячем рендер-пути продукта точек подключения **нет**: трасса собирается внешне через стандартную переменную окружения libwayland `WAYLAND_DEBUG=client` (или `WAYLAND_DEBUG=1`) и `GDK_DEBUG=color-mgmt` из stderr клиентского процесса.
-- При запуске `src/main.py` до `gi.require_version("Gtk", "4.0")` функция `apply_color_mgmt_opt_in_from_argv()` включает `GDK_DEBUG=color-mgmt`, если передан флаг `--experimental-color-mgmt` или переменная `CINEHDR_COLOR_MGMT=1`.
+- В горячем рендер-пути продукта точек подключения **нет**: трасса собирается внешне через стандартную переменную окружения libwayland `WAYLAND_DEBUG=client` (или `WAYLAND_DEBUG=1`) из stderr клиентского процесса.
+- При старте процесса в `src/cinehdr.in` и `run_dev.py` (до импорта `gi.repository.Gtk`, с проверкой и регистрацией флага в `src/main.py`) функция `apply_color_mgmt_opt_in(os.environ, sys.argv, gtk_initialized=...)` из `src/gtk_cm_policy.py` добавляет `color-mgmt` в `GDK_DEBUG`, если задана переменная окружения `CINEHDR_EXPERIMENTAL_COLOR_MGMT=1` (`COLOR_MGMT_OPT_IN_ENV`) или передан CLI-флаг `--experimental-color-mgmt` (`COLOR_MGMT_OPT_IN_FLAG`).
 
 ---
 
@@ -216,109 +221,130 @@
 
 #### 3.1. Защищаемый инвариант и конкретные дефекты
 - **Защищаемый инвариант (`AGENTS.md` §4.1, §4.4, `docs/adr/0001-gpu-next-render-api.md`, `docs/adr/0007-paused-hdr-output-republication.md`)**:
-  1. Изолированный процесс валидации (`Gio.ApplicationFlags.NON_UNIQUE`) запускается в режиме `publication` строго на паузе (`pause=True`), без восстановления пользовательской сессии (`restore_last_playlist` и `quit_watch_later` отключены), с отключённым автоподхватом соседей (`autocreate-playlist=no`), безопасным декодером (`hwdec=auto-copy`) и точным списком из двух проверенных по SHA-256 фикстур (`playlist-pos=0` — SDR BT.709, `playlist-pos=1` — HDR10 PQ).
-  2. Сценарий проходит фазы `initial_sdr` → `hdr` → `return_sdr` → `repeat_hdr` в одном контексте рендера (`render_context_generation == 1`) без пересоздания `MpvRenderContext`. На каждой фазе доказывается публикация **нового** кадра (`render_frame_generation` строго возрастает), совпадение размеров `Gdk.GLTexture` с ожидаемым дробным масштабом Wayland (`round(widget_w * scale)` × `round(widget_h * scale)`), соответствие формата/цветового состояния текстуры и прохождение пиксельного оракула FBO.
-  3. При закрытии окна (`CineWindow.do_close_request`) контекст рендера libmpv освобождается строго **до** остановки ядра mpv (`_video_area.shutdown_render_context()` → `mpv_render_context_free()` → `mpv.quit()` / `wait_for_shutdown()`), а внешний супервизор `run_wayland_publication_validation.sh` никогда не убивает пользовательские экземпляры CineHDR и не затирает финальный статус очистки.
+  1. Изолированный процесс валидации (`Gio.ApplicationFlags.NON_UNIQUE`) запускается в режиме `publication` строго на паузе (`pause=True`), без восстановления пользовательской сессии (`restore_last_playlist` и `quit_watch_later` отключены), с отключённым автоподхватом соседей (`autocreate-playlist=no`), декодером `hwdec=vaapi-copy` и точным списком из двух проверенных по SHA-256 фикстур (`playlist-pos=0` — SDR BT.709, `playlist-pos=1` — HDR10 PQ).
+  2. Сценарий проходит 4 шага (`(0, "sdr")` → `(1, "hdr")` → `(0, "sdr")` → `(1, "hdr")`) в одном контексте рендера (`render_context_generation` не меняется) без пересоздания `MpvRenderContext`. На каждом шаге доказывается публикация **нового** кадра (`render_frame_generation` строго возрастает), совпадение размеров `Gdk.GLTexture` с ожидаемым дробным масштабом Wayland (`round(widget_w * scale)` × `round(widget_h * scale)`), соответствие формата/цветового состояния текстуры и прохождение пиксельного оракула FBO.
+  3. При закрытии окна (`CineWindow.do_close_request`) контекст рендера libmpv освобождается строго **до** остановки ядра mpv (`_video_area.shutdown_render_context()` → `mpv_render_context_free()` → `mpv.quit()` / `wait_for_shutdown()`), а внешний супервизор `run_wayland_publication_validation.sh` никогда не останавливает пользовательские экземпляры CineHDR (`user_instances`) и не затирает финальный `cleanup_status.json`.
 - **Конкретные исторические дефекты и отрицательные контроли**:
   1. **Дефект 3A (снятие паузы в `CineApplication.do_open` при открытии фикстуры в режиме `publication`, `2026-10-04`)**:
-     Стандартный `CineApplication.do_open()` после `loadfile` вызывал `player.pause = False`, из-за чего паузовый контракт сценария `publication` нарушался сразу при старте, а смена файлов происходила во время воспроизведения вместо детерминированного паузового кадра. Исправлено функцией `_uses_publication_fixture_contract(mode)` в `src/main.py` и `prepare_validation_player()` в `src/gpu_validation.py`.
-  2. **Дефект 3B (загрязнение валидации пользовательским плейлистом `autocreate-playlist=filter`, `watch_later` и `hwdec=vaapi`, `2026-08-22` — `2026-08-23`)**:
-     В ранних прогонах Gate 1/Gate 2 пользовательские настройки `autocreate-playlist=filter` и `restore-last-playlist` подгружали посторонние файлы из каталога пользователя, а `hwdec=auto` выбирал прямой `vaapi` DMABUF interop, несовместимый с экспериментальным `opengl-next` на гибридной графике (`vaapi-copy` устранил отказ).
-  3. **Дефект 3C (ошибка формулы размеров текстуры при дробном масштабировании Wayland `1.25` и формата версии `libplacebo` в Run 4, `2026-10-04`)**:
-     В GNOME Run 4 при дробном масштабе монитора `1.25` (`_cached_scale = 1.25`, виджет `1120×630`) `MpvVideoWidget` создавал текстуру `1400×788`, тогда как валидатор умножал размер виджета на целочисленный `get_scale_factor() == 2` (`2240×1260`) и ложно валил проверку размеров. Одновременно строка версии `libplacebo` `"v7.360.1 (v7.360.1)"` отклонялась парсером версий, ожидавшим только `"v7.360.1"`.
-  4. **Дефект 3D (блокировка HDR в режиме `auto` в изолированном прогоне Run 5 без `CINEHDR_FORCE_SURFACE_SUBMISSION=1`, `2026-10-04`)**:
-     Поскольку в продукте режим `auto` был закрыт гейтом `is_surface_submission_proven() == False`, прогон Run 5 без изолированного переопределения `CINEHDR_FORCE_SURFACE_SUBMISSION=1` оставался в SDR на шаге 1 (`hdr_active=False`, `GL_RGBA8`/`srgb`).
-  5. **Дефект 3E (подмена `/app/lib/libmpv.so` хостовым путём и проверка Flatpak-контейнера, `2026-10-03`)**:
-     При проверке изолированного Flatpak-рантайма требовалось гарантировать, что `libmpv.so.2.5.0` загружен именно из `/app/lib/` внутри контейнера с read-only `/app` в `/proc/self/mountinfo` (`is_verified_flatpak_container`), а не из хостового префикса.
+     Стандартный `CineApplication.do_open()` после `loadfile` устанавливал `win.mpv.pause = False`, из-за чего паузовый контракт сценария `publication` нарушался сразу при старте, а смена файлов происходила во время воспроизведения вместо детерминированного паузового кадра. Исправлено функцией `_uses_publication_fixture_contract(mode)` в `src/main.py` и проверкой `pause=True` / `playlist-pos=0` в `GpuValidationSession._wait_until_ready()`.
+  2. **Дефект 3B (загрязнение валидации пользовательским плейлистом `autocreate-playlist=filter`, `watch_later` и прямым `hwdec=vaapi`, `2026-08-22` — `2026-08-23`)**:
+     В ранних прогонах Gate 1/Gate 2 пользовательские настройки `autocreate-playlist=filter` и `restore-last-playlist` подгружали посторонние файлы из каталога пользователя, а `hwdec=auto` выбирал прямой `vaapi`, тогда как для сопоставимой проверки обоих бэкендов в `prepare_validation_player(..., "publication")` требуется `hwdec="vaapi-copy"`, `pause="yes"`, `keep-open="yes"`.
+  3. **Дефект 3C (ошибка формулы размеров текстуры при дробном масштабировании Wayland `1.25` и формата строки версии `libplacebo` в Run 4, `2026-10-04`)**:
+     В GNOME Run 4 при дробном масштабе монитора `1.25` (`_cached_scale = 1.25`, виджет `1120×630`) `MpvVideoWidget` создавал текстуру `1400×788`, тогда как валидатор умножал размер виджета на целочисленный `scale_factor == 2` (`2240×1260`) и ложно валил проверку размеров. Одновременно строка версии `libplacebo` `"v7.360.1 (v7.360.1)"` внутри контейнера отклонялась проверкой, ожидавшей только `"v7.360.1"`.
+  4. **Дефект 3D (блокировка HDR в режиме `auto` в изолированном прогоне без `CINEHDR_FORCE_SURFACE_SUBMISSION=1`, `2026-10-04`)**:
+     Поскольку в продукте режим `auto` закрыт гейтом `is_surface_submission_proven() == False`, валидационный режим `publication` требует явного тестового переопределения `CINEHDR_FORCE_SURFACE_SUBMISSION=1` с обязательной фиксацией строки `Surface submission test override: enabled` и ограничений `Override scope` в отчёте.
+  5. **Дефект 3E (отказ проверки `/app/lib/libmpv.so.2.5.0` внутри Flatpak-контейнера и защита от подмены библиотеки, `2026-10-03` — `2026-10-04`)**:
+     Внутри Flatpak-контейнера `libmpv` загружается из `/app/lib/libmpv.so.2.5.0`, что первоначально отклонялось проверкой хостового префикса `mpv-gpu-next-prefix/lib64`. В `is_verified_flatpak_container()` и `publication_runtime_errors()` введена строгая проверка `/.flatpak-info`, read-only монтирования `/app` в `/proc/self/mountinfo` и канонического пути `/app/lib/libmpv.so.2.5.0` с отбраковкой любых внешних путей (`/usr/lib`, `/tmp`, симлинков наружу).
   6. **Дефект 3F (перезапись `cleanup_status.json` в `EXIT`-ловушке и ложный возврат `0` при пропаже `.flatpak/<id>/info` в `run_wayland_publication_validation.sh`, `2026-10-04`)**:
-     При штатном завершении `evaluate_session_results` записывал `cleanup_status.json`, но срабатывавший при выходе из скрипта `trap cleanup_handler EXIT` перезаписывал его; кроме того, если каталог `~/.var/app/.../.flatpak/<id>/info` исчезал раньше, чем процесс пропадал из `flatpak ps`, `cleanup_instance` мог ошибочно вернуть успех или при неверной фильтрации затронуть чужой экземпляр.
+     При штатном завершении `evaluate_session_results` записывал `cleanup_status.json`, но срабатывавший при выходе из скрипта `trap cleanup_handler EXIT` перезаписывал его; кроме того, если файл `$XDG_RUNTIME_DIR/.flatpak/<id>/info` исчезал раньше, чем процесс пропадал из `flatpak ps`, `cleanup_instance` обязан проверять `flatpak ps --columns=instance` и завершаться ошибкой (fail-closed), если экземпляр всё ещё числится запущенным или вызов `flatpak ps` не удался.
 
 #### 3.2. Проверяемые источники
 - Коммит `51890eb60ec5646d090f65e067b81e47a2ec629c` (`gpu-next: bound validation and harden vendor smoke`).
 - Коммит `24c878ebd32956243120c757b92ad3587b2e7189` (`test(gpu): enforce strict Flatpak validation reporting and record anonymized evidence`).
-- Коммит `9010e5a4a473aa90ae35ef5bb22b27dacf373d6e` (`docs(validation): record GNOME trace evidence and Gate 2W hold`).
 - Коммит `beed9089a977769c0d2b09e78e9841a397f46cf1` (`feat(render): republish render target on paused HDR output change (ADR-0007)`).
 - Коммит `6a88937df082193c93e11e5423a268e87c501850` (`fix(validation): enforce multi-backend publication matrix and fixture verification`).
 - Коммит `feb0d405297f031d4a49db6f7ddf5cd5e7c612d1` (`fix(hdr): remove async property readback and preserve first published sample`).
-- Документы: `docs/GPU_NEXT_DEVELOPMENT.md` (разделы по Gate 1/Gate 2 и Gate 2W Run 4, Run 5, Run 6, Run 7), `docs/MODEL_USAGE_LOG.md` (записи `2026-10-03`, `2026-10-04`, `2026-10-10`, `2026-10-11`), `docs/adr/0001-gpu-next-render-api.md`, `docs/adr/0006-bounded-validation-governance.md`, `docs/adr/0007-paused-hdr-output-republication.md`.
+- Сохраняемые ADR: `docs/adr/0001-gpu-next-render-api.md`, `docs/adr/0004-gate2-fbo-pixel-validation.md`, `docs/adr/0007-paused-hdr-output-republication.md`.
+- Источники, удаляемые в `C1` (доступны в коммите `45fb026e891a21ceb3150808b140085b10138988`):
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md`, разделы `## Live GTK/GDK Wayland publication evidence (2026-08-23)`, `### Gate 2W Run 4 (Candidate v5) Execution Result (2026-10-04)`, `### Gate 2W Run 5 (Candidate v6) Execution Result (2026-10-04)`, `### Gate 2W Run 6 (Candidate v7) Execution Result (2026-10-04)`, `### Gate 2W Run 7 (Candidate v14) — Final Adjudication (2026-10-11)`.
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/MODEL_USAGE_LOG.md`, разделы `### 2026-10-03 Gate 2W Run 4 offline qualification and provenance analysis`, `### 2026-10-04 Gate 2W Run 4 offline remediation of Astra high review blockers`, `### 2026-10-17 First-frame republication simplification and multi-backend validation`.
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md`, раздел `## Gate 2W multi-phase provenance and execution amendment (2026-10-04)`.
 
 #### 3.3. Фактические текущие файлы и функции
 - `src/gpu_validation.py` *(целевой путь в `C4a`: `tools/validation/gpu_validation.py`)*:
-  - `ValidationConfig`, `validation_config_from_env`
+  - `GpuValidationConfig`, `validation_config_from_env`
   - `prepare_validation_player`
   - `validation_steps` (ветка `mode == "publication"`)
-  - `expected_scaled_texture_dimensions`, `publication_texture_evidence`
+  - `expected_scaled_texture_dimensions`, `publication_texture_evidence`, `publication_state_errors`
   - `publication_runtime_errors`, `is_verified_flatpak_container`
-  - `GpuValidationSession` (`start`, `_wait_until_ready`, `_begin_step`, `_tick`, `_sample_publication_state`, `_finish`, `_write_report`)
+  - `GpuValidationSession` (`start`, `_wait_until_ready`, `_apply_step`, `_verify_step`, `_finish`, `_write_publication_report`)
   - `evaluate_publication_validation`.
 - `run_wayland_publication_validation.sh` *(целевой путь в `C3`: `tools/validation/run_wayland_publication_validation.sh`)*:
-  - `check_flatpak_preflight`, `verify_fixture_contract`, `cleanup_instance`, `cleanup_handler`, `evaluate_session_results`, `run_backend`, `write_gate2w_summary`.
+  - `check_flatpak_preflight`, `cleanup_instance`, `cleanup_handler`, `evaluate_session_results`, `run_backend`, `write_gate2w_summary`, `main`.
 - `src/main.py`: `_uses_publication_fixture_contract`, `CineApplication.__init__` (`Gio.ApplicationFlags.NON_UNIQUE` при `CINEHDR_GPU_VALIDATION`), `CineApplication.do_open` (вызов `prepare_validation_player`, сохранение `pause=True`, запуск `GpuValidationSession`).
 - `src/window.py`: `CineWindow.__init__` (`self._is_gpu_validation`), `CineWindow.do_close_request` (отключение `quit_watch_later` при валидации, вызов `self._video_area.shutdown_render_context()` до `self.mpv.quit()` и `self.mpv.wait_for_shutdown()`).
 - `src/video_widget.py`: `MpvVideoWidget.shutdown_render_context`, `MpvVideoWidget._on_unrealize`.
 
-#### 3.4. Имена существующих регрессионных тестов и отрицательных контролей
-- В `tests/test_gpu_validation.py`:
-  - `TestGpuValidation.test_do_open_preserves_publication_pause_contract`
-  - `TestGpuValidation.test_wait_until_ready_rejects_unpaused_initial_playback`
-  - `TestGpuValidation.test_wait_until_ready_rejects_playlist_pos_not_zero`
-  - `TestGpuValidation.test_validation_player_does_not_restore_or_save_watch_later`
-  - `TestGpuValidation.test_publication_player_is_isolated_before_loadfile`
-  - `TestGpuValidation.test_expected_scaled_texture_dimensions_formula`
-  - `TestGpuValidation.test_publication_texture_evidence_fractional_scale_matching_run4`
-  - `TestGpuValidation.test_publication_libplacebo_version_strict_formats`
-  - `TestGpuValidation.test_flatpak_candidate_libmpv_path_and_foreign_substitution`
-  - `TestGpuValidation.test_is_verified_flatpak_container_facts`
-  - `TestGpuValidation.test_publication_requires_exact_isolated_surface_override`
-  - `TestGpuValidation.test_report_without_override_or_scope_is_rejected`
-  - `TestGpuValidation.test_publication_validation_passes_with_complete_four_state_evidence`
-  - `TestGpuValidation.test_publication_rejects_non_advancing_frame_generation`
-  - `TestGpuValidation.test_publication_rejects_context_recreation`
-  - `TestGpuValidation.test_publication_rejects_end_file_error_and_unexpected_eof`
-- В `tests/test_wayland_publication_scenario.py` (`WaylandPublicationScenarioTests`):
-  - `test_preflight_blocks_user_cinehdr_instance`
-  - `test_preflight_Rejects_Missing_Flatpak_And_Monitors`
-  - `test_preflight_rejects_same_sdr_and_hdr_fixture_hashes`
-  - `test_preflight_rejects_swapped_sdr_and_hdr_fixtures`
-  - `test_cleanup_instance_refuses_user_instance`
-  - `test_cleanup_instance_refuses_metadata_mismatch`
-  - `test_cleanup_instance_fails_closed_when_info_missing_and_instance_still_running`
-  - `test_cleanup_instance_fails_closed_when_info_missing_and_ps_fails`
-  - `test_cleanup_handler_does_not_overwrite_existing_cleanup_status`
-  - `test_evaluate_session_results_passes_only_when_both_publication_and_trace_pass`
-  - `test_evaluate_session_results_fails_when_trace_is_unknown_on_gtk_4_22_4`
-  - `test_multi_backend_orchestration_passes_both_legacy_and_gpu_next`
-  - `test_multi_backend_orchestration_stops_after_legacy_failure`
+#### 3.4. Карта «дефект / контроль → конкретный регрессионный тест»
+- **Дефект 3A (сохранение `pause=True` в `do_open` и отбраковка незапауженного старта или `playlist-pos != 0` в `_wait_until_ready`)**:
+  - `TestStartupFixtureContract.test_do_open_preserves_publication_pause_contract` (`tests/test_gpu_validation.py`)
+  - `TestStartupFixtureContract.test_wait_until_ready_rejects_unpaused_initial_playback` (`tests/test_gpu_validation.py`)
+  - `TestStartupFixtureContract.test_wait_until_ready_rejects_playlist_pos_not_zero` (`tests/test_gpu_validation.py`)
+- **Дефект 3B (изоляция плейлиста, `watch_later` и `hwdec=vaapi-copy` перед `loadfile`)**:
+  - `ValidationConfigTests.test_validation_player_does_not_restore_or_save_watch_later` (`tests/test_gpu_validation.py`)
+  - `ValidationConfigTests.test_publication_player_is_isolated_before_loadfile` (`tests/test_gpu_validation.py`)
+  - `ValidationPlanTests.test_publication_plan_is_exact_paused_sdr_hdr_sdr_hdr_matrix` (`tests/test_gpu_validation.py`)
+- **Дефект 3C (формула размеров текстуры при дробном масштабе `1.25` и строка версии `libplacebo` `"v7.360.1 (v7.360.1)"`)**:
+  - `PublicationEvidenceTests.test_expected_scaled_texture_dimensions_formula` (`tests/test_gpu_validation.py`)
+  - `PublicationEvidenceTests.test_publication_texture_evidence_fractional_scale_matching_run4` (`tests/test_gpu_validation.py`)
+  - `PublicationEvidenceTests.test_publication_libplacebo_version_strict_formats` (`tests/test_gpu_validation.py`)
+  - `PublicationEvidenceTests.test_missing_actual_texture_getter_is_unavailable_not_intended_state` (`tests/test_gpu_validation.py`)
+- **Дефект 3D (обязательность `CINEHDR_FORCE_SURFACE_SUBMISSION=1` и раскрытия `Override scope` в отчёте)**:
+  - `ValidationConfigTests.test_publication_requires_exact_isolated_surface_override` (`tests/test_gpu_validation.py`)
+  - `PublicationEvidenceTests.test_publication_report_discloses_actual_override_scope` (`tests/test_gpu_validation.py`)
+  - `WaylandPublicationScenarioTests.test_report_without_override_or_scope_is_rejected` (`tests/test_wayland_publication_scenario.py`)
+- **Дефект 3E (проверка `/app/lib/libmpv.so.2.5.0` внутри верифицированного Flatpak-контейнера и отбраковка подмены библиотеки)**:
+  - `PublicationEvidenceTests.test_flatpak_candidate_libmpv_path_and_foreign_substitution` (`tests/test_gpu_validation.py`)
+  - `PublicationEvidenceTests.test_is_verified_flatpak_container_facts` (`tests/test_gpu_validation.py`)
+- **Проверка роста `render_frame_generation` и отбраковки устаревшей HDR-поверхности при переходе к SDR**:
+  - `PublicationEvidenceTests.test_publication_switch_requires_a_new_render_frame_generation` (`tests/test_gpu_validation.py`)
+  - `PublicationEvidenceTests.test_transition_rejects_stale_hdr_surface_on_sdr` (`tests/test_gpu_validation.py`)
+- **Дефект 3F (preflight коммитов, защита пользовательских экземпляров `user_instances`, fail-closed очистка в `cleanup_instance`/`cleanup_handler` и проверка артефакта FBO в `run_wayland_publication_validation.sh`)**:
+  - `WaylandPublicationScenarioTests.test_preflight_blocks_when_candidate_v5_unpinned` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_preflight_blocks_when_targeting_candidate_v4` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_preflight_fails_on_candidate_commit_mismatch` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_cleanup_instance_refuses_user_instance` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_cleanup_instance_refuses_metadata_mismatch` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_cleanup_instance_fails_closed_when_info_missing_and_instance_still_running` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_cleanup_instance_fails_closed_when_info_missing_and_ps_fails` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_cleanup_handler_does_not_overwrite_existing_cleanup_status` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_eval_fails_when_fbo_pixel_artifact_is_missing` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_eval_fails_when_fbo_pixel_artifact_hash_mismatched` (`tests/test_wayland_publication_scenario.py`)
 
 #### 3.5. Команда воспроизведения и предусловия
-- **Предусловия для модульных/сценарных тестов (без GPU и без живой сессии)**: Python 3, `bash`, стандартные утилиты (`sha256sum`, `jq`/`python3`), установленные модули проекта.
-- **Команда воспроизведения тестов (текущее расположение `C0`)**:
+- **Предусловия для модульных/сценарных тестов (без GPU и без живой сессии)**: Python 3, `bash`, стандартные утилиты (`sha256sum`, `python3`), установленные модули проекта.
+- **Команда воспроизведения модульных/сценарных тестов (текущее расположение `C0`)**:
   ```bash
   python3 -m unittest \
     tests.test_gpu_validation \
     tests.test_wayland_publication_scenario -v
   ```
-- **Команда живого запуска сценария на машине владельца (`O`, требует активной Wayland-сессии, установленного Flatpak `io.github.rusmikev.CineHDR`, отсутствия запущенных пользовательских экземпляров CineHDR и двух фикстур SDR/HDR)**:
-  ```bash
-  bash run_wayland_publication_validation.sh \
-    --sdr-file /path/to/sdr_bt709.mp4 \
-    --hdr-file /path/to/hdr10_pq.mp4 \
-    --out-dir /path/to/output_dir
-  ```
-  *(после `C3`: `bash tools/validation/run_wayland_publication_validation.sh ...`)*.
+- **Фактический интерфейс и предусловия скрипта `run_wayland_publication_validation.sh`**:
+  - Синтаксис CLI:
+    ```bash
+    bash run_wayland_publication_validation.sh \
+      [--protocol-trace|--no-protocol-trace] \
+      [--backend legacy|gpu-next|all] \
+      [--dry-run] [-h|--help]
+    ```
+  - Обязательные переменные окружения и предусловия (`check_flatpak_preflight` и проверка фикстур в `main`):
+    1. `EXPECTED_APP_COMMIT` — полный 64-символьный hex SHA-256 коммита установленного Flatpak `io.github.rusmikev.CineHDR` (не может быть пустым и не может равняться Candidate v4 `8ed86c0b54694b75d1aaa9be75956d1d3a9d075901d90695e4e0d3d144970813`); должен совпадать с `flatpak info --show-commit io.github.rusmikev.CineHDR`.
+    2. `EXPECTED_RUNTIME_COMMIT` — опциональный 64-символьный коммит рантайма `org.gnome.Platform/x86_64/50` (по умолчанию `0bd5091046708e64bc882e8349877cfbae713f6a1e2d0487a5f10af820a2d792`).
+    3. Активный `WAYLAND_DISPLAY` (если не указан `--dry-run`). Скрипт опрашивает `flatpak ps --columns=instance,application` перед стартом и заносит все уже запущенные экземпляры `io.github.rusmikev.CineHDR` в массив `user_instances`, чтобы `cleanup_instance` никогда их не завершал.
+    4. Две детерминированные фикстуры HEVC Main 10 (`yuv420p10`, lossless) по фиксированным путям:
+       - `validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-sdr.mp4` (`SHA-256: 41393a0ee9dd887a1f11d4b21946fef3d1f49e72127719eefd1ac40aa9d5e360`);
+       - `validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-hdr.mp4` (`SHA-256: bc437162b00b6565ca486ecc0a67704b6f099ebccf03cf671b2a0f87e94e021d`; если файл отсутствует, скрипт автоматически копирует его из `validation-reports/gate2-w4-hardware-20260926-095640/fixture/cinehdr-gate2-hevc-main10-yuv420p10-lossless-hdr.mp4` при совпадении SHA-256).
+    5. Выходной каталог создаётся автоматически по пути `validation-reports/wayland-publication-<YYYYMMDD-HHMMSS>-<pid>/` (с подкаталогами `legacy/`, `gpu-next/` и сводкой `gate2w_summary.json`).
+  - Пример dry-run проверки префлайта без запуска контейнера и GPU:
+    ```bash
+    EXPECTED_APP_COMMIT=<64-hex-app-commit> \
+      bash run_wayland_publication_validation.sh --dry-run --protocol-trace --backend all
+    ```
+    *(после `C3`: `bash tools/validation/run_wayland_publication_validation.sh ...`)*.
 
 #### 3.6. Что результат доказывает и чего НЕ доказывает
-- **Доказывает**:
-  - Что в изолированном процессе на паузе обе фикстуры (`SDR` и `HDR`) последовательно проходят цикл `SDR → HDR → SDR → HDR` с публикацией первого нового кадра на каждом шаге, корректными параметрами `CommittedOutputState`, `Gdk.GLTexture`, пикселями FBO и штатным освобождением `mpv_render_context_free()` до остановки ядра `mpv`.
-  - В связке с `parse_wayland_color_trace.py` (`evaluate_session_results`) — также статус протокольной отправки `wp_color_management_v1` (`PASS` / `UNKNOWN` / `FAIL`).
-- **НЕ доказывает**:
-  - Отсутствие пропусков кадров при длительном воспроизведении (60 fps soak) или отсутствие деградации на других GPU/композиторах.
-  - Реальный физический HDR-вывод монитора (тон-маппинг и яркость на экране проверяются только визуальным/фотометрическим оракулом L4).
+- **Что доказывают модульные и сценарные тесты (`tests/test_gpu_validation.py`, `tests/test_wayland_publication_scenario.py`)**:
+  - На моках и изолированных bash-функциях: соблюдение паузового контракта `do_open`, изоляцию настроек плеера, формулу дробного масштабирования `expected_scaled_texture_dimensions()`, отбраковку неверного префикса `libmpv`, защиту пользовательских экземпляров Flatpak в `cleanup_instance`, сохранность `cleanup_status.json` при срабатывании `EXIT` trap и проверку целостности `fbo_pixel_measurements.json`.
+- **Что доказывает живой запуск `run_wayland_publication_validation.sh` (на реальном GPU и Wayland-сессии)**:
+  - Что в отдельных процессах `legacy` (`opengl`) и `gpu-next` (`opengl-next`) установленного Flatpak-пакета обе фикстуры (`SDR` и `HDR`) последовательно проходят паузовый цикл `SDR → HDR → SDR → HDR` с публикацией нового кадра на каждом шаге, валидными `Gdk.GLTexture`, прошедшим `PausedTransitionPixelOracle` (`fbo_pixel_measurements.json`), протокольным `PASS` парсера `parse_wayland_color_trace.py` (`oracle="primary_composite"`) и чистым завершением тестового контейнера (`CLEAN`).
+- **Чего НЕ доказывает**:
+  - Отсутствие пропусков кадров при длительном воспроизведении (60 fps soak) или поведение в нормальном режиме `auto` без тестового `CINEHDR_FORCE_SURFACE_SUBMISSION=1`.
+  - Реальный физический HDR-вывод монитора (тон-маппинг композитора и яркость на экране проверяются только визуальным/фотометрическим оракулом L4).
 
 #### 3.7. Точки подключения в продукте
 - `src/main.py`:
   - В `CineApplication.__init__`: чтение `os.environ.get("CINEHDR_GPU_VALIDATION")` для добавления `Gio.ApplicationFlags.NON_UNIQUE` (чтобы тестовый экземпляр не подключался к пользовательскому по D-Bus).
-  - В `CineApplication.do_open`: при активном `CINEHDR_GPU_VALIDATION` вызов `prepare_validation_player(win.player, config, files)` до `loadfile`, сохранение `pause=True` для `publication` и планирование `GpuValidationSession(app, win, config, files).start` через `GLib.idle_add`.
+  - В `CineApplication.do_open`: при активном `CINEHDR_GPU_VALIDATION` вызов `prepare_validation_player(win.mpv, self.gpu_validation_config.mode)` до `loadfile`, сохранение `pause=True` при `_uses_publication_fixture_contract(mode)` и планирование `GpuValidationSession(...).start` через `GLib.idle_add`.
   - *(По `C4d`: при `CINEHDR_GPU_VALIDATION` `main.py` будет импортировать `cinehdr.validation`, а при отсутствии модуля — завершаться с явной ошибкой в лог, не молча).*
 - `src/window.py`:
   - `self._is_gpu_validation = bool(os.environ.get("CINEHDR_GPU_VALIDATION", "").strip())` в `CineWindow.__init__` (отключает `restore_last_playlist` при старте и `quit_watch_later()` в `do_close_request`).
@@ -330,86 +356,101 @@
 
 #### 4.1. Защищаемый инвариант и конкретные дефекты
 - **Защищаемый инвариант (`AGENTS.md` §10, `GEMINI.md` §2.2–2.3, решение `D7`)**:
-  1. Автоматический экспорт диагностического отчёта (`video_output_diagnostics.txt` и `video_output_diagnostics.json`) использует **единый** продуктовый сборщик фактов `collect_video_output_facts()` и генератор текста `build_video_output_report()` из `src/diagnostics_report.py` (гарантия побайтового совпадения логики с кнопкой `Copy Report` в диалоге `Video Output Diagnostics` на фиксированном снимке).
-  2. Снимок со статусом `evidence_status = "CONFIRMED"` (`first_frame_confirmed = True`) записывается **только** после того, как реально декодированный медиа-кадр (`media_frame_evidence`: `source_width > 0`, `source_height > 0`, `time_pos is not None`, непустой `path_token`) опубликован в `self.current_texture` и `self.render_frame_generation > 0`.
-  3. Внутри GL-колбэка `_render_pending_frame()` не выполняется **никакого** дискового ввода-вывода: уведомление окна откладывается через `idle_add_once`, а перед записью на главном цикле GTK проверяется неизменность `(render_context_generation, _media_load_generation, path_token)`. Если приложение закрылось до первого медиа-кадра, в `do_close_request` записывается снимок со статусом `"INCOMPLETE"` (`first_frame_confirmed = False`).
+  1. Автоматический экспорт диагностического отчёта (`video_output_diagnostics.txt` и `video_output_diagnostics.json`) использует **единый** продуктовый сборщик фактов `collect_video_output_facts()` и генератор текста `build_video_output_report()` из `src/diagnostics_report.py` (гарантия побайтового совпадения логики с кнопкой `Copy Report` в диалоге `Video Output Diagnostics` на одном и том же `DiagnosticSnapshot`).
+  2. Снимок со статусом `evidence_status = "CONFIRMED"` (`first_frame_confirmed = True`, `trigger = "first-media-frame-confirmed"`) записывается **только** после того, как реально декодированный медиа-кадр (`media_frame_evidence(self.mpv)`: `source_width > 0`, `source_height > 0`, `time_pos is not None`, непустой `path_token`) опубликован в `self.current_texture` при `self.render_frame_generation > 0`.
+  3. **Точное разделение синхронного захвата в `_render_pending_frame()` и отложенного сбора в `idle_add_once`**:
+     - Внутри GL-колбэка `MpvVideoWidget._render_pending_frame()` (`src/video_widget.py`) **не выполняется никакого дискового ввода-вывода** и не вызывается `collect_video_output_facts(win)`. В момент публикации текстуры синхронно фиксируются только `rendered_media_frame = media_frame_evidence(self.mpv)`, `ctx_gen = self.render_context_generation` и `load_gen = getattr(window, "_media_load_generation", 0)`, после чего планируется `idle_add_once(window.on_first_media_frame_published, rendered_media_frame, ctx_gen, load_gen)`.
+     - Вызов `collect_video_output_facts(window)` внутри `DiagnosticsExporter.export_snapshot()` выполняется **позже, асинхронно на главном цикле GTK** (в idle-колбэке `CineWindow.on_first_media_frame_published`). Чтобы гарантировать, что собранные факты относятся к тому же контексту и медиафайлу, `on_first_media_frame_published` и `export_snapshot` проверяют отсутствие `_shutting_down` и неизменность `(render_context_generation, _media_load_generation, path_token)` как до, так и после вызова `collect_video_output_facts(window)`. Если приложение закрывается до подтверждённого экспорта, в `do_close_request` записывается снимок со статусом `"INCOMPLETE"` (`first_frame_confirmed = False`).
 - **Конкретные исторические дефекты и отрицательные контроли**:
-  1. **Дефект 4A (отсутствие синхронного клиентского диагностического снимка в Run 2 `wayland-trace-MgsoJA`, `2026-09-24`)**:
-     В прогоне Run 2 (`2026-09-24`) была собрана трасса `WAYLAND_DEBUG`, но не существовало механизма автоматического сохранения `Video Output Diagnostics` из того же самого процесса в момент публикации первого кадра, из-за чего поля `Active API` и `Session status` остались `Unknown`, а прогон не мог быть принят как доказательство.
-  2. **Дефект 4B (пустой начальный GL redraw до декодирования медиа-кадра и гонки поколений `load_generation` / `context_generation` при перезагрузке файла, `2026-09-25`)**:
-     При подготовке Attempt 3 (`2026-09-25`, ревью Sol high / Astra high в `docs/MODEL_USAGE_LOG.md`) были выявлены и закрыты регрессионными тестами дефекты:
+  1. **Дефект 4A (отсутствие автоматического клиентского диагностического снимка в той же сессии в GNOME Run 2 `wayland-trace-MgsoJA`, `2026-09-24`)**:
+     В прогоне GNOME Run 2 (`2026-09-24`) парсер протокола Wayland зафиксировал `PASS` (`wp_color_manager_v1#32` → `wp_image_description_v1#51.ready` → `set_image_description` → `wl_surface#61.commit()`), но в приложении ещё не было механизма автоматического сохранения `Video Output Diagnostics` из того же самого процесса после публикации первого медиа-кадра. Из-за этого поля `Active API` и `Session status` для сессии `wayland-trace-MgsoJA` остались `Unknown`, а комбинированная строка была переведена в `HOLD` («нет свидетельства из той же сессии»). В Run 3 (`wayland-trace-Z4GghM`, `2026-09-26`) `DiagnosticsExporter` устранил этот пробел.
+  2. **Дефект 4B (пустой начальный GL redraw до декодирования медиа-кадра и гонки поколений `load_generation` / `context_generation` при отложенном idle-экспорте, `2026-09-25`)**:
+     При подготовке Attempt 3 (`2026-09-25`) были выявлены и закрыты регрессионными тестами дефекты:
      - первый вызов `_render_pending_frame()` может произойти до декодирования первого видеокадра (пустой GL redraw без `video-params`); он не должен помечать `_first_media_frame_exported = True` или экспортировать `CONFIRMED`;
      - отложенный через `idle_add_once` колбэк от старого файла или старого `render_context_generation` при быстром переключении/перезагрузке того же файла (`start-file` увеличивает `_media_load_generation`) мог перезаписать состояние нового поколения или отменить уведомление нового поколения;
-     - если `context_generation` или `load_generation` изменились во время сбора `collect_video_output_facts()`, снимок не имеет права получить статус `CONFIRMED`.
+     - если `context_generation` или `load_generation` изменились во время выполнения `collect_video_output_facts()`, снимок не имеет права получить статус `CONFIRMED`.
   3. **Дефект 4C (преждевременная остановка сессии сразу после появления `video_output_diagnostics.json` до `wl_surface.commit()` и маскировка ненулевого кода возврата процесса, `2026-09-25`)**:
-     В супервизоре Attempt 3 обнаружение валидного `video_output_diagnostics.json` до появления `wl_surface.commit()` в `wayland-client.raw.log` приводило к раннему завершению процесса до протокольного коммита, либо поздний `wl_display.error` / ненулевой exit code дочернего процесса после записи JSON не отзывал предварительный успех.
+     В логике верификации Attempt 3 обнаружение валидного `video_output_diagnostics.json` до появления `wl_surface.commit()` в `wayland-client.raw.log` не должно приводить к раннему завершению процесса до протокольного коммита, а поздний `wl_display.error`, SDR-манифест или ненулевой exit code дочернего процесса обязаны отзывать предварительный успех.
 
 #### 4.2. Проверяемые источники
 - Коммит `a25b2a38af8c61a7c36a990c5e92d4989bf83550` (`feat(diagnostics): add autonomous diagnostic report export and CLI option`).
 - Коммит `9e2475aabf702b95d090b4c29b8802a9462eac87` (`fix(diagnostics): track Dolby Vision RPU warnings and enforce snapshot consistency`).
 - Коммит `4831fefb4f7fe8df74462286b233b39eb579cae3` (`fix(diagnostics): unify decoder snapshot, chain validation logging, and clarify provenance`).
+- Коммит `9010e5a4a473aa90ae35ef5bb22b27dacf373d6e` (`docs(validation): record GNOME trace evidence and Gate 2W hold`).
 - Коммит `528242c7b647594fde792d2558101b3ad144f609` (`test: make diagnostics export write error test independent of root DAC permissions`).
-- Документы: `docs/GPU_NEXT_DEVELOPMENT.md` (разделы по Run 2 `wayland-trace-MgsoJA` и подготовке Attempt 3 `2026-09-25`), `docs/MODEL_USAGE_LOG.md` (записи `2026-09-24`, `2026-09-25`), `docs/adr/0006-bounded-validation-governance.md`.
+- Источники, удаляемые в `C1` (доступны в коммите `45fb026e891a21ceb3150808b140085b10138988`):
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md`, разделы `### Target Hardware GNOME Wayland Trace Capture (Run 2, 2026-09-24)` и `### Target Hardware GNOME Wayland Trace Capture (Run 3 / Candidate v4, 2026-09-26)`.
+  - `45fb026e891a21ceb3150808b140085b10138988:docs/MODEL_USAGE_LOG.md`, разделы `### 2026-09-24 Target GNOME Wayland trace capture and Gate 2W audit` и `### 2026-09-26 Target GNOME Wayland trace capture Attempt 3 and Gate 2W narrow row acceptance`.
 
 #### 4.3. Фактические текущие файлы и функции
 - `src/diagnostics_report.py`:
   - *Остаются в `src/diagnostics_report.py` по `D7` и `C4b`*: `DiagnosticSnapshot`, `collect_video_output_facts`, `build_video_output_report`, `generate_video_output_report`, `read_flatpak_info`, `format_dovi_rpu_warnings`, `get_dovi_rpu_warning_state`.
-  - *Переносится в `tools/validation/diagnostics_export.py` в `C4b`*: класс `DiagnosticsExporter` (`from_env`, `check_identity`, `export_snapshot`, `on_first_media_frame`, `on_first_frame`, `on_shutdown`).
+  - *Переносится в `tools/validation/diagnostics_export.py` в `C4b`*: константы окружения (`DIAGNOSTICS_EXPORT_PATH_ENV = "CINEHDR_DIAGNOSTICS_EXPORT_PATH"`, `DIAGNOSTICS_EXPORT_DIR_ENV = "CINEHDR_DIAGNOSTICS_EXPORT_DIR"`, `EXPECTED_FLATPAK_INSTANCE_ENV = "CINEHDR_EXPECTED_FLATPAK_INSTANCE"`, `EXPECTED_APP_COMMIT_ENV = "CINEHDR_EXPECTED_APP_COMMIT"`, `EXPECTED_RUNTIME_COMMIT_ENV = "CINEHDR_EXPECTED_RUNTIME_COMMIT"`, `DIAGNOSTICS_SESSION_ID_ENV = "CINEHDR_DIAGNOSTICS_SESSION_ID"`) и класс `DiagnosticsExporter` (`from_env`, `check_identity`, `export_snapshot`, `on_first_media_frame`, `on_first_frame`, `on_shutdown`).
 - `src/render_backend.py`: `MediaFrameEvidence`, `media_frame_evidence`.
-- `src/video_widget.py`: проверка `rendered_media_frame = media_frame_evidence(self.mpv)` и планирование `idle_add_once(window.on_first_media_frame_published, rendered_media_frame, ctx_gen, load_gen)` в `MpvVideoWidget._render_pending_frame`.
+- `src/video_widget.py`: вычисление `rendered_media_frame = media_frame_evidence(self.mpv)` и планирование `idle_add_once(window.on_first_media_frame_published, rendered_media_frame, ctx_gen, load_gen)` в `MpvVideoWidget._render_pending_frame`.
 - `src/window.py`: `self._diagnostics_exporter`, `self._media_load_generation`, `CineWindow.on_first_media_frame_published`, `CineWindow.do_close_request`.
 - `tests/test_diagnostics_export.py`: класс `DiagnosticsExportTests`.
 - `tests/test_attempt3_regressions.py`: класс `Attempt3RegressionsTests`.
 
-#### 4.4. Имена существующих регрессионных тестов и отрицательных контролей
-- В `tests/test_diagnostics_export.py` (`DiagnosticsExportTests`):
-  - `test_exporter_disabled_by_default`
-  - `test_exporter_first_frame_confirmed_produces_confirmed_status`
-  - `test_exporter_missing_first_frame_produces_incomplete_status`
-  - `test_exporter_identity_mismatch_marks_failed`
-  - `test_parity_between_headless_export_and_copy_report`
-  - `test_frame_sequence_empty_redraw_then_media_frame_then_repeat`
-  - `test_no_disk_io_inside_render_callback`
-  - `test_regression_deferred_export_invalidation`
-  - `test_regression_load_change_discards_old_and_exports_new`
-  - `test_regression_late_old_callback_does_not_cancel_new_notification`
-  - `test_stale_callback_clobbers_new_generation_state`
-  - `test_same_file_reload_race_causes_premature_export`
-  - `test_generation_change_during_snapshot_collection_rejects_confirmed`
-  - `test_call_boundary_generation_advance_rejects_and_allows_next_generation_export`
-  - `test_exporter_write_error_returns_false_and_allows_retry`
-- В `tests/test_attempt3_regressions.py` (`Attempt3RegressionsTests`):
-  - `test_regression1_valid_json_before_commit_no_early_stop`
-  - `test_regression2_incomplete_json_stops_immediately_as_failed_before_timeout`
-  - `test_regression3_invalid_corrupt_json_stops_immediately_as_failed`
-  - `test_regression4_timeout_without_json_produces_timeout_and_exit_124`
-  - `test_regression5_late_protocol_error_revokes_preliminary_success`
-  - `test_regression9_child_process_exit_code_preserved_and_not_masked`
-  - `test_regression11_zero_remaining_budget_never_calls_readiness_with_zero_timeout`
+#### 4.4. Карта «дефект / контроль → конкретный регрессионный тест»
+- **Дефект 4A (инстанцирование из переменных окружения, паритет с `Copy Report`, статус `CONFIRMED` только при первом медиа-кадре и `INCOMPLETE` при закрытии без кадра, проверка идентичности Flatpak)**:
+  - `DiagnosticsExportTests.test_exporter_from_env_instantiation` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_parity_between_headless_export_and_copy_report` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_exporter_first_frame_confirmed_produces_confirmed_status` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_exporter_missing_first_frame_produces_incomplete_status` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_exporter_flatpak_identity_mismatch` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_exporter_handles_write_error_gracefully` (`tests/test_diagnostics_export.py`)
+- **Дефект 4B (игнорирование пустого начального GL redraw, отсутствие дискового I/O в `_render_pending_frame` и защита от гонок `context_generation` / `_media_load_generation` при отложенном вызове `idle_add_once`)**:
+  - `DiagnosticsExportTests.test_frame_sequence_empty_redraw_then_media_frame_then_repeat` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_no_disk_io_inside_render_callback` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_regression_deferred_export_invalidation` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_regression_load_change_discards_old_and_exports_new` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_regression_late_old_callback_does_not_cancel_new_notification` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_stale_callback_clobbers_new_generation_state` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_same_file_reload_race_causes_premature_export` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_generation_change_during_snapshot_collection_rejects_confirmed` (`tests/test_diagnostics_export.py`)
+  - `DiagnosticsExportTests.test_call_boundary_generation_advance_rejects_and_allows_next_generation_export` (`tests/test_diagnostics_export.py`)
+- **Дефект 4C (запрет ранней остановки до `wl_surface.commit()`, отбраковка неполных/чужих бандлов, откат при позднем `wl_display.error` и сохранение exit code дочернего процесса)**:
+  - `Attempt3RegressionsTests.test_regression1_valid_json_before_commit_no_early_stop` (`tests/test_attempt3_regressions.py`)
+  - `Attempt3RegressionsTests.test_regression2_incomplete_corrupted_and_foreign_session_rejected` (`tests/test_attempt3_regressions.py`)
+  - `Attempt3RegressionsTests.test_regression3_full_correct_bundle_accepted_within_narrow_claim` (`tests/test_attempt3_regressions.py`)
+  - `Attempt3RegressionsTests.test_regression4_sdr_manifest_rejected_by_client_hdr_check` (`tests/test_attempt3_regressions.py`)
+  - `Attempt3RegressionsTests.test_regression5_late_protocol_error_revokes_preliminary_success` (`tests/test_attempt3_regressions.py`)
+  - `Attempt3RegressionsTests.test_regression9_child_process_exit_code_preserved_and_not_masked` (`tests/test_attempt3_regressions.py`)
+  - `Attempt3RegressionsTests.test_regression11_sub_10ms_budget_rejects_zero_timeout_and_finalizes_timeout` (`tests/test_attempt3_regressions.py`)
 
 #### 4.5. Команда воспроизведения и предусловия
-- **Предусловия**: Python 3, `bash`, установленные модули проекта; GPU и активный композитор Wayland не требуются.
-- **Команда воспроизведения (текущее расположение `C0`)**:
+- **Предусловия для юнит-тестов**: Python 3, `bash`, установленные модули проекта; GPU и активный композитор Wayland не требуются.
+- **Команда воспроизведения юнит-тестов (текущее расположение `C0`)**:
   ```bash
   python3 -m unittest \
     tests.test_diagnostics_export \
     tests.test_attempt3_regressions -v
   ```
-- **Активация автоэкспорта при запуске плеера**:
-  Переменная окружения `CINEHDR_EXPORT_DIAGNOSTICS=/path/to/dir` или CLI-флаг `--export-diagnostics=/path/to/dir` (опционально с проверкой идентичности `CINEHDR_EXPECT_FLATPAK_INSTANCE`, `CINEHDR_EXPECT_APP_COMMIT`, `CINEHDR_EXPECT_RUNTIME_COMMIT`, `CINEHDR_VALIDATION_SESSION_ID`).
+- **Активация автоэкспорта при запуске плеера (`DiagnosticsExporter.from_env`)**:
+  В текущем приложении CLI-флаг `--export-diagnostics` **отсутствует** (`src/main.py` регистрирует только `--new-window` и `--experimental-color-mgmt`). Автоэкспорт включается исключительно через переменные окружения:
+  - `CINEHDR_DIAGNOSTICS_EXPORT_DIR=/path/to/dir` или `CINEHDR_DIAGNOSTICS_EXPORT_PATH=/path/to/video_output_diagnostics.txt` (при указании `.txt` рядом автоматически создаётся одноимённый `.json`);
+  - опциональные переменные верификации идентичности сессии:
+    - `CINEHDR_EXPECTED_FLATPAK_INSTANCE`
+    - `CINEHDR_EXPECTED_APP_COMMIT`
+    - `CINEHDR_EXPECTED_RUNTIME_COMMIT`
+    - `CINEHDR_DIAGNOSTICS_SESSION_ID`.
 
 #### 4.6. Что результат доказывает и чего НЕ доказывает
-- **Доказывает**:
-  - Что в конкретной сессии (с подтверждённым PID, `flatpak_instance_id`, `app_commit`, `runtime_commit`) первый декодированный медиа-кадр действительно дошёл до публикации в `Gdk.GLTexture`, и фиксирует состояние `Active API`, `render_target_format`, `gdk_color_state`, декодера и предупреждений RPU в этот момент.
-- **НЕ доказывает**:
+- **Что доказывают модульные тесты (`tests/test_diagnostics_export.py`, `tests/test_attempt3_regressions.py`)**:
+  - На моках: совпадение текстового отчёта с `Copy Report`, отсутствие файлового ввода-вывода внутри `_render_pending_frame()`, инвалидацию устаревших idle-колбэков при смене `render_context_generation` / `_media_load_generation` / `path_token` и корректную отбраковку неполных или повреждённых диагностических бандлов.
+- **Что доказывает живой экспорт `video_output_diagnostics.json` со статусом `CONFIRMED`**:
+  - Что в конкретном живом процессе (с верифицированным `pid`, `flatpak_instance_id`, `app_commit`, `runtime_commit`) первый декодированный медиа-кадр (`MediaFrameEvidence`: `source_width`, `source_height`, `time_pos`, `path_token`) был опубликован в `Gdk.GLTexture`, а последующий снимок `collect_video_output_facts(win)` на главном цикле GTK выполнен в том же самом поколении контекста рендера и загрузки файла (`ctx_gen`, `load_gen`), зафиксировав `active_api`, `session_status`, `render_target_format`, `gdk_color_state` и `active_decoder`.
+- **Чего НЕ доказывает**:
+  - Что все поля `collect_video_output_facts(win)` были считаны синхронно внутри GL-колбэка того самого кадра (внутри `_render_pending_frame` синхронно захватываются только `MediaFrameEvidence`, `ctx_gen` и `load_gen`, тогда как остальной снимок собирается в `idle_add_once` под защитой проверки поколений).
   - Содержимое пикселей внутри FBO (проверяется пиксельным оракулом FBO, раздел 1).
   - Отправку `wp_image_description_v1` композитору по протоколу Wayland (проверяется `parse_wayland_color_trace.py`, раздел 2) и физический вывод на экран (L4).
 
 #### 4.7. Точки подключения в продукте (сохраняются по `D7` и `C4c`)
 - `CineWindow.__init__` (`src/window.py`):
-  - `self._media_load_generation = 0` (инкрементируется в обработчике события mpv `start-file`) и `self._diagnostics_exporter`.
+  - `self._media_load_generation = 0` (инкрементируется в обработчике события mpv `start-file`) и `self._diagnostics_exporter = DiagnosticsExporter.from_env()`.
 - `MpvVideoWidget._render_pending_frame` (`src/video_widget.py`):
-  - После публикации `self.current_texture = texture` и `self.render_frame_generation += 1`, только если `not self._first_media_frame_exported` и `rendered_media_frame is not None`, вызывает `idle_add_once(window.on_first_media_frame_published, rendered_media_frame, ctx_gen, load_gen)`. После срабатывания на первом медиа-кадре флаг `_first_media_frame_exported` становится `True`, и в последующих кадрах проверка не выполняет работы.
+  - После публикации `self.current_texture = texture` и `self.render_frame_generation += 1`, только если `not self._first_media_frame_exported` и `rendered_media_frame is not None`, помечает `self._first_media_frame_exported = True`, захватывает `(rendered_media_frame, ctx_gen, load_gen)` и вызывает `idle_add_once(window.on_first_media_frame_published, rendered_media_frame, ctx_gen, load_gen)`. В последующих кадрах того же файла проверка не выполняет работы.
 - `CineWindow.on_first_media_frame_published` и `CineWindow.do_close_request` (`src/window.py`):
   - Вызывают `self._diagnostics_exporter.on_first_media_frame(...)` на главном цикле GTK и `self._diagnostics_exporter.on_shutdown(self)` перед `shutdown_render_context()`. При `self._diagnostics_exporter is None` (режим по умолчанию) обе точки являются немедленным no-op.
 
@@ -421,9 +462,9 @@
 
 | Механизм / файл | Защищаемый инвариант | Исторический дефект в документации / git | Синтетический отрицательный контроль / тест |
 |---|---|---|---|
-| Режим `lifecycle` в `src/gpu_validation.py` (`_capture_video_selection_for_context_restore`, `_restore_video_after_context_recreate` в `src/video_widget.py`) | Восстановление видеоцепочки (`vid=no` → `vid=auto`/track ID) после `mpv_render_context_free()`, который в `opengl-next` вызывает `kill_video_async()` и сбрасывает `vid` | **Задокументирован**: в `docs/adr/0001-gpu-next-render-api.md` (§`GL context recreation`) и `docs/GPU_NEXT_DEVELOPMENT.md` при пересоздании `Gtk.GLArea` контекста видео замирало без активного трека (`vid=no`) | `TestGpuValidation.test_lifecycle_validation_passes_two_realize_cycles` (`tests/test_gpu_validation.py`), тесты восстановления `vid` в `tests/test_hdr.py` |
-| Режим `transition` в `src/gpu_validation.py` (непаузовый цикл `SDR → HDR → SDR → HDR`) | Смена `GL_RGBA8`/`srgb` ↔ `GL_RGBA16F`/`rec2100-pq` в одном процессе без пересоздания контекста | **Задокументирован**: перекрывается более строгим паузовым сценарием `publication` + `PausedTransitionPixelOracle` (разделы 1 и 3 выше) | `TestGpuValidation.test_transition_validation_passes_four_switches`, `test_transition_rejects_stale_hdr_surface_on_sdr` (`tests/test_gpu_validation.py`) |
-| Режимы `quick`, `soak`, `sdr-soak`, `settling` и сэмплирование RSS/DRM в `src/gpu_validation.py`, `run_gate2_resource_settling.sh`, `run_gpu_validation.sh`, `run_flatpak_gpu_validation.sh` | Отсутствие роста VRAM/RSS после прогрева при 20 циклах load/unload и 100 ресайзах; стабильность 30-минутного прогона (`ADR-0001` Gate 1/Gate 2) | В части `1567e10a5b454e19a75f5965fcf37c353d48b70c`: парсер манифеста `settling` не поддерживал HLG-фикстуры; по самому механизму утечки VRAM/RSS в живом прогоне — **исторический дефект не задокументирован** | Синтетические unit-тесты `TestGpuValidation` в `tests/test_gpu_validation.py` (моки RSS/DRM и шагов `settling`/`soak`) |
+| Режим `lifecycle` в `src/gpu_validation.py` (`_capture_video_selection_for_context_restore`, `_restore_video_after_context_recreate` в `src/video_widget.py`) | Восстановление видеоцепочки (`vid=no` → `vid=auto`/track ID) после `mpv_render_context_free()`, который в `opengl-next` вызывает `kill_video_async()` и сбрасывает `vid` | **Задокументирован**: в `docs/adr/0001-gpu-next-render-api.md` (§`GL context recreation`) и `45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md` (§`GL context lifecycle validation (2026-08-22)`) при пересоздании `Gtk.GLArea` контекста видео замирало без активного трека (`vid=no`) | `ValidationPlanTests.test_lifecycle_plan_recreates_the_context_twice`, `PublicationEvidenceTests.test_context_cycle_requires_a_new_context_and_preserves_hdr_state`, `PublicationEvidenceTests.test_context_cycle_fails_if_generation_does_not_advance` (`tests/test_gpu_validation.py`) |
+| Режим `transition` в `src/gpu_validation.py` (непаузовый цикл `SDR → HDR → SDR → HDR`) | Смена `GL_RGBA8`/`srgb` ↔ `GL_RGBA16F`/`rec2100-pq` в одном процессе без пересоздания контекста | **Задокументирован**: перекрывается более строгим паузовым сценарием `publication` + `PausedTransitionPixelOracle` (разделы 1 и 3 выше) | `ValidationPlanTests.test_transition_plan_runs_sdr_hdr_sdr_hdr_in_one_context`, `PublicationEvidenceTests.test_transition_accepts_published_hdr_state_after_a_new_frame`, `PublicationEvidenceTests.test_transition_rejects_stale_hdr_surface_on_sdr` (`tests/test_gpu_validation.py`) |
+| Режимы `quick`, `soak`, `sdr-soak`, `settling` и сэмплирование RSS/DRM в `src/gpu_validation.py`, `run_gate2_resource_settling.sh`, `run_gpu_validation.sh`, `run_flatpak_gpu_validation.sh` | Отсутствие монотонного роста VRAM/RSS на трёх точках после прогрева и ресайзов (`settling`); стабильность 30-минутного прогона (`ADR-0001` Gate 1/Gate 2) | В части ресайза на паузе (`2026-08-23`, `45fb026e891a21ceb3150808b140085b10138988:docs/MODEL_USAGE_LOG.md` строки `First resource-settling run` и `Second resource-settling integration failure`): выявил, что GTK 4.22.4 не эмитил `notify::width/height` при аллокации виджета (исправлено переходом на `do_size_allocate` в `MpvVideoWidget`); по самой утечке VRAM/RSS в живом прогоне — **исторический дефект не задокументирован** | Синтетические unit-тесты `ResourceSettlingEvidenceTests.test_settling_trend_only_warns_for_three_strictly_rising_endpoints`, `ResourceSettlingEvidenceTests.test_settling_evaluation_fails_closed_for_missing_or_unloaded_evidence` (`tests/test_gpu_validation.py`) |
 | `tests/test_pixel_pipeline.py` (`src/pixel_pipeline.py`) | Монотонность PQ/SDR рампы, нейтральность серой оси, точность праймариз и отсутствие клиппинга (уровень L3, `ADR-0004` / `ADR-0005`) | **Исторический дефект не задокументирован** на реальном GPU (в живых прогонах Gate 2/3 синтетические паттерны проходили с запасом); защищает математический конвейер L3 | Синтетические отрицательные контроли в `tests/test_pixel_pipeline.py` (инжекция немонотонности, сдвига нейтральной оси, клиппинга) |
 | `tests/run_gate2_extended_matrix.py`, `tests/run_gate3_dovi_matrix.py`, `tests/run_performance_ab.py`, `run_benchmark.py` | Гарнитуры расширенной матрицы Gate 2 (W3 дизеринг, W4 скриншоты, W5 субтитры, W6 p95 рендер-тайм `<= +10%`) и Gate 3 (DoVi профили 5/7/8, sweep `target-peak`) для нативного `gpu-next` | В коммите `4846e0fa88aa93a276033d4e567ecb379faa37d0`: исправление некорректного порога p95 и устаревших mpv drop-свойств в самом раннере; продуктовый дефект рендера — **исторический дефект не задокументирован** (нативный `gpu-next` вне релизного scope 1.0 по `D5`) | Отрицательный контроль `dolbyvision=no` в `tests/run_gate3_dovi_matrix.py` и проверка порогов `ADR-0005` |
 | `tests/test_vendor_smoke.py` и `tests/test_nvidia.py` (задача `C16`) | Проверка «процесс жив 8 с, опубликован первый медиа-кадр, подтверждена идентичность runtime и отсутствие GL-ошибок» на Intel Mesa и NVIDIA PRIME (`371b510f0f7184e323b8e8fb727d87f99afe9287`, `c46b5247a7542a5902f361b7f0345bb7652ef65a`) | **Задокументирован**: в раннем smoke-прогоне (`1224119d39218b128bf199a84f3b1d5bdc133ada`, `c46b5247a7542a5902f361b7f0345bb7652ef65a`) без проверки телеметрии первого кадра отчёт завышал статус прохождения; по правилу `C16` эти файлы **не трогаются** в `C2` до подтверждения замены в `C4` | Проверки в `tests/test_vendor_smoke.py` и `tests/test_nvidia.py` |
