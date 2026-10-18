@@ -422,7 +422,7 @@ if not trace_path.exists():
 trace_sha = hashlib.sha256(trace_path.read_bytes()).hexdigest()
 
 sys.path.insert(0, str(script_dir))
-from tests.parse_wayland_color_trace import create_evidence_report, TraceValidationError
+from tools.validation.parse_wayland_color_trace import create_evidence_report, TraceValidationError
 
 try:
     evidence = create_evidence_report(trace_path, report_path, backend, oracle="primary_composite")

@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-REPO_DIR = Path(__file__).resolve().parents[1]
+REPO_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_DIR))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -873,7 +873,7 @@ class TestGtkCmPolicy(unittest.TestCase):
             validate_multiphase_trace(trace)
 
     def test_extract_image_descriptions_distinguishes_pq_and_hlg(self):
-        from tests.parse_wayland_color_trace import _calls, _extract_image_descriptions_info
+        from tools.validation.parse_wayland_color_trace import _calls, _extract_image_descriptions_info
         trace = """
 [ 1042.001]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
 [ 1042.002]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)

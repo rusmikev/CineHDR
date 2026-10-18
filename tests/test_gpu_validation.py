@@ -1677,7 +1677,7 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertIn('Overall result: PASS', launcher)
         self.assertIn("WAYLAND_DEBUG=client", launcher)
         self.assertIn("GDK_DEBUG=color-mgmt", launcher)
-        self.assertIn("from tests.parse_wayland_color_trace import create_evidence_report", launcher)
+        self.assertIn("from tools.validation.parse_wayland_color_trace import create_evidence_report", launcher)
         self.assertIn('create_evidence_report(trace_path, report_path, backend, oracle="primary_composite")', launcher)
         self.assertIn("write_gate2w_summary", launcher)
         self.assertIn('gate2w_summary.json', launcher)

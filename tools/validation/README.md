@@ -11,7 +11,7 @@
 | Компонент (объём решения `D7`) | Текущее расположение на этапе `C0` | Целевое расположение (`C2` / `C3` / `C4`) |
 |---|---|---|
 | Пиксельный оракул FBO и отрицательные контроли (`PausedTransitionPixelOracle`, `FboPixelCapture`, `read_fbo_patch_samples`, `compute_patch_centers`, `compute_samples_hash`, `serialize_fbo_pixel_measurements`, `verify_fbo_pixel_measurements_artifact`) | `src/gpu_validation.py` (тесты: `tests/test_hdr.py`, `tests/test_gpu_validation.py`) | `tools/validation/gpu_validation.py` (`C4a`; опциональная установка в `cinehdr/validation/` при `-Dvalidation=true` по `C4d`) |
-| Парсер трассы протокола Wayland и его тесты (`validate_trace`, `validate_composite_window_trace`, `validate_multiphase_trace`, `create_evidence_report`) | `tests/parse_wayland_color_trace.py`, `tests/test_wayland_color_trace.py` | `tools/validation/parse_wayland_color_trace.py`, `tools/validation/test_wayland_color_trace.py` (`C2a`, остаются в `meson test`) |
+| Парсер трассы протокола Wayland и его тесты (`validate_trace`, `validate_composite_window_trace`, `validate_multiphase_trace`, `create_evidence_report`) | `tools/validation/parse_wayland_color_trace.py`, `tools/validation/test_wayland_color_trace.py` (до `C2a`: `tests/...`) | `tools/validation/parse_wayland_color_trace.py`, `tools/validation/test_wayland_color_trace.py` (`C2a`, остаются в `meson test`) |
 | Паузовый автосценарий `SDR → HDR → SDR`, проверка первого опубликованного кадра и чистое завершение (`GpuValidationSession` в режиме `publication`, `validation_steps("publication")`, `publication_texture_evidence`, `evaluate_publication_validation`, лаунчер) | `src/gpu_validation.py`, `run_wayland_publication_validation.sh` (тесты: `tests/test_gpu_validation.py`, `tests/test_wayland_publication_scenario.py`, `tests/test_hdr.py`) | `tools/validation/gpu_validation.py` (`C4a`) и `tools/validation/run_wayland_publication_validation.sh` (`C3`) |
 | Автоматический экспорт диагностического снимка первого опубликованного медиа-кадра (`DiagnosticsExporter`) | `src/diagnostics_report.py` (тесты: `tests/test_diagnostics_export.py`, `tests/test_attempt3_regressions.py`) | `tools/validation/diagnostics_export.py` (`C4b`); функции `collect_video_output_facts` и `build_video_output_report` остаются в `src/diagnostics_report.py` |
 
@@ -134,7 +134,7 @@
   3. **Дефект 2C (различение композитного окна `xdg_toplevel` и видео-subsurface `wl_subsurface` + `wp_viewport`, а также отбраковка HLG `tf=13` вместо PQ `tf=11`, `2026-10-04`)**:
      В `validate_multiphase_trace` требовалось строго отличать 4-фазное чередование `SDR → HDR → SDR → HDR` на доказанном видео-subsurface (с `wl_subsurface`, `wp_viewport` и `wl_surface.attach`) от смены описания на `xdg_toplevel` без subsurface-цепочки (возвращает `UNKNOWN`), а также отклонять подмену PQ (`tf_named=11`) на HLG (`tf_named=13`).
   4. **Синтетические отрицательные контроли протокола (`unset_image_description` перед `commit`, `ready` после `set_image_description`, `wp_image_description_v1.failed`, `wl_display.error`, разрыв сокета, 64-битный `ready2`)**:
-     Для случаев `unset_image_description` между `set_image_description` и `wl_surface.commit()` и `wp_image_description_v1.failed` в живой трассе GNOME/KWin *исторический дефект не задокументирован*; эти ветки защищены синтетическими отрицательными контролями в `tests/test_wayland_color_trace.py`.
+     Для случаев `unset_image_description` между `set_image_description` и `wl_surface.commit()` и `wp_image_description_v1.failed` в живой трассе GNOME/KWin *исторический дефект не задокументирован*; эти ветки защищены синтетическими отрицательными контролями в `tools/validation/test_wayland_color_trace.py`.
 
 #### 2.2. Проверяемые источники
 - Коммит `074c38cf577183e57c36f64b9e40c78bcfd870a9` (`fix: bypass KWin/GTK color management deadlock via linear extended and graceful SDR fallback`).
@@ -149,7 +149,7 @@
   - `45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md`, раздел `## Gate 2W multi-phase provenance and execution amendment (2026-10-04)`.
 
 #### 2.3. Фактические текущие файлы и функции
-- `tests/parse_wayland_color_trace.py` *(целевой путь в `C2a`: `tools/validation/parse_wayland_color_trace.py`)*:
+- `tools/validation/parse_wayland_color_trace.py` *(до `C2a`: `tests/parse_wayland_color_trace.py`)*:
   - `validate_trace(trace: str)`
   - `validate_composite_window_trace(trace: str, expected_app_id="io.github.rusmikev.CineHDR")`
   - `validate_multiphase_trace(trace: str)`
@@ -157,55 +157,55 @@
   - `create_failure_evidence(trace_path, publication_report_path, backend, error, *, oracle=None, multiphase=False)`
   - `main(argv)` — CLI с обязательными аргументами `--trace`, `--publication-report`, `--backend {legacy,gpu-next}`, `--output` и опциональным выбором оракула `--oracle {composite_window,primary_composite,strict_multiphase,legacy}` (или `--multiphase` как синонимом `--oracle strict_multiphase`).
 - `src/gtk_cm_policy.py`: `COLOR_MGMT_OPT_IN_ENV = "CINEHDR_EXPERIMENTAL_COLOR_MGMT"`, `COLOR_MGMT_OPT_IN_FLAG = "--experimental-color-mgmt"`, `CmCaps`, `gtk_cm_opted_in`, `apply_color_mgmt_opt_in`, `apply_gsk_renderer_policy`, `gtk_color_managed`, `gtk_can_tag_hdr`, `preferred_gsk_renderer`.
-- `tests/test_wayland_color_trace.py` *(целевой путь в `C2a`: `tools/validation/test_wayland_color_trace.py`)*: классы `TestGtkCmPolicy`, `WaylandColorTraceTests`.
+- `tools/validation/test_wayland_color_trace.py` *(до `C2a`: `tests/test_wayland_color_trace.py`)*: классы `TestGtkCmPolicy`, `WaylandColorTraceTests`.
 
 #### 2.4. Карта «дефект / контроль → конкретный регрессионный тест»
 - **Дефект 2A (политика opt-in `GDK_DEBUG=color-mgmt` и блокировка HDR на KWin 6.7.4 без `TF srgb`, в том числе после `invalidate_hdr_support_cache` на `realize`)**:
-  - `TestGtkCmPolicy.test_gtk_cm_opted_in` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_gtk_color_managed_requires_opt_in` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_gtk_color_managed_kwin_missing_srgb` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_regression_kwin_caps_after_invalidate_blocks_hdr` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_gtk_cm_opted_in` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_gtk_color_managed_requires_opt_in` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_gtk_color_managed_kwin_missing_srgb` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_regression_kwin_caps_after_invalidate_blocks_hdr` (`tools/validation/test_wayland_color_trace.py`)
 - **Дефект 2B (отсев приватного probe-трафика `wayland_cm_probe` и защита от переиспользования object ID / `wl_registry` / чужих `delete_id`)**:
-  - `WaylandColorTraceTests.test_valid_trace_selects_a_complete_manager_not_private_probe_traffic` (`tests/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_early_bind_survives_later_registry_id_reuse` (`tests/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_reused_registry_or_chain_object_id_is_ambiguous` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_composite_window_rejects_id_reuse_with_foreign_callback_delete_id` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_composite_window_rejects_ambiguous_delete_id_with_alien_destruction` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_composite_window_rejects_foreign_registry_surface` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_composite_window_rejects_foreign_manager_description` (`tests/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_valid_trace_selects_a_complete_manager_not_private_probe_traffic` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_early_bind_survives_later_registry_id_reuse` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_reused_registry_or_chain_object_id_is_ambiguous` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_id_reuse_with_foreign_callback_delete_id` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_ambiguous_delete_id_with_alien_destruction` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_foreign_registry_surface` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_foreign_manager_description` (`tools/validation/test_wayland_color_trace.py`)
 - **Дефект 2C (проверка subsurface-цепочки и чередования `SDR → HDR → SDR → HDR`, отбраковка HLG `tf=13` для PQ)**:
-  - `TestGtkCmPolicy.test_multiphase_trace_four_phases_on_subsurface_with_buffers_passes` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_multiphase_trace_four_phases_on_toplevel_without_subsurface_chain_returns_unknown` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_multiphase_trace_hlg_transfer_rejected_for_pq` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_multiphase_trace_four_phases_on_subsurface_with_buffers_passes` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_multiphase_trace_four_phases_on_toplevel_without_subsurface_chain_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_multiphase_trace_hlg_transfer_rejected_for_pq` (`tools/validation/test_wayland_color_trace.py`)
 - **Позитивный контроль композитного окна (включая реплей трассы Attempt 3 `wayland-trace-Z4GghM`) и синтетические отрицательные контроли протокола**:
-  - `TestGtkCmPolicy.test_composite_window_synthetic_positive` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_composite_window_attempt3_positive` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_composite_window_rejects_wrong_surface` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_composite_window_rejects_wrong_order` (`tests/test_wayland_color_trace.py`)
-  - `TestGtkCmPolicy.test_composite_window_rejects_unset_image_description_before_commit` (`tests/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_ready_after_set_and_wrong_surface_commit_are_rejected` (`tests/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_failed_description_display_error_and_protocol_disconnect_are_rejected` (`tests/test_wayland_color_trace.py`)
-  - `WaylandColorTraceTests.test_ready2_is_accepted_and_records_the_64_bit_identity` (`tests/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_synthetic_positive` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_attempt3_positive` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_wrong_surface` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_wrong_order` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_unset_image_description_before_commit` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_ready_after_set_and_wrong_surface_commit_are_rejected` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_failed_description_display_error_and_protocol_disconnect_are_rejected` (`tools/validation/test_wayland_color_trace.py`)
+  - `WaylandColorTraceTests.test_ready2_is_accepted_and_records_the_64_bit_identity` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).
-- **Команда воспроизведения юнит-тестов (текущее расположение `C0`)**:
+- **Команда воспроизведения юнит-тестов (после переноса `C2a`)**:
   ```bash
-  python3 -m unittest tests.test_wayland_color_trace -v
+  python3 -m unittest tools/validation/test_wayland_color_trace.py -v
   ```
 - **Команда запуска CLI парсера на сохранённом логе трассы и отчёте публикации**:
   ```bash
-  python3 tests/parse_wayland_color_trace.py \
+  python3 tools/validation/parse_wayland_color_trace.py \
     --trace /path/to/wayland-client.raw.log \
     --publication-report /path/to/gate2-wayland-publication-gpu-next.txt \
     --backend gpu-next \
     --oracle composite_window \
     --output /path/to/gate2-wayland-color-management-gpu-next.json
   ```
-  *(Доступные значения `--oracle`: `composite_window`, `primary_composite`, `strict_multiphase`, `legacy`; флаг `--multiphase` эквивалентен `--oracle strict_multiphase`. После `C2a`: `python3 tools/validation/parse_wayland_color_trace.py ...` и `python3 -m unittest tools/validation/test_wayland_color_trace.py -v`.)*
+  *(Доступные значения `--oracle`: `composite_window`, `primary_composite`, `strict_multiphase`, `legacy`; флаг `--multiphase` эквивалентен `--oracle strict_multiphase`.)*
 
 #### 2.6. Что результат доказывает и чего НЕ доказывает
-- **Что доказывают модульные тесты (`tests/test_wayland_color_trace.py`)**:
+- **Что доказывают модульные тесты (`tools/validation/test_wayland_color_trace.py`)**:
   - Корректность грамматики и конечного автомата парсера на синтетических трассах (и сохранённом логе `wayland-trace-Z4GghM`), а также логику capability-гейта `gtk_color_managed()` на моках `CmCaps`.
 - **Что доказывает прогон CLI парсера на живом логе `WAYLAND_DEBUG=client` (`create_evidence_report`)**:
   - При `PASS` выбранного оракула в переданной трассе найдена цепочка manager → ready → set → commit. Для `composite_window` поверхность определяется по app_id; `strict_multiphase` дополнительно проверяет четыре фазы и цепочку subsurface/viewport/attach. Отчёт содержит SHA-256 обоих входных файлов и проверку строк `Overall result: PASS` / `Expected backend` в отчёте публикации.

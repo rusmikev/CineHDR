@@ -37,10 +37,10 @@ test('gpu_validation_tests', python3,
 
 test('wayland_color_trace_tests', python3,
   args: [
-    meson.current_source_dir() / 'test_wayland_color_trace.py'
+    meson.project_source_root() / 'tools/validation/test_wayland_color_trace.py'
   ],
   env: [
-    'PYTHONPATH=' + meson.current_source_dir()
+    'PYTHONPATH=' + meson.project_source_root() / 'tools/validation' + ':' + meson.project_source_root()
   ]
 )
 
