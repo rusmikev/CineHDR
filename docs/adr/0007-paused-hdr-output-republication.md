@@ -4,7 +4,7 @@
   on Candidate v14. Physical display output remains unverified.
 - **Date:** 2026-10-10
 - **Scope:** CineHDR's libmpv Render API FBO and GDK texture on a paused SDR/HDR switch
-- **Builds on:** [ADR-0001](0001-gpu-next-render-api.md), [ADR-0004](0004-gate2-fbo-pixel-validation.md), and [ADR-0006](0006-bounded-validation-governance.md)
+- **Builds on:** [ADR-0001](0001-gpu-next-render-api.md), [ADR-0004](0004-gate2-fbo-pixel-validation.md), and AGENTS.md §8 / docs/TESTING.md (historically [ADR-0006](45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md))
 
 ## Context
 

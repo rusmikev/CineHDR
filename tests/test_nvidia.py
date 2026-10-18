@@ -8,7 +8,7 @@ telemetry appeared without application or file-open errors.
 
 The runner deliberately does not claim pixel correctness, compositor or
 display behavior, Dolby Vision certification, performance, or stability beyond
-the short observation window. See ADR-0006.
+the short observation window. See AGENTS.md §8 (historically ADR-0006).
 """
 
 from __future__ import annotations

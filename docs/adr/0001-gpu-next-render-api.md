@@ -246,7 +246,7 @@ the session direct passthrough.
 ## Phases and acceptance gates
 
 Execution and evidence roll-up for these gates follow
-[ADR-0006](0006-bounded-validation-governance.md). Each bullet belongs to an
+AGENTS.md §8 and docs/TESTING.md (historically [ADR-0006](45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md)). Each bullet belongs to an
 independently tracked evidence row; an unavailable external row does not erase
 accepted rows or authorize repeated hardware attempts. A prose summary cannot
 close an aggregate gate without retained row reports.

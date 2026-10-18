@@ -11,7 +11,7 @@
 # - Bound container instance tracking (--instance-id-fd=3) and session identity.
 # - Instance metadata verified from $XDG_RUNTIME_DIR/.flatpak/<instance-id>/info.
 # - Strict isolation: never touches or terminates existing user CineHDR instances.
-# - Governed by ADR-0004 and ADR-0006.
+# - Governed by ADR-0004 and AGENTS.md §8 (historically ADR-0006).
 
 set -euo pipefail
 umask 077
