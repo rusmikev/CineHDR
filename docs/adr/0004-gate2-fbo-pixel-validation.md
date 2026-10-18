@@ -6,7 +6,8 @@
 - **Builds on:** [ADR-0001](0001-gpu-next-render-api.md) and
   [ADR-0003](0003-pinned-gpu-next-flatpak-stack.md)
 - **Execution governance:**
-  AGENTS.md §8 and docs/TESTING.md (historically [ADR-0006](45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md))
+  [AGENTS.md §8](../../AGENTS.md) and [TESTING.md](../TESTING.md) (historically
+  ADR-0006, read via `git show 45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md`)
 
 ## Context
 

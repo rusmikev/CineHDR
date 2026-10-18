@@ -4,7 +4,7 @@
   on Candidate v14. Physical display output remains unverified.
 - **Date:** 2026-10-10
 - **Scope:** CineHDR's libmpv Render API FBO and GDK texture on a paused SDR/HDR switch
-- **Builds on:** [ADR-0001](0001-gpu-next-render-api.md), [ADR-0004](0004-gate2-fbo-pixel-validation.md), and AGENTS.md §8 / docs/TESTING.md (historically [ADR-0006](45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md))
+- **Builds on:** [ADR-0001](0001-gpu-next-render-api.md), [ADR-0004](0004-gate2-fbo-pixel-validation.md), and [AGENTS.md §8](../../AGENTS.md) / [TESTING.md](../TESTING.md) (historically ADR-0006, read via `git show 45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md`)
 
 ## Context
 
@@ -13,7 +13,7 @@ SDR→HDR publication, then failed HDR→SDR. At the failed sample, the controll
 reported an SDR source and inactive HDR output, but the FBO target and actual
 `GdkGLTexture` still had 16-bit Rec.2100 PQ state. A frame had been published
 after the playlist switch, so merely waiting for *a* new frame is insufficient.
-The raw report and trace retain exact provenance in [45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md](45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md) (and tools/validation/README.md §1.2).
+The raw report and trace retain exact provenance in `docs/GPU_NEXT_DEVELOPMENT.md` (read via `git show 45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md`; see [tools/validation/README.md §1.2](../../tools/validation/README.md)).
 
 The publication fixture is paused. The libmpv update callback can schedule a
 render before the `video-params` observer has applied the new output decision.
