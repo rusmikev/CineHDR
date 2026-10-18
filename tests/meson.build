@@ -22,6 +22,8 @@ test('render_backend_tests', python3,
 )
 
 test('gpu_validation_tests', python3,
+  # ARM64 under QEMU already approaches Meson's default 30-second limit.
+  timeout: 120,
   args: [
     meson.current_source_dir() / 'test_gpu_validation.py'
   ],
@@ -60,6 +62,8 @@ test('flatpak_manifest_tests', python3,
 # ADR-0004's EGL probe is explicit; this static/unit suite must not require a
 # driver, a sibling mpv build, generated media, or a display server.
 test('pixel_pipeline_tests', python3,
+  # CPU-heavy pixel calculations exceed 30 seconds in ARM64/QEMU CI.
+  timeout: 120,
   args: [
     meson.current_source_dir() / 'test_pixel_pipeline.py'
   ],

@@ -435,3 +435,21 @@ Engineer: Gemini. Offline qualification for Gate 2W Run 4 resolved two blockers 
     summary. Publication is distinguished from presentation; physical HDR and
     the UI-dependent highlight observation remain unverified. No new build,
     live run, gate-status change or remote action was performed by this review.
+
+### 2026-10-18 ARM CI test timeout correction
+
+- Codex made a bounded test-configuration edit after the Operator identified
+  `pixel_pipeline_tests` exceeding Meson's default 30-second limit in both
+  runs 38776325139 (main) and 39030903582 (preparation branch). The latter
+  also reports `gpu_validation_tests` taking 29.82 seconds under ARM64/QEMU.
+- Added explicit 120-second limits to these two suites in `tests/meson.build`.
+  Assertions, enabled tests, product sources and build dependencies are unchanged.
+  The larger budget is provisional until ARM CI completes; matching old timeouts
+  do not prove that the previously interrupted test cases have no regressions.
+- A fresh native Meson setup succeeds; introspection confirms both limits are
+  120 seconds and the other 11 test entries retain 30 seconds. Targeted
+  `meson test ... gpu_validation_tests pixel_pipeline_tests --print-errorlogs`
+  passes both suites (0.42s / 0.97s); `git diff --check` passes.
+- The next check is CI on the resulting committed SHA, including aarch64.
+  No new Flatpak installation, hardware run, CI exception or remote write was
+  performed by Codex. Main promotion still requires the agreed green CI.
