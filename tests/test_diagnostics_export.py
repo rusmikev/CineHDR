@@ -877,8 +877,10 @@ class DiagnosticsExportTests(unittest.TestCase):
             snapshot.video,
             performance=snapshot.performance,
         )
-        win.mpv.get_property.side_effect = AssertionError("mpv must not be re-queried on saved snapshot")
-        win.mpv.__getitem__.side_effect = AssertionError("mpv must not be re-queried on saved snapshot")
+        # get_mpv_prop catches exceptions, so verify calls directly rather than
+        # relying on an AssertionError raised by a property-access mock.
+        win.mpv.get_property.reset_mock()
+        win.mpv.__getitem__.reset_mock()
 
         report_text = diag._copy_report()
         self.assertEqual(report_text.encode("utf-8"), expected_report.encode("utf-8"))
@@ -889,6 +891,8 @@ class DiagnosticsExportTests(unittest.TestCase):
         diag._update_stream_info(win.mpv, {})
         diag._update_performance_info(win.mpv, win.gl_area)
         self.assertIn("VO: 0", diag.perf_dropped_row.set_subtitle.call_args[0][0])
+        win.mpv.get_property.assert_not_called()
+        win.mpv.__getitem__.assert_not_called()
 
     def test_regression_evidence_status_rejections(self):
         """evidence_status is computed strictly after snapshot; opengl-cb, non-active session, GL_RGBA8, and missing video stream yield INCOMPLETE."""
