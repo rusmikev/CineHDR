@@ -869,12 +869,24 @@ class DiagnosticsExportTests(unittest.TestCase):
 
         win.mpv.get_property.side_effect = mutated_get_property
 
-        # 3. Call _copy_report() and verify facts are from self._current_snapshot
+        # 3. Call _copy_report() and verify byte-for-byte match with build_video_output_report
+        snapshot = diag._current_snapshot
+        expected_report = build_video_output_report(
+            snapshot.renderer,
+            snapshot.output,
+            snapshot.video,
+            performance=snapshot.performance,
+        )
+        win.mpv.get_property.side_effect = AssertionError("mpv must not be re-queried on saved snapshot")
+        win.mpv.__getitem__.side_effect = AssertionError("mpv must not be re-queried on saved snapshot")
+
         report_text = diag._copy_report()
+        self.assertEqual(report_text.encode("utf-8"), expected_report.encode("utf-8"))
         self.assertIn("VO frame drops: 0", report_text)
         self.assertNotIn("VO frame drops: 999", report_text)
 
-        # Calling _update_performance_info reuses self._current_snapshot and does not re-read mutated mpv
+        # Calling _update_stream_info and _update_performance_info reuses self._current_snapshot and does not re-read mpv
+        diag._update_stream_info(win.mpv, {})
         diag._update_performance_info(win.mpv, win.gl_area)
         self.assertIn("VO: 0", diag.perf_dropped_row.set_subtitle.call_args[0][0])
 

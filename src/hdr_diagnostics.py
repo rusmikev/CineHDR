@@ -4,141 +4,50 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import gi
 import logging
-import math
-import os
-from datetime import datetime, timezone
 from gettext import gettext as _
 from typing import Any
 
+import gi
+
 gi.require_version("Adw", "1")
-gi.require_version("Gdk", "4.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
-from gi.repository import Adw, Gdk, GLib, Gtk
+from gi.repository import Adw, GLib, Gtk
 
 from .diagnostics_report import (
+    DiagnosticSnapshot,
+    _hdr_status_text,
+    _positive_float,
+    _source_peak_nits,
     build_video_output_report,
     collect_performance_facts,
     collect_video_output_facts,
+    format_dovi_rpu_warnings,
     generate_video_output_report,
+    get_dovi_rpu_warning_state,
+    get_mpv_prop,
 )
 from .hdr_detection import (
     check_hdr_support,
     get_compositor_cm_support,
     get_hdr_unsupported_reason,
 )
-from .preferences import settings
-from .render_backend import (
-    RenderBackend,
-    RenderSelectionSource,
-    dolby_vision_render_capability,
-    renderer_preference_requires_restart,
-)
 
+__all__ = [
+    "HdrDiagnosticsDialog",
+    "_hdr_status_text",
+    "_positive_float",
+    "_source_peak_nits",
+    "check_hdr_support",
+    "format_dovi_rpu_warnings",
+    "get_compositor_cm_support",
+    "get_dovi_rpu_warning_state",
+    "get_hdr_unsupported_reason",
+    "get_mpv_prop",
+]
 
 logger = logging.getLogger(__name__)
-
-
-def _positive_float(value):
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return number if math.isfinite(number) and number > 0 else None
-
-
-def _source_peak_nits(params: dict) -> int | None:
-    """Convert mpv's signal peak (relative to 203-nit white) to nits."""
-    relative_peak = _positive_float(params.get("sig-peak"))
-    if relative_peak is None or relative_peak == 1.0:
-        return None
-    return round(relative_peak * 203)
-
-
-def _hdr_status_text(
-    *,
-    is_active: bool,
-    supported: bool,
-    mode: str,
-    is_content: bool,
-    source_peak_nits: int | None,
-    target_peak,
-) -> str:
-    """Describe HDR transport separately from optional HDR-to-HDR mapping."""
-    if is_active and supported:
-        from .hdr_detection import is_surface_submission_proven
-        # The current gate can be overridden for tests; it is not a live
-        # protocol/presentation oracle and must never certify HDR output.
-        override = is_surface_submission_proven()
-        evidence = _("compositor submission unverified")
-        if override:
-            evidence += _("; test override enabled, not proof")
-        numeric_target = _positive_float(target_peak)
-        if (
-            source_peak_nits is not None
-            and numeric_target is not None
-            and numeric_target < source_peak_nits * 0.9
-        ):
-            return _(
-                "Active (Rec.2100 PQ target prepared · tone-mapped ~{source} → {target} nits; {evidence})"
-            ).format(source=source_peak_nits, target=round(numeric_target), evidence=evidence)
-        return _("Active (Rec.2100 PQ target prepared; {evidence})").format(evidence=evidence)
-    if mode == "force-sdr":
-        return _("Disabled (Force SDR mode)")
-    if is_content:
-        return _("Active (SDR Tone Mapping enabled)")
-    return _("Disabled (SDR Content)")
-
-
-def get_mpv_prop(mpv, name, default=None):
-    if mpv is None:
-        return default
-    if hasattr(mpv, "get_property"):
-        try:
-            res = mpv.get_property(name)
-            return res if res is not None else default
-        except Exception:
-            pass
-    try:
-        res = mpv[name]
-        return res if res is not None else default
-    except Exception:
-        pass
-    try:
-        attr_name = name.replace("-", "_")
-        if hasattr(mpv, attr_name):
-            res = getattr(mpv, attr_name)
-            return res if res is not None else default
-    except Exception:
-        pass
-    return default
-
-
-def format_dovi_rpu_warnings(count: int | None, text: str | None) -> str:
-    """Format observed RPU log warnings without inferring frame/stream damage."""
-    if count is None:
-        return _("Unknown (warning observation unavailable)")
-    if count == 0:
-        return _("None (0 warning messages logged)")
-    msg = _("1 warning message logged") if count == 1 else _("{count} warning messages logged").format(count=count)
-    if text:
-        return f"{msg} ({text})"
-    return msg
-
-
-def get_dovi_rpu_warning_state(win, mpv=None) -> tuple[int | None, str | None]:
-    """Retrieve player-instance tracked RPU warning state safely."""
-    count = None
-    text = None
-    if win is not None:
-        count = getattr(win, "dovi_rpu_warning_count", None)
-        text = getattr(win, "dovi_rpu_warning_text", None)
-    if count is None and mpv is not None:
-        count = getattr(mpv, "_dovi_rpu_warning_count", None)
-        text = getattr(mpv, "_dovi_rpu_warning_text", None)
-    return count, text
 
 
 @Gtk.Template(resource_path="/io/github/rusmikev/CineHDR/hdr_diagnostics.ui")
@@ -187,6 +96,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         self._win = window
         self._timer_id = None
         self._copy_feedback_timer_id = None
+        self._current_snapshot: DiagnosticSnapshot | None = None
         self._renderer_report_fields: dict[str, object] = {}
         self._performance_report_fields: dict[str, object] = {}
         self._sampled_dovi_rpu_fact: str | None = None
@@ -372,15 +282,8 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         mpv = getattr(self._win, "mpv", None)
         if mpv is None and hasattr(self._win, "player"):
             mpv = getattr(self._win.player, "mpv", None)
-        params = (
-            get_mpv_prop(mpv, "video-params")
-            or get_mpv_prop(mpv, "video-out-params")
-            or {}
-        )
-        if not isinstance(params, dict):
-            params = {}
 
-        self._update_stream_info(mpv, params)
+        self._update_stream_info(mpv)
         self._update_performance_info(mpv, gl_area)
 
     def _update_stream_info(self, mpv=None, params=None):
@@ -498,9 +401,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
                 self._win, "gl_area", None
             )
 
-        snapshot = getattr(self, "_current_snapshot", None)
-        sample_time = snapshot.sample_time_utc if snapshot else None
-        performance, perf_ui = collect_performance_facts(mpv, gl_area, sample_time_utc=sample_time)
+        performance, perf_ui = collect_performance_facts(mpv, gl_area)
         self._performance_report_fields = performance
 
         for row_name in (

@@ -822,7 +822,21 @@ class TestHdrDiagnostics(unittest.TestCase):
     """Tests for HdrDiagnosticsDialog and get_mpv_prop helper."""
 
     def test_get_mpv_prop(self):
+        from src import diagnostics_report, hdr_diagnostics
         from src.hdr_diagnostics import get_mpv_prop
+
+        for helper_name in (
+            "_positive_float",
+            "_source_peak_nits",
+            "_hdr_status_text",
+            "get_mpv_prop",
+            "format_dovi_rpu_warnings",
+            "get_dovi_rpu_warning_state",
+        ):
+            self.assertIs(
+                getattr(hdr_diagnostics, helper_name),
+                getattr(diagnostics_report, helper_name),
+            )
 
         class MockMpv2:
             def get_property(self, name):
