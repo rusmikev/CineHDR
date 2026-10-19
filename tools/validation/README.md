@@ -193,6 +193,13 @@
   - `TestGtkCmPolicy.test_multi_app_trace_selects_only_specified_app` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_cli_and_report_propagate_app_id` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_empty_app_id_and_legacy_combination_rejected` (`tools/validation/test_wayland_color_trace.py`)
+- **Классификация именованных трансферов в `_extract_image_descriptions_info` (`semantic_class: hdr | sdr | unknown`, изоляция описаний и извлечение через creator и info-объект)**:
+  - `TestGtkCmPolicy.test_extract_image_descriptions_distinguishes_pq_and_hlg` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_extract_image_descriptions_pq_hlg_with_other_primaries_semantic_class_hdr` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_extract_image_descriptions_sdr_and_wcg_sdr_transfers` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_extract_image_descriptions_primaries_only_unknown_tf_and_ext_linear` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_extract_image_descriptions_via_creator_and_get_information` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_extract_image_descriptions_neighboring_description_metadata_isolation` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).
@@ -214,9 +221,10 @@
 #### 2.6. Что результат доказывает и чего НЕ доказывает
 - **Что доказывают модульные тесты (`tools/validation/test_wayland_color_trace.py`)**:
   - Корректность грамматики и конечного автомата парсера на синтетических трассах (и сохранённом логе `wayland-trace-Z4GghM`), а также логику capability-гейта `gtk_color_managed()` на моках `CmCaps`.
+  - Корректность извлечения и внутренней классификации семантики именованных трансферов (`semantic_class: hdr | sdr | unknown`) в `_extract_image_descriptions_info` через параметрический creator и info-объект `wp_image_description_info_v1`, а также взаимную изоляцию метаданных между дескрипторами.
 - **Что доказывает прогон CLI парсера на живом логе `WAYLAND_DEBUG=client` (`create_evidence_report`)**:
   - При `PASS` выбранного оракула в переданной трассе найдена цепочка manager → ready → set → commit. Для `composite_window` поверхность определяется по app_id; `strict_multiphase` дополнительно проверяет четыре фазы и цепочку subsurface/viewport/attach. Отчёт содержит SHA-256 обоих входных файлов и проверку строк `Overall result: PASS` / `Expected backend` в отчёте публикации.
-  - Текущий `composite_window` не проверяет семантику HDR-трансфера и не требует attach буфера; один его `PASS` ещё не равен целевому L3p PASS. `strict_multiphase` распознаёт ограниченный набор SDR/PQ-описаний. Поддержка других HDR-представлений и контроли к ним относятся к C2a.
+  - Внутренняя классификация `semantic_class` является характеристикой извлечённых из трассы метаданных, а не вердиктом L3p. Классификация ещё **не подключена к `composite_window`**: текущий оракул `composite_window` проверяет только факт отправки ready-описания на окно и не валидирует семантику цветового пространства. Временная привязка метаданных к моменту коммита поверхности и строгая проверка версий/принадлежности объектов требуют отдельной интеграции (C2a). Этап C2 и уровень L3p ещё не являются завершёнными или полностью реализованными.
   - `_fatal_error()` сейчас отклоняет весь лог при найденных `failed` / `wl_display.error`, без разделения соединений. Единый stderr не содержит надёжного идентификатора соединения: проверки происхождения объектов и запрет неоднозначного переиспользования ID не доказывают изоляцию всех соединений. Уточнение области ошибок по правилам также относится к C2a.
 - **Важная граница CLI и эталонного mpv**: CLI парсера сохраняет обязательные требования наличия отчёта публикации (`--publication-report`) и бэкенда CineHDR (`--backend {legacy,gpu-next}`). Добавление выбора `--app-id` позволяет проверять принадлежность поверхностей целевому приложению (в том числе `mpv` в протокольных трассах), но само по себе ещё не делает CLI самостоятельным валидатором эталонного mpv без отчёта CineHDR; полностью автономный режим валидации эталона потребует отдельного изменения.
 - **Чего НЕ доказывает**:

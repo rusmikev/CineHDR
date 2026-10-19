@@ -892,10 +892,250 @@ class TestGtkCmPolicy(unittest.TestCase):
         descs = _extract_image_descriptions_info(calls)
         self.assertEqual(descs[31]["color_type"], "rec2100_pq")
         self.assertEqual(descs[31]["tf_named"], 11)
+        self.assertEqual(descs[31]["semantic_class"], "hdr")
         self.assertEqual(descs[32]["color_type"], "rec2100_hlg")
         self.assertEqual(descs[32]["tf_named"], 13)
+        self.assertEqual(descs[32]["semantic_class"], "hdr")
         self.assertNotEqual(descs[31]["color_type"], descs[32]["color_type"])
         self.assertEqual(descs[33]["color_type"], "srgb_bt709")
+        self.assertEqual(descs[33]["semantic_class"], "sdr")
+
+    def test_extract_image_descriptions_pq_hlg_with_other_primaries_semantic_class_hdr(self):
+        """PQ and HLG with other primaries classify as semantic_class='hdr' without false Rec.2100 name."""
+        from tools.validation.parse_wayland_color_trace import _calls, _extract_image_descriptions_info
+        trace = """
+[ 1042.001]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.002]  -> wp_image_description_creator_params_v1#50.set_primaries_named(1)
+[ 1042.003]  -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.004]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.005]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#52)
+[ 1042.006]  -> wp_image_description_creator_params_v1#52.set_primaries_named(8)
+[ 1042.007]  -> wp_image_description_creator_params_v1#52.set_tf_named(13)
+[ 1042.008]  -> wp_image_description_creator_params_v1#52.create(new id wp_image_description_v1#32)
+[ 1042.009]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#54)
+[ 1042.010]  -> wp_image_description_creator_params_v1#54.set_primaries_named(9)
+[ 1042.011]  -> wp_image_description_creator_params_v1#54.set_tf_named(11)
+[ 1042.012]  -> wp_image_description_creator_params_v1#54.create(new id wp_image_description_v1#33)
+        """.strip()
+        calls = _calls(trace)
+        descs = _extract_image_descriptions_info(calls)
+        # sRGB primaries + PQ: semantic_class is hdr, color_type is accurate custom_p1_tf11 (not rec2100_pq)
+        self.assertEqual(descs[31]["semantic_class"], "hdr")
+        self.assertEqual(descs[31]["color_type"], "custom_p1_tf11")
+        self.assertNotEqual(descs[31]["color_type"], "rec2100_pq")
+        self.assertEqual(descs[31]["primaries_named"], 1)
+        self.assertEqual(descs[31]["tf_named"], 11)
+
+        # DCI-P3 primaries + HLG: semantic_class is hdr, color_type is custom_p8_tf13 (not rec2100_hlg)
+        self.assertEqual(descs[32]["semantic_class"], "hdr")
+        self.assertEqual(descs[32]["color_type"], "custom_p8_tf13")
+        self.assertNotEqual(descs[32]["color_type"], "rec2100_hlg")
+        self.assertEqual(descs[32]["primaries_named"], 8)
+        self.assertEqual(descs[32]["tf_named"], 13)
+
+        # Display P3 primaries + PQ: semantic_class is hdr, color_type is custom_p9_tf11 (not rec2100_pq)
+        self.assertEqual(descs[33]["semantic_class"], "hdr")
+        self.assertEqual(descs[33]["color_type"], "custom_p9_tf11")
+        self.assertNotEqual(descs[33]["color_type"], "rec2100_pq")
+        self.assertEqual(descs[33]["primaries_named"], 9)
+        self.assertEqual(descs[33]["tf_named"], 11)
+
+    def test_extract_image_descriptions_sdr_and_wcg_sdr_transfers(self):
+        """Recognized regular SDR transfers and WCG-SDR (BT.2020 + BT.1886) classify as semantic_class='sdr'."""
+        from tools.validation.parse_wayland_color_trace import _calls, _extract_image_descriptions_info
+        trace = """
+[ 1042.001]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.002]  -> wp_image_description_creator_params_v1#50.set_primaries_named(1)
+[ 1042.003]  -> wp_image_description_creator_params_v1#50.set_tf_named(1)
+[ 1042.004]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.005]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#52)
+[ 1042.006]  -> wp_image_description_creator_params_v1#52.set_primaries_named(1)
+[ 1042.007]  -> wp_image_description_creator_params_v1#52.set_tf_named(2)
+[ 1042.008]  -> wp_image_description_creator_params_v1#52.create(new id wp_image_description_v1#32)
+[ 1042.009]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#54)
+[ 1042.010]  -> wp_image_description_creator_params_v1#54.set_primaries_named(1)
+[ 1042.011]  -> wp_image_description_creator_params_v1#54.set_tf_named(14)
+[ 1042.012]  -> wp_image_description_creator_params_v1#54.create(new id wp_image_description_v1#33)
+[ 1042.013]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#56)
+[ 1042.014]  -> wp_image_description_creator_params_v1#56.set_primaries_named(6)
+[ 1042.015]  -> wp_image_description_creator_params_v1#56.set_tf_named(1)
+[ 1042.016]  -> wp_image_description_creator_params_v1#56.create(new id wp_image_description_v1#34)
+[ 1042.017]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#58)
+[ 1042.018]  -> wp_image_description_creator_params_v1#58.set_primaries_named(1)
+[ 1042.019]  -> wp_image_description_creator_params_v1#58.set_tf_named(4)
+[ 1042.020]  -> wp_image_description_creator_params_v1#58.create(new id wp_image_description_v1#35)
+        """.strip()
+        calls = _calls(trace)
+        descs = _extract_image_descriptions_info(calls)
+        # sRGB + BT.1886
+        self.assertEqual(descs[31]["semantic_class"], "sdr")
+        self.assertEqual(descs[31]["color_type"], "srgb_bt709")
+
+        # sRGB + gamma22
+        self.assertEqual(descs[32]["semantic_class"], "sdr")
+        self.assertEqual(descs[32]["color_type"], "srgb_bt709")
+
+        # sRGB + compound_power_2_4
+        self.assertEqual(descs[33]["semantic_class"], "sdr")
+        self.assertEqual(descs[33]["color_type"], "srgb_bt709")
+
+        # WCG-SDR: BT.2020 primaries + BT.1886 transfer -> must be classified as 'sdr', not HDR
+        self.assertEqual(descs[34]["semantic_class"], "sdr")
+        self.assertEqual(descs[34]["color_type"], "custom_p6_tf1")
+        self.assertNotEqual(descs[34]["color_type"], "rec2100_pq")
+        self.assertNotEqual(descs[34]["color_type"], "rec2100_hlg")
+        self.assertNotEqual(descs[34]["color_type"], "srgb_bt709")
+
+        # sRGB + ST 240
+        self.assertEqual(descs[35]["semantic_class"], "sdr")
+        self.assertEqual(descs[35]["color_type"], "custom_p1_tf4")
+
+    def test_extract_image_descriptions_primaries_only_unknown_tf_and_ext_linear(self):
+        """Primaries alone, unknown transfer function, and ext_linear without luminance parsing classify as 'unknown'."""
+        from tools.validation.parse_wayland_color_trace import _calls, _extract_image_descriptions_info
+        trace = """
+[ 1042.001]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.002]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.003]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.004]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#52)
+[ 1042.005]  -> wp_image_description_creator_params_v1#52.set_primaries_named(6)
+[ 1042.006]  -> wp_image_description_creator_params_v1#52.set_tf_named(5)
+[ 1042.007]  -> wp_image_description_creator_params_v1#52.create(new id wp_image_description_v1#32)
+[ 1042.008]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#54)
+[ 1042.009]  -> wp_image_description_creator_params_v1#54.set_primaries_named(6)
+[ 1042.010]  -> wp_image_description_creator_params_v1#54.set_tf_named(99)
+[ 1042.011]  -> wp_image_description_creator_params_v1#54.create(new id wp_image_description_v1#33)
+[ 1042.012]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#56)
+[ 1042.013]  -> wp_image_description_creator_params_v1#56.set_primaries_named(1)
+[ 1042.014]  -> wp_image_description_creator_params_v1#56.set_tf_named(6)
+[ 1042.015]  -> wp_image_description_creator_params_v1#56.create(new id wp_image_description_v1#34)
+[ 1042.016]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#58)
+[ 1042.017]  -> wp_image_description_creator_params_v1#58.create(new id wp_image_description_v1#35)
+        """.strip()
+        calls = _calls(trace)
+        descs = _extract_image_descriptions_info(calls)
+        # Only primaries (BT.2020) without TF: primaries alone do NOT prove HDR -> unknown
+        self.assertEqual(descs[31]["semantic_class"], "unknown")
+        self.assertEqual(descs[31]["primaries_named"], 6)
+        self.assertIsNone(descs[31]["tf_named"])
+        self.assertEqual(descs[31]["color_type"], "custom_p6_tfNone")
+
+        # ext_linear (tf=5) without luminance parsing -> unknown
+        self.assertEqual(descs[32]["semantic_class"], "unknown")
+        self.assertEqual(descs[32]["primaries_named"], 6)
+        self.assertEqual(descs[32]["tf_named"], 5)
+        self.assertEqual(descs[32]["color_type"], "custom_p6_tf5")
+
+        # Unknown TF (99) -> unknown
+        self.assertEqual(descs[33]["semantic_class"], "unknown")
+        self.assertEqual(descs[33]["primaries_named"], 6)
+        self.assertEqual(descs[33]["tf_named"], 99)
+        self.assertEqual(descs[33]["color_type"], "custom_p6_tf99")
+
+        # log_100 (tf=6, camera curve without display SDR/HDR definition) -> unknown
+        self.assertEqual(descs[34]["semantic_class"], "unknown")
+        self.assertEqual(descs[34]["primaries_named"], 1)
+        self.assertEqual(descs[34]["tf_named"], 6)
+        self.assertEqual(descs[34]["color_type"], "custom_p1_tf6")
+
+        # Neither primaries nor TF -> unknown, unrevealed
+        self.assertEqual(descs[35]["semantic_class"], "unknown")
+        self.assertIsNone(descs[35]["primaries_named"])
+        self.assertIsNone(descs[35]["tf_named"])
+        self.assertEqual(descs[35]["color_type"], "unrevealed")
+
+    def test_extract_image_descriptions_via_creator_and_get_information(self):
+        """Image descriptions extracted via parametric creator and via get_information info object."""
+        from tools.validation.parse_wayland_color_trace import _calls, _extract_image_descriptions_info
+        trace = """
+[ 1042.001]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.002]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.003]  -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.004]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.005]  -> wp_image_description_v1#41.get_information(new id wp_image_description_info_v1#100)
+[ 1042.006]  wp_image_description_info_v1#100.primaries_named(6)
+[ 1042.007]  wp_image_description_info_v1#100.tf_named(13)
+[ 1042.008]  wp_image_description_info_v1#100.done()
+[ 1042.009]  -> wp_image_description_v1#42.get_information(new id wp_image_description_info_v1#101)
+[ 1042.010]  wp_image_description_info_v1#101.primaries_named(1)
+[ 1042.011]  wp_image_description_info_v1#101.tf_named(9)
+[ 1042.012]  wp_image_description_info_v1#101.done()
+        """.strip()
+        calls = _calls(trace)
+        descs = _extract_image_descriptions_info(calls)
+        # Description 31 from creator: BT.2020 PQ
+        self.assertEqual(descs[31]["primaries_named"], 6)
+        self.assertEqual(descs[31]["tf_named"], 11)
+        self.assertEqual(descs[31]["color_type"], "rec2100_pq")
+        self.assertEqual(descs[31]["semantic_class"], "hdr")
+
+        # Description 41 from get_information info object: BT.2020 HLG
+        self.assertEqual(descs[41]["primaries_named"], 6)
+        self.assertEqual(descs[41]["tf_named"], 13)
+        self.assertEqual(descs[41]["color_type"], "rec2100_hlg")
+        self.assertEqual(descs[41]["semantic_class"], "hdr")
+
+        # Description 42 from get_information info object: sRGB
+        self.assertEqual(descs[42]["primaries_named"], 1)
+        self.assertEqual(descs[42]["tf_named"], 9)
+        self.assertEqual(descs[42]["color_type"], "srgb_bt709")
+        self.assertEqual(descs[42]["semantic_class"], "sdr")
+
+    def test_extract_image_descriptions_neighboring_description_metadata_isolation(self):
+        """Metadata of neighboring description_id is strictly isolated and does not transfer to target."""
+        from tools.validation.parse_wayland_color_trace import _calls, _extract_image_descriptions_info
+        trace = """
+[ 1042.001]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.002]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.003]  -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.004]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.005]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#52)
+[ 1042.006]  -> wp_image_description_creator_params_v1#52.set_primaries_named(6)
+[ 1042.007]  -> wp_image_description_creator_params_v1#52.create(new id wp_image_description_v1#32)
+[ 1042.008]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#54)
+[ 1042.009]  -> wp_image_description_creator_params_v1#54.set_primaries_named(1)
+[ 1042.010]  -> wp_image_description_creator_params_v1#54.set_tf_named(9)
+[ 1042.011]  -> wp_image_description_creator_params_v1#54.create(new id wp_image_description_v1#33)
+[ 1042.012]  -> wp_image_description_v1#41.get_information(new id wp_image_description_info_v1#100)
+[ 1042.013]  wp_image_description_info_v1#100.primaries_named(6)
+[ 1042.014]  wp_image_description_info_v1#100.tf_named(11)
+[ 1042.015]  wp_image_description_info_v1#100.done()
+[ 1042.016]  -> wp_image_description_v1#42.get_information(new id wp_image_description_info_v1#101)
+[ 1042.017]  wp_image_description_info_v1#101.primaries_named(6)
+[ 1042.018]  wp_image_description_info_v1#101.done()
+[ 1042.019]  -> wp_image_description_v1#43.get_information(new id wp_image_description_info_v1#102)
+[ 1042.020]  wp_image_description_info_v1#102.tf_named(1)
+[ 1042.021]  wp_image_description_info_v1#102.done()
+        """.strip()
+        calls = _calls(trace)
+        descs = _extract_image_descriptions_info(calls)
+        # Creator isolation: description 32 must not inherit tf_named=11 from description 31
+        self.assertEqual(descs[31]["semantic_class"], "hdr")
+        self.assertEqual(descs[31]["tf_named"], 11)
+        self.assertEqual(descs[31]["color_type"], "rec2100_pq")
+
+        self.assertIsNone(descs[32]["tf_named"])
+        self.assertEqual(descs[32]["semantic_class"], "unknown")
+        self.assertEqual(descs[32]["color_type"], "custom_p6_tfNone")
+
+        self.assertEqual(descs[33]["semantic_class"], "sdr")
+        self.assertEqual(descs[33]["tf_named"], 9)
+        self.assertEqual(descs[33]["color_type"], "srgb_bt709")
+
+        # Info object isolation: description 42 must not inherit tf_named=11 from 41 or tf_named=1 from 43
+        self.assertEqual(descs[41]["semantic_class"], "hdr")
+        self.assertEqual(descs[41]["tf_named"], 11)
+
+        self.assertIsNone(descs[42]["tf_named"])
+        self.assertEqual(descs[42]["semantic_class"], "unknown")
+        self.assertEqual(descs[42]["primaries_named"], 6)
+        self.assertEqual(descs[42]["color_type"], "custom_p6_tfNone")
+
+        # Description 43 has only tf_named=1; must not inherit primaries_named=6 from 41 or 42
+        self.assertIsNone(descs[43]["primaries_named"])
+        self.assertEqual(descs[43]["tf_named"], 1)
+        self.assertEqual(descs[43]["semantic_class"], "sdr")
+        self.assertEqual(descs[43]["color_type"], "custom_pNone_tf1")
 
     def test_multiphase_trace_hlg_transfer_rejected_for_pq(self):
         """Negative regression: HLG transfer function (tf=13) is rejected when PQ (tf=11) is required."""

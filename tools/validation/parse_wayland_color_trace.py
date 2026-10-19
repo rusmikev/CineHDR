@@ -602,12 +602,64 @@ def _find_toplevel_ancestor(
     return None, None
 
 
+# wp_color_manager_v1.transfer_function named enum values
+# Source: /usr/share/wayland-protocols/staging/color-management/color-management-v1.xml:261-397
+# Package: wayland-protocols-devel-1.49-1.fc44.noarch (host system)
+TF_NAMED_BT1886 = 1
+TF_NAMED_GAMMA22 = 2
+TF_NAMED_GAMMA28 = 3
+TF_NAMED_ST240 = 4
+TF_NAMED_EXT_LINEAR = 5
+TF_NAMED_LOG_100 = 6
+TF_NAMED_LOG_316 = 7
+TF_NAMED_XVYCC = 8
+TF_NAMED_SRGB = 9
+TF_NAMED_EXT_SRGB = 10
+TF_NAMED_ST2084_PQ = 11
+TF_NAMED_ST428 = 12
+TF_NAMED_HLG = 13
+TF_NAMED_COMPOUND_POWER_2_4 = 14
+
+# wp_color_manager_v1.primaries named enum values
+# Source: /usr/share/wayland-protocols/staging/color-management/color-management-v1.xml:170-259
+# Package: wayland-protocols-devel-1.49-1.fc44.noarch (host system)
+PRIM_NAMED_SRGB = 1
+PRIM_NAMED_PAL_M = 2
+PRIM_NAMED_PAL = 3
+PRIM_NAMED_NTSC = 4
+PRIM_NAMED_GENERIC_FILM = 5
+PRIM_NAMED_BT2020 = 6
+PRIM_NAMED_CIE1931_XYZ = 7
+PRIM_NAMED_DCI_P3 = 8
+PRIM_NAMED_DISPLAY_P3 = 9
+PRIM_NAMED_ADOBE_RGB = 10
+
+NAMED_HDR_TRANSFER_FUNCTIONS = frozenset({
+    TF_NAMED_ST2084_PQ,
+    TF_NAMED_HLG,
+})
+
+NAMED_SDR_TRANSFER_FUNCTIONS = frozenset({
+    TF_NAMED_BT1886,
+    TF_NAMED_GAMMA22,
+    TF_NAMED_GAMMA28,
+    TF_NAMED_ST240,
+    TF_NAMED_SRGB,
+    TF_NAMED_COMPOUND_POWER_2_4,
+})
+
+
 def _extract_image_descriptions_info(calls: list[TraceCall]) -> dict[int, dict[str, Any]]:
-    """Extract color metadata (primaries, tf, color_type) for image descriptions.
+    """Extract color metadata (primaries, tf, color_type, semantic_class) for image descriptions.
 
     Understands:
     1. wp_image_description_creator_params_v1 (set_primaries_named, set_tf_named, create).
     2. wp_image_description_info_v1 (primaries_named, tf_named).
+
+    Maintains internal classification of metadata semantics (semantic_class):
+    - 'hdr': PQ (11) and HLG (13) transfer functions regardless of primaries;
+    - 'sdr': Standard SDR transfer functions (BT.1886, gamma 2.2, gamma 2.8, ST 240, sRGB, compound_power_2_4);
+    - 'unknown': missing/unsupported transfer function, ext_linear without luminance parsing, unrevealed.
     """
     creators: dict[int, dict[str, Any]] = {}
     descs: dict[int, dict[str, Any]] = {}
@@ -640,7 +692,9 @@ def _extract_image_descriptions_info(calls: list[TraceCall]) -> dict[int, dict[s
         elif call.interface == "wp_image_description_v1" and call.method == "get_information":
             m = GET_INFO_RE.match(call.args)
             if m is not None:
-                info_to_desc[int(m["info_id"])] = call.object_id
+                did = call.object_id
+                info_to_desc[int(m["info_id"])] = did
+                descs.setdefault(did, {"primaries_named": None, "tf_named": None})
         elif call.interface == "wp_image_description_info_v1":
             infoid = call.object_id
             did = info_to_desc.get(infoid)
@@ -658,16 +712,29 @@ def _extract_image_descriptions_info(calls: list[TraceCall]) -> dict[int, dict[s
     for did, data in descs.items():
         prim = data.get("primaries_named")
         tf = data.get("tf_named")
-        if prim == 1 and tf in (1, 2, 3, 9, 14):
+        if prim == PRIM_NAMED_SRGB and tf in (
+            TF_NAMED_BT1886,
+            TF_NAMED_GAMMA22,
+            TF_NAMED_GAMMA28,
+            TF_NAMED_SRGB,
+            TF_NAMED_COMPOUND_POWER_2_4,
+        ):
             data["color_type"] = "srgb_bt709"
-        elif prim == 6 and tf == 11:
+        elif prim == PRIM_NAMED_BT2020 and tf == TF_NAMED_ST2084_PQ:
             data["color_type"] = "rec2100_pq"
-        elif prim == 6 and tf == 13:
+        elif prim == PRIM_NAMED_BT2020 and tf == TF_NAMED_HLG:
             data["color_type"] = "rec2100_hlg"
         elif prim is not None or tf is not None:
             data["color_type"] = f"custom_p{prim}_tf{tf}"
         else:
             data["color_type"] = "unrevealed"
+
+        if tf in NAMED_HDR_TRANSFER_FUNCTIONS:
+            data["semantic_class"] = "hdr"
+        elif tf in NAMED_SDR_TRANSFER_FUNCTIONS:
+            data["semantic_class"] = "sdr"
+        else:
+            data["semantic_class"] = "unknown"
 
     return descs
 
