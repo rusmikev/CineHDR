@@ -21,17 +21,17 @@ from typing import Any
 TRACE_SCHEMA = "cinehdr.gate2.wayland-color-management-trace.v1"
 TRACE_REVISION = "wayland-client-submission-v1"
 MULTIPHASE_REVISION = "wayland-multiphase-publication-v1"
-PRIMARY_COMPOSITE_REVISION = "wayland-composite-window-submission-v1"
+PRIMARY_COMPOSITE_REVISION = "wayland-composite-window-hdr-submission-v1"
 SCOPE = (
     "PASS proves a ready image description was submitted and committed by the "
     "Wayland client without a traced protocol rejection. It does not prove "
     "compositor transformation, display mode, luminance, pixels, or color accuracy."
 )
 PRIMARY_COMPOSITE_SCOPE = (
-    "PASS proves a ready image description was submitted and committed on CineHDR's "
+    "PASS proves a recognized HDR image description was submitted and committed on CineHDR's "
     "dynamically identified composite window surface without a traced protocol rejection, "
-    "satisfying ADR-0004. It does not prove compositor transformation, display mode, "
-    "luminance, pixels, or color accuracy."
+    "satisfying ADR-0004. It does not prove continuous HDR, pixel correspondence to description, "
+    "compositor transformation, display mode, luminance, or physical display output."
 )
 MULTIPHASE_SCOPE = (
     "Multiphase PASS proves 4 sequential ready image descriptions were submitted and "
@@ -739,6 +739,252 @@ def _extract_image_descriptions_info(calls: list[TraceCall]) -> dict[int, dict[s
     return descs
 
 
+def _classify_parametric_description_for_window(
+    calls: list[TraceCall],
+    calls_by_index: dict[int, TraceCall],
+    creations: dict[tuple[str, int], list[int]],
+    manager_id: int,
+    description_id: int,
+    creation_idx: int,
+) -> dict[str, Any]:
+    """Strictly classify the color metadata for an image description candidate on the composite window.
+
+    Enforces that metadata is sourced from the exact wp_image_description_creator_params_v1 object
+    that created wp_image_description_v1#description_id, bound from manager_id.
+    Parameters modified after create, foreign creators, reused creator IDs, or contradictory
+    parameter calls invalidate the candidate.
+    Non-parametric creators, ext_linear, unrevealed, or metadata only from get_information
+    are classified as 'unknown' for composite_window.
+    """
+    creation_call = calls_by_index.get(creation_idx)
+    if (
+        creation_call is None
+        or creation_call.interface != "wp_image_description_creator_params_v1"
+        or creation_call.method != "create"
+    ):
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"wp_image_description_v1#{description_id} was not created via "
+                "wp_image_description_creator_params_v1.create"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    creator_id = creation_call.object_id
+    creator_creations = creations.get(
+        ("wp_image_description_creator_params_v1", creator_id), []
+    )
+    if not creator_creations:
+        return {
+            "semantic_class": "unknown",
+            "reason": f"creation of creator wp_image_description_creator_params_v1#{creator_id} not found",
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    if len(creator_creations) > 1:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"wp_image_description_creator_params_v1#{creator_id} was recreated in the trace "
+                f"({len(creator_creations)} creations observed); creator ID reuse is rejected"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    creator_create_idx = creator_creations[0]
+    if creator_create_idx >= creation_idx:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} at index {creator_create_idx} "
+                f"was created after create() call at {creation_idx}"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    creator_create_call = calls_by_index.get(creator_create_idx)
+    if (
+        creator_create_call is None
+        or creator_create_call.interface != "wp_color_manager_v1"
+        or creator_create_call.method != "create_parametric_creator"
+        or creator_create_call.object_id != manager_id
+    ):
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} was not created by "
+                f"wp_color_manager_v1#{manager_id}"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    creator_calls = [
+        c
+        for c in calls
+        if c.interface == "wp_image_description_creator_params_v1"
+        and c.object_id == creator_id
+    ]
+
+    for c in creator_calls:
+        if c.index < creator_create_idx:
+            return {
+                "semantic_class": "unknown",
+                "reason": (
+                    f"creator wp_image_description_creator_params_v1#{creator_id} was used at index {c.index} "
+                    f"before its creation at {creator_create_idx}"
+                ),
+                "primaries_named": None,
+                "tf_named": None,
+                "color_type": "unrevealed",
+            }
+        if c.index > creation_idx:
+            return {
+                "semantic_class": "unknown",
+                "reason": (
+                    f"creator wp_image_description_creator_params_v1#{creator_id} had method {c.method} "
+                    f"invoked at index {c.index} after create() destructor at {creation_idx}"
+                ),
+                "primaries_named": None,
+                "tf_named": None,
+                "color_type": "unrevealed",
+            }
+
+    param_calls = [
+        c for c in creator_calls if creator_create_idx < c.index < creation_idx
+    ]
+
+    tf_calls = [c for c in param_calls if c.method == "set_tf_named"]
+    prim_calls = [c for c in param_calls if c.method == "set_primaries_named"]
+
+    if len(tf_calls) > 1:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} had multiple set_tf_named "
+                "calls (already_set / contradictory)"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    if len(prim_calls) > 1:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} had multiple set_primaries_named "
+                "calls (already_set / contradictory)"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    alt_prim_calls = [c for c in param_calls if c.method == "set_primaries"]
+    if prim_calls and alt_prim_calls:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} set primaries via both "
+                "named and custom methods (already_set)"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    other_tf_calls = [c for c in param_calls if c.method in ("set_tf_cicp",)]
+    if other_tf_calls:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} used non-named transfer "
+                f"method {other_tf_calls[0].method}"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    prim_val = None
+    if prim_calls:
+        m_prim = SET_PRIMARIES_NAMED_RE.match(prim_calls[0].args)
+        if m_prim is not None:
+            prim_val = int(m_prim["primaries"])
+
+    if not tf_calls:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} did not set a named transfer "
+                "function (unrevealed)"
+            ),
+            "primaries_named": prim_val,
+            "tf_named": None,
+            "color_type": f"custom_p{prim_val}_tfNone" if prim_val is not None else "unrevealed",
+        }
+
+    m_tf = SET_TF_NAMED_RE.match(tf_calls[0].args)
+    if m_tf is None:
+        return {
+            "semantic_class": "unknown",
+            "reason": f"malformed set_tf_named args on creator wp_image_description_creator_params_v1#{creator_id}",
+            "primaries_named": prim_val,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+    tf_val = int(m_tf["tf"])
+
+    if prim_val == PRIM_NAMED_SRGB and tf_val in (
+        TF_NAMED_BT1886,
+        TF_NAMED_GAMMA22,
+        TF_NAMED_GAMMA28,
+        TF_NAMED_SRGB,
+        TF_NAMED_COMPOUND_POWER_2_4,
+    ):
+        color_type = "srgb_bt709"
+    elif prim_val == PRIM_NAMED_BT2020 and tf_val == TF_NAMED_ST2084_PQ:
+        color_type = "rec2100_pq"
+    elif prim_val == PRIM_NAMED_BT2020 and tf_val == TF_NAMED_HLG:
+        color_type = "rec2100_hlg"
+    elif prim_val is not None or tf_val is not None:
+        color_type = f"custom_p{prim_val}_tf{tf_val}"
+    else:
+        color_type = "unrevealed"
+
+    if tf_val in NAMED_HDR_TRANSFER_FUNCTIONS:
+        semantic_class = "hdr"
+        reason = None
+    elif tf_val in NAMED_SDR_TRANSFER_FUNCTIONS:
+        semantic_class = "sdr"
+        reason = f"transfer function {tf_val} is SDR"
+    elif tf_val == TF_NAMED_EXT_LINEAR:
+        semantic_class = "unknown"
+        reason = "ext_linear transfer function without luminance parsing is unverified for composite_window"
+    else:
+        semantic_class = "unknown"
+        reason = f"transfer function {tf_val} is not a recognized named HDR transfer"
+
+    return {
+        "semantic_class": semantic_class,
+        "reason": reason,
+        "primaries_named": prim_val,
+        "tf_named": tf_val,
+        "color_type": color_type,
+    }
+
+
 DEFAULT_APP_ID = "io.github.rusmikev.CineHDR"
 
 
@@ -863,6 +1109,8 @@ def validate_composite_window_trace(
     has_done = False
     has_get_surface_window = False
     order_error = None
+    candidates_unknown: list[dict[str, Any]] = []
+    candidates_sdr: list[dict[str, Any]] = []
 
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
         if (
@@ -1161,43 +1409,75 @@ def validate_composite_window_trace(
                         )
                     continue
 
-                return {
-                    "schema": TRACE_SCHEMA,
-                    "revision": PRIMARY_COMPOSITE_REVISION,
-                    "status": "PASS",
-                    "oracle": "primary_composite_window",
-                    "scope": PRIMARY_COMPOSITE_SCOPE,
-                    "matched": {
-                        "registry_global": {
-                            "id": global_id,
-                            "registry_id": global_call.object_id,
-                            "event_index": global_call.index,
-                            "advertised_version": advertised_version,
-                        },
-                        "manager": {
-                            "id": manager_id,
-                            "bind_index": bind.index,
-                            "bound_version": bound_version,
-                            "perceptual_intent_index": perceptual.index,
-                            "done_index": done.index,
-                        },
-                        "surface": {
-                            "color_management_surface_id": color_surface_id,
-                            "wl_surface_id": wl_surface_id,
-                            "role": "composite_toplevel_window",
-                            "app_id": toplevel_surfaces[wl_surface_id],
-                            "get_surface_index": get_surface.index,
-                            "set_image_description_index": set_description.index,
-                            "commit_index": commit.index,
-                        },
-                        "image_description": {
-                            "id": description_id,
-                            "creation_index": creation_idx,
-                            "ready_index": ready_call.index,
-                            "readiness": readiness,
-                        },
+                color_eval = _classify_parametric_description_for_window(
+                    calls, calls_by_index, creations, manager_id, description_id, creation_idx
+                )
+                base_matched = {
+                    "registry_global": {
+                        "id": global_id,
+                        "registry_id": global_call.object_id,
+                        "event_index": global_call.index,
+                        "advertised_version": advertised_version,
+                    },
+                    "manager": {
+                        "id": manager_id,
+                        "bind_index": bind.index,
+                        "bound_version": bound_version,
+                        "perceptual_intent_index": perceptual.index,
+                        "done_index": done.index,
+                    },
+                    "surface": {
+                        "color_management_surface_id": color_surface_id,
+                        "wl_surface_id": wl_surface_id,
+                        "role": "composite_toplevel_window",
+                        "app_id": toplevel_surfaces[wl_surface_id],
+                        "get_surface_index": get_surface.index,
+                        "set_image_description_index": set_description.index,
+                        "commit_index": commit.index,
+                    },
+                    "image_description": {
+                        "id": description_id,
+                        "creation_index": creation_idx,
+                        "ready_index": ready_call.index,
+                        "readiness": readiness,
+                        "primaries_named": color_eval["primaries_named"],
+                        "tf_named": color_eval["tf_named"],
+                        "color_type": color_eval["color_type"],
+                        "semantic_class": color_eval["semantic_class"],
                     },
                 }
+
+                if color_eval["semantic_class"] == "hdr":
+                    return {
+                        "schema": TRACE_SCHEMA,
+                        "revision": PRIMARY_COMPOSITE_REVISION,
+                        "status": "PASS",
+                        "oracle": "primary_composite_window",
+                        "scope": PRIMARY_COMPOSITE_SCOPE,
+                        "matched": base_matched,
+                    }
+                elif color_eval["semantic_class"] == "unknown":
+                    candidates_unknown.append(
+                        {
+                            "schema": TRACE_SCHEMA,
+                            "revision": PRIMARY_COMPOSITE_REVISION,
+                            "status": "UNKNOWN",
+                            "oracle": "primary_composite_window",
+                            "scope": PRIMARY_COMPOSITE_SCOPE,
+                            "reason": color_eval.get("reason")
+                            or "image description color semantics are unverified for composite_window",
+                            "matched": base_matched,
+                        }
+                    )
+                elif color_eval["semantic_class"] == "sdr":
+                    candidates_sdr.append(
+                        {
+                            "description_id": description_id,
+                            "tf_named": color_eval["tf_named"],
+                            "primaries_named": color_eval["primaries_named"],
+                            "color_type": color_eval["color_type"],
+                        }
+                    )
 
     if not target_window_surfaces:
         app_name = "CineHDR" if expected_app_id == DEFAULT_APP_ID else expected_app_id
@@ -1216,6 +1496,13 @@ def validate_composite_window_trace(
         app_name = "CineHDR's" if expected_app_id == DEFAULT_APP_ID else f"{expected_app_id}'s"
         raise TraceValidationError(
             f"wp_color_manager_v1.get_surface was not called for {app_name} toplevel window surface"
+        )
+    if candidates_unknown:
+        return candidates_unknown[0]
+    if candidates_sdr:
+        app_name = "CineHDR's" if expected_app_id == DEFAULT_APP_ID else f"{expected_app_id}'s"
+        raise TraceValidationError(
+            f"only SDR color descriptions were committed on {app_name} toplevel window surface"
         )
     if order_error:
         raise TraceValidationError(order_error)
