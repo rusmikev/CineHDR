@@ -634,6 +634,19 @@ PRIM_NAMED_DCI_P3 = 8
 PRIM_NAMED_DISPLAY_P3 = 9
 PRIM_NAMED_ADOBE_RGB = 10
 
+NAMED_PRIMARIES = frozenset({
+    PRIM_NAMED_SRGB,
+    PRIM_NAMED_PAL_M,
+    PRIM_NAMED_PAL,
+    PRIM_NAMED_NTSC,
+    PRIM_NAMED_GENERIC_FILM,
+    PRIM_NAMED_BT2020,
+    PRIM_NAMED_CIE1931_XYZ,
+    PRIM_NAMED_DCI_P3,
+    PRIM_NAMED_DISPLAY_P3,
+    PRIM_NAMED_ADOBE_RGB,
+})
+
 NAMED_HDR_TRANSFER_FUNCTIONS = frozenset({
     TF_NAMED_ST2084_PQ,
     TF_NAMED_HLG,
@@ -864,78 +877,148 @@ def _classify_parametric_description_for_window(
         c for c in creator_calls if creator_create_idx < c.index < creation_idx
     ]
 
-    tf_calls = [c for c in param_calls if c.method == "set_tf_named"]
-    prim_calls = [c for c in param_calls if c.method == "set_primaries_named"]
+    tf_named_calls = [c for c in param_calls if c.method == "set_tf_named"]
+    tf_power_calls = [c for c in param_calls if c.method == "set_tf_power"]
+    other_tf_calls = [
+        c
+        for c in param_calls
+        if c.method.startswith("set_tf_")
+        and c.method not in ("set_tf_named", "set_tf_power")
+    ]
+    total_tf_calls = len(tf_named_calls) + len(tf_power_calls) + len(other_tf_calls)
 
-    if len(tf_calls) > 1:
+    if total_tf_calls > 1:
         return {
             "semantic_class": "unknown",
             "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} had multiple set_tf_named "
-                "calls (already_set / contradictory)"
+                f"creator wp_image_description_creator_params_v1#{creator_id} had multiple transfer "
+                "characteristic requests (already_set / contradictory)"
             ),
             "primaries_named": None,
             "tf_named": None,
             "color_type": "unrevealed",
         }
 
-    if len(prim_calls) > 1:
+    prim_named_calls = [c for c in param_calls if c.method == "set_primaries_named"]
+    prim_custom_calls = [c for c in param_calls if c.method == "set_primaries"]
+    other_prim_calls = [
+        c
+        for c in param_calls
+        if c.method.startswith("set_primaries_")
+        and c.method != "set_primaries_named"
+    ]
+    total_prim_calls = len(prim_named_calls) + len(prim_custom_calls) + len(other_prim_calls)
+
+    if total_prim_calls > 1:
         return {
             "semantic_class": "unknown",
             "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} had multiple set_primaries_named "
-                "calls (already_set / contradictory)"
+                f"creator wp_image_description_creator_params_v1#{creator_id} had multiple primaries "
+                "requests (already_set / contradictory)"
             ),
             "primaries_named": None,
             "tf_named": None,
             "color_type": "unrevealed",
         }
 
-    alt_prim_calls = [c for c in param_calls if c.method == "set_primaries"]
-    if prim_calls and alt_prim_calls:
+    # Verify primaries first
+    if total_prim_calls == 0:
         return {
             "semantic_class": "unknown",
             "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} set primaries via both "
-                "named and custom methods (already_set)"
+                f"creator wp_image_description_creator_params_v1#{creator_id} did not set primaries "
+                "(incomplete_set / unrevealed)"
             ),
             "primaries_named": None,
             "tf_named": None,
             "color_type": "unrevealed",
         }
 
-    other_tf_calls = [c for c in param_calls if c.method in ("set_tf_cicp",)]
+    if prim_custom_calls:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} used custom set_primaries "
+                "which is unverified for composite_window"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "custom_primaries",
+        }
+
+    if other_prim_calls:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} used non-standard primaries "
+                f"method {other_prim_calls[0].method}"
+            ),
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    m_prim = SET_PRIMARIES_NAMED_RE.match(prim_named_calls[0].args)
+    if m_prim is None:
+        return {
+            "semantic_class": "unknown",
+            "reason": f"malformed set_primaries_named args on creator wp_image_description_creator_params_v1#{creator_id}",
+            "primaries_named": None,
+            "tf_named": None,
+            "color_type": "unrevealed",
+        }
+
+    prim_val = int(m_prim["primaries"])
+    if prim_val not in NAMED_PRIMARIES:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} set unknown named primaries "
+                f"{prim_val} (invalid_primaries_named)"
+            ),
+            "primaries_named": prim_val,
+            "tf_named": None,
+            "color_type": f"unknown_p{prim_val}",
+        }
+
+    # Verify transfer function
+    if total_tf_calls == 0:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} did not set a transfer "
+                "function (incomplete_set / unrevealed)"
+            ),
+            "primaries_named": prim_val,
+            "tf_named": None,
+            "color_type": f"custom_p{prim_val}_tfNone",
+        }
+
+    if tf_power_calls:
+        return {
+            "semantic_class": "unknown",
+            "reason": (
+                f"creator wp_image_description_creator_params_v1#{creator_id} used set_tf_power "
+                "which is unverified for composite_window"
+            ),
+            "primaries_named": prim_val,
+            "tf_named": None,
+            "color_type": "custom_power_tf",
+        }
+
     if other_tf_calls:
         return {
             "semantic_class": "unknown",
             "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} used non-named transfer "
+                f"creator wp_image_description_creator_params_v1#{creator_id} used non-standard transfer "
                 f"method {other_tf_calls[0].method}"
             ),
-            "primaries_named": None,
+            "primaries_named": prim_val,
             "tf_named": None,
             "color_type": "unrevealed",
         }
 
-    prim_val = None
-    if prim_calls:
-        m_prim = SET_PRIMARIES_NAMED_RE.match(prim_calls[0].args)
-        if m_prim is not None:
-            prim_val = int(m_prim["primaries"])
-
-    if not tf_calls:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} did not set a named transfer "
-                "function (unrevealed)"
-            ),
-            "primaries_named": prim_val,
-            "tf_named": None,
-            "color_type": f"custom_p{prim_val}_tfNone" if prim_val is not None else "unrevealed",
-        }
-
-    m_tf = SET_TF_NAMED_RE.match(tf_calls[0].args)
+    m_tf = SET_TF_NAMED_RE.match(tf_named_calls[0].args)
     if m_tf is None:
         return {
             "semantic_class": "unknown",
