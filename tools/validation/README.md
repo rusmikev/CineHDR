@@ -135,6 +135,8 @@
      В `validate_multiphase_trace` требовалось строго отличать 4-фазное чередование `SDR → HDR → SDR → HDR` на доказанном видео-subsurface (с `wl_subsurface`, `wp_viewport` и `wl_surface.attach`) от смены описания на `xdg_toplevel` без subsurface-цепочки (возвращает `UNKNOWN`), а также отклонять подмену PQ (`tf_named=11`) на HLG (`tf_named=13`).
   4. **Синтетические отрицательные контроли протокола (`unset_image_description` перед `commit`, `ready` после `set_image_description`, `wp_image_description_v1.failed`, `wl_display.error`, разрыв сокета, 64-битный `ready2`)**:
      Для случаев `unset_image_description` между `set_image_description` и `wl_surface.commit()` и `wp_image_description_v1.failed` в живой трассе GNOME/KWin *исторический дефект не задокументирован*; эти ветки защищены синтетическими отрицательными контролями в `tools/validation/test_wayland_color_trace.py`.
+  5. **Дефект 2D (выбор неэффективного описания цвета при commit или ложный PASS при замене/отмене в composite_window, `2026-10-19`)**:
+     В `validate_composite_window_trace` кандидат `set_image_description` ошибочно подтверждался первым же последующим `commit`, даже если до этого коммита на той же цветовой поверхности был вызван другой `set_image_description` (например, валидное описание #32 вместо #31), `unset_image_description` или `destroy` интерфейса `wp_color_management_surface_v1`. В результате парсер возвращал устаревший дескриптор (#31 вместо #32) либо выдавал ложный `PASS` при замене на некорректный/неподдерживаемый запрос. Исправлено учётом double-buffered семантики Wayland (`color-management-v1.xml` строки 713–718, 730–778, 780–789): промежуточный `set_image_description` (с любыми аргументами), `unset_image_description` или `destroy` на интерфейсе `wp_color_management_surface_v1` отменяет кандидат, тогда как уничтожение самого `wp_image_description_v1` после `set` сохраняет кандидат благодаря copy semantics протокола.
 
 #### 2.2. Проверяемые источники
 - Коммит `074c38cf577183e57c36f64b9e40c78bcfd870a9` (`fix: bypass KWin/GTK color management deadlock via linear extended and graceful SDR fallback`).
@@ -200,6 +202,12 @@
   - `TestGtkCmPolicy.test_extract_image_descriptions_primaries_only_unknown_tf_and_ext_linear` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_extract_image_descriptions_via_creator_and_get_information` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_extract_image_descriptions_neighboring_description_metadata_isolation` (`tools/validation/test_wayland_color_trace.py`)
+- **Выбор действительно применяемого описания цвета при commit и отмена кандидатов в composite_window (double-buffered семантика, замена set, отмена через unset/destroy интерфейса поверхности, copy semantics дескриптора и изоляция поверхностей)**:
+  - `TestGtkCmPolicy.test_composite_window_selects_subsequent_effective_description` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_replaced_description_when_subsequent_set_is_invalid` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_rejects_color_surface_destroy_before_commit` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_preserves_candidate_when_image_description_destroyed_after_set` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_operations_on_other_surface_do_not_cancel_candidate` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).
@@ -222,6 +230,7 @@
 - **Что доказывают модульные тесты (`tools/validation/test_wayland_color_trace.py`)**:
   - Корректность грамматики и конечного автомата парсера на синтетических трассах (и сохранённом логе `wayland-trace-Z4GghM`), а также логику capability-гейта `gtk_color_managed()` на моках `CmCaps`.
   - Корректность извлечения и внутренней классификации семантики именованных трансферов (`semantic_class: hdr | sdr | unknown`) в `_extract_image_descriptions_info` через параметрический creator и info-объект `wp_image_description_info_v1`, а также взаимную изоляцию метаданных между дескрипторами.
+  - Корректность выбора действительно применяемого описания цвета при commit в `composite_window` по double-buffered семантике Wayland (`color-management-v1.xml` строки 713–718, 730–778, 780–789): отмену кандидата при последующем `set_image_description` (в том числе некорректном/неподдерживаемом), `unset_image_description` или `destroy` интерфейса `wp_color_management_surface_v1`, сохранение кандидата при `destroy` самого `wp_image_description_v1` (copy semantics) и независимость от операций на других поверхностях.
 - **Что доказывает прогон CLI парсера на живом логе `WAYLAND_DEBUG=client` (`create_evidence_report`)**:
   - При `PASS` выбранного оракула в переданной трассе найдена цепочка manager → ready → set → commit. Для `composite_window` поверхность определяется по app_id; `strict_multiphase` дополнительно проверяет четыре фазы и цепочку subsurface/viewport/attach. Отчёт содержит SHA-256 обоих входных файлов и проверку строк `Overall result: PASS` / `Expected backend` в отчёте публикации.
   - Внутренняя классификация `semantic_class` является характеристикой извлечённых из трассы метаданных, а не вердиктом L3p. Классификация ещё **не подключена к `composite_window`**: текущий оракул `composite_window` проверяет только факт отправки ready-описания на окно и не валидирует семантику цветового пространства. Временная привязка метаданных к моменту коммита поверхности и строгая проверка версий/принадлежности объектов требуют отдельной интеграции (C2a). Этап C2 и уровень L3p ещё не являются завершёнными или полностью реализованными.

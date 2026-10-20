@@ -1078,6 +1078,17 @@ def validate_composite_window_trace(
                     order_error = f"wp_image_description_v1#{description_id} was destroyed before set_image_description"
                     continue
 
+                # Check that color management surface interface was not destroyed before set_description
+                if any(
+                    c.interface == "wp_color_management_surface_v1"
+                    and c.object_id == color_surface_id
+                    and c.method == "destroy"
+                    and get_surface.index < c.index < set_description.index
+                    for c in calls
+                ):
+                    order_error = f"wp_color_management_surface_v1#{color_surface_id} was destroyed before set_image_description"
+                    continue
+
                 # Check usage before creation
                 if any(
                     c.interface == "wp_image_description_v1"
@@ -1121,17 +1132,33 @@ def validate_composite_window_trace(
                     order_error = "no wl_surface.commit observed on window surface after set_image_description"
                     continue
 
-                if any(
-                    c.interface == "wp_color_management_surface_v1"
-                    and c.object_id == color_surface_id
-                    and c.method == "unset_image_description"
-                    and set_description.index < c.index < commit.index
-                    for c in calls
-                ):
-                    order_error = (
-                        f"wp_color_management_surface_v1#{color_surface_id} had unset_image_description "
-                        f"called between set_image_description and wl_surface.commit"
-                    )
+                intervening = next(
+                    (
+                        c
+                        for c in calls
+                        if c.interface == "wp_color_management_surface_v1"
+                        and c.object_id == color_surface_id
+                        and set_description.index < c.index < commit.index
+                        and c.method in ("set_image_description", "unset_image_description", "destroy")
+                    ),
+                    None,
+                )
+                if intervening is not None:
+                    if intervening.method == "unset_image_description":
+                        order_error = (
+                            f"wp_color_management_surface_v1#{color_surface_id} had unset_image_description "
+                            f"called between set_image_description and wl_surface.commit"
+                        )
+                    elif intervening.method == "destroy":
+                        order_error = (
+                            f"wp_color_management_surface_v1#{color_surface_id} was destroyed "
+                            f"between set_image_description and wl_surface.commit"
+                        )
+                    else:
+                        order_error = (
+                            f"wp_color_management_surface_v1#{color_surface_id} set_image_description "
+                            f"was replaced before wl_surface.commit"
+                        )
                     continue
 
                 return {
