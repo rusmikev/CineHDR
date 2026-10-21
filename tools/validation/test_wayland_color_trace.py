@@ -2448,6 +2448,68 @@ class TestGtkCmPolicy(unittest.TestCase):
         self.assertEqual(evidence["matched"]["image_description"]["semantic_class"], "hdr")
         self.assertEqual(evidence["matched"]["image_description"]["color_type"], "rec2100_pq")
 
+    def test_composite_window_double_tf_with_problematic_primaries_prioritizes_tf_error(self):
+        """Regression: multiple TF calls take priority over missing, unknown, broken, custom, or repeated primaries.
+
+        Verifies that multiple TF requests return UNKNOWN, the contradictory TF reason,
+        and unrevealed/None metadata, strictly preserving 570fa5c diagnostics behavior.
+        """
+        cases = [
+            ("missing_primaries", ""),
+            (
+                "unknown_primaries",
+                "[ 1042.0101] -> wp_image_description_creator_params_v1#50.set_primaries_named(999)",
+            ),
+            (
+                "broken_primaries",
+                "[ 1042.0101] -> wp_image_description_creator_params_v1#50.set_primaries_named(broken)",
+            ),
+            (
+                "custom_primaries",
+                "[ 1042.0101] -> wp_image_description_creator_params_v1#50.set_primaries(30000, 60000, 15000, 6000, 70000, 29000, 31270, 32900)",
+            ),
+            (
+                "repeated_primaries",
+                "[ 1042.0101] -> wp_image_description_creator_params_v1#50.set_primaries_named(1)\n"
+                "[ 1042.0102] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)",
+            ),
+        ]
+
+        expected_reason = (
+            "creator wp_image_description_creator_params_v1#50 had multiple transfer "
+            "characteristic requests (already_set / contradictory)"
+        )
+
+        for case_name, prim_lines in cases:
+            with self.subTest(case=case_name):
+                trace = f"""
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("io.github.rusmikev.CineHDR")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+{prim_lines}
+[ 1042.0103] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0104] -> wp_image_description_creator_params_v1#50.set_tf_named(1)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.012]  wp_image_description_v1#31.ready(101)
+[ 1042.013]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.014]  -> wl_surface#61.commit()
+""".strip()
+                evidence = validate_composite_window_trace(trace)
+                self.assertEqual(evidence["status"], "UNKNOWN")
+                self.assertEqual(evidence["reason"], expected_reason)
+                matched_img = evidence["matched"]["image_description"]
+                self.assertIsNone(matched_img["primaries_named"])
+                self.assertIsNone(matched_img["tf_named"])
+                self.assertEqual(matched_img["color_type"], "unrevealed")
+                self.assertEqual(matched_img["semantic_class"], "unknown")
+
 
     def test_multiphase_with_custom_app_id_and_default_fallback(self):
         trace = """

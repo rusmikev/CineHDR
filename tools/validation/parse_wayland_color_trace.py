@@ -858,21 +858,49 @@ def _validate_creator_lifecycle(
     return creator_id, param_calls
 
 
+def _partition_creator_param_calls(
+    param_calls: list[TraceCall],
+) -> tuple[
+    list[TraceCall],
+    list[TraceCall],
+    list[TraceCall],
+    list[TraceCall],
+    list[TraceCall],
+    list[TraceCall],
+]:
+    """Group creator parameter calls by method type in a single pass."""
+    tf_named: list[TraceCall] = []
+    tf_power: list[TraceCall] = []
+    tf_other: list[TraceCall] = []
+    prim_named: list[TraceCall] = []
+    prim_custom: list[TraceCall] = []
+    prim_other: list[TraceCall] = []
+
+    for c in param_calls:
+        if c.method == "set_tf_named":
+            tf_named.append(c)
+        elif c.method == "set_tf_power":
+            tf_power.append(c)
+        elif c.method.startswith("set_tf_"):
+            tf_other.append(c)
+        elif c.method == "set_primaries_named":
+            prim_named.append(c)
+        elif c.method == "set_primaries":
+            prim_custom.append(c)
+        elif c.method.startswith("set_primaries_"):
+            prim_other.append(c)
+
+    return tf_named, tf_power, tf_other, prim_named, prim_custom, prim_other
+
+
 def _validate_parametric_creator_primaries(
     creator_id: int,
-    param_calls: list[TraceCall],
+    prim_named_calls: list[TraceCall],
+    prim_custom_calls: list[TraceCall],
+    other_prim_calls: list[TraceCall],
 ) -> int | dict[str, Any]:
     """Validate uniqueness, presence, and coordinates/enum of primaries."""
-    prim_named_calls = [c for c in param_calls if c.method == "set_primaries_named"]
-    prim_custom_calls = [c for c in param_calls if c.method == "set_primaries"]
-    other_prim_calls = [
-        c
-        for c in param_calls
-        if c.method.startswith("set_primaries_")
-        and c.method != "set_primaries_named"
-    ]
     total_prim_calls = len(prim_named_calls) + len(prim_custom_calls) + len(other_prim_calls)
-
     if total_prim_calls > 1:
         return _unknown_color_result(
             f"creator wp_image_description_creator_params_v1#{creator_id} had multiple primaries "
@@ -918,26 +946,13 @@ def _validate_parametric_creator_primaries(
 
 def _validate_parametric_creator_tf(
     creator_id: int,
-    param_calls: list[TraceCall],
+    tf_named_calls: list[TraceCall],
+    tf_power_calls: list[TraceCall],
+    other_tf_calls: list[TraceCall],
     prim_val: int,
 ) -> int | dict[str, Any]:
-    """Validate uniqueness, presence, and curve/enum of transfer function."""
-    tf_named_calls = [c for c in param_calls if c.method == "set_tf_named"]
-    tf_power_calls = [c for c in param_calls if c.method == "set_tf_power"]
-    other_tf_calls = [
-        c
-        for c in param_calls
-        if c.method.startswith("set_tf_")
-        and c.method not in ("set_tf_named", "set_tf_power")
-    ]
+    """Validate remaining presence and curve/enum checks of transfer function."""
     total_tf_calls = len(tf_named_calls) + len(tf_power_calls) + len(other_tf_calls)
-
-    if total_tf_calls > 1:
-        return _unknown_color_result(
-            f"creator wp_image_description_creator_params_v1#{creator_id} had multiple transfer "
-            "characteristic requests (already_set / contradictory)"
-        )
-
     if total_tf_calls == 0:
         return _unknown_color_result(
             f"creator wp_image_description_creator_params_v1#{creator_id} did not set a transfer "
@@ -976,11 +991,25 @@ def _validate_parametric_creator_parameters(
     param_calls: list[TraceCall],
 ) -> tuple[int, int] | dict[str, Any]:
     """Validate mandatory primaries and transfer function parameters on creator."""
-    prim_res = _validate_parametric_creator_primaries(creator_id, param_calls)
+    tf_named, tf_power, tf_other, prim_named, prim_custom, prim_other = (
+        _partition_creator_param_calls(param_calls)
+    )
+
+    if len(tf_named) + len(tf_power) + len(tf_other) > 1:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} had multiple transfer "
+            "characteristic requests (already_set / contradictory)"
+        )
+
+    prim_res = _validate_parametric_creator_primaries(
+        creator_id, prim_named, prim_custom, prim_other
+    )
     if isinstance(prim_res, dict):
         return prim_res
 
-    tf_res = _validate_parametric_creator_tf(creator_id, param_calls, prim_res)
+    tf_res = _validate_parametric_creator_tf(
+        creator_id, tf_named, tf_power, tf_other, prim_res
+    )
     if isinstance(tf_res, dict):
         return tf_res
 
