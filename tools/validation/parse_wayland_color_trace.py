@@ -661,6 +661,38 @@ NAMED_SDR_TRANSFER_FUNCTIONS = frozenset({
     TF_NAMED_COMPOUND_POWER_2_4,
 })
 
+# wp_color_manager_v1.feature enum values
+# Source: /usr/share/wayland-protocols/staging/color-management/color-management-v1.xml:140-169
+# Package: wayland-protocols-devel-1.49-1.fc44.noarch (host system)
+FEATURE_ICC_V2_V4 = 0
+FEATURE_PARAMETRIC = 1
+FEATURE_SET_PRIMARIES = 2
+FEATURE_SET_TF_POWER = 3
+FEATURE_SET_LUMINANCES = 4
+FEATURE_SET_MASTERING_DISPLAY_PRIMARIES = 5
+FEATURE_EXTENDED_TARGET_VOLUME = 6
+FEATURE_WINDOWS_SCRGB = 7
+FEATURE_WINDOWS_BT2100 = 8
+
+SUPPORTED_FEATURE_RE = re.compile(
+    r'^\s*(?:(?P<val>0x[0-9a-fA-F]+|\d+)|"(?P<name>[^"]+)"|(?P<ident>[A-Za-z_][A-Za-z0-9_]*))\s*$'
+)
+
+
+def _matches_windows_scrgb_feature(args: str) -> bool:
+    """Check if supported_feature arguments advertise windows_scrgb (feature 7)."""
+    m = SUPPORTED_FEATURE_RE.match(args)
+    if m is None:
+        return False
+    val = m.group("val")
+    if val is not None:
+        try:
+            return int(val, 0) == FEATURE_WINDOWS_SCRGB
+        except ValueError:
+            return False
+    name = m.group("name") or m.group("ident")
+    return name == "windows_scrgb"
+
 
 def _classify_named_color_metadata(
     primaries_named: int | None,
@@ -1067,6 +1099,101 @@ def _classify_parametric_description_for_window(
     prim_val, tf_val = params_res
 
     return _format_parametric_color_result(prim_val, tf_val)
+
+
+def _classify_windows_scrgb_description_for_window(
+    calls: list[TraceCall],
+    calls_by_index: dict[int, TraceCall],
+    manager_id: int,
+    description_id: int,
+    creation_idx: int,
+) -> dict[str, Any]:
+    """Validate windows_scrgb image description against manager feature announcement and protocol rules.
+
+    wp_color_manager_v1.create_windows_scrgb creates a pre-defined image description
+    using sRGB primaries (primaries=1) and extended linear transfer function (tf=5).
+    Requires feature.windows_scrgb (feature 7) to be advertised by the manager before creation.
+    Source: /usr/share/wayland-protocols/staging/color-management/color-management-v1.xml:165-166, 474-524, 539-550
+    """
+    creation_call = calls_by_index.get(creation_idx)
+    if (
+        creation_call is None
+        or creation_call.interface != "wp_color_manager_v1"
+        or creation_call.method != "create_windows_scrgb"
+        or creation_call.object_id != manager_id
+    ):
+        return _unknown_color_result(
+            f"wp_image_description_v1#{description_id} was not created via "
+            f"wp_color_manager_v1#{manager_id}.create_windows_scrgb",
+            primaries_named=PRIM_NAMED_SRGB,
+            tf_named=TF_NAMED_EXT_LINEAR,
+            color_type="windows_scrgb",
+        )
+
+    m = CREATE_DESC_RE.match(creation_call.args)
+    if m is None or int(m["description_id"]) != description_id:
+        return _unknown_color_result(
+            f"malformed create_windows_scrgb args for wp_image_description_v1#{description_id}",
+            primaries_named=PRIM_NAMED_SRGB,
+            tf_named=TF_NAMED_EXT_LINEAR,
+            color_type="windows_scrgb",
+        )
+
+    has_feature = any(
+        c.interface == "wp_color_manager_v1"
+        and c.object_id == manager_id
+        and c.method == "supported_feature"
+        and c.index < creation_idx
+        and _matches_windows_scrgb_feature(c.args)
+        for c in calls
+    )
+    if not has_feature:
+        return _unknown_color_result(
+            f"wp_color_manager_v1#{manager_id} did not advertise feature.windows_scrgb "
+            f"(feature {FEATURE_WINDOWS_SCRGB}) before create_windows_scrgb at index {creation_idx}",
+            primaries_named=PRIM_NAMED_SRGB,
+            tf_named=TF_NAMED_EXT_LINEAR,
+            color_type="windows_scrgb",
+        )
+
+    return {
+        "semantic_class": "hdr",
+        "reason": None,
+        "primaries_named": PRIM_NAMED_SRGB,
+        "tf_named": TF_NAMED_EXT_LINEAR,
+        "color_type": "windows_scrgb",
+    }
+
+
+def _classify_description_for_window(
+    calls: list[TraceCall],
+    calls_by_index: dict[int, TraceCall],
+    creations: dict[tuple[str, int], list[int]],
+    manager_id: int,
+    description_id: int,
+    creation_idx: int,
+) -> dict[str, Any]:
+    """Classify the color metadata for an image description candidate on the composite window."""
+    creation_call = calls_by_index.get(creation_idx)
+    if creation_call is not None:
+        if (
+            creation_call.interface == "wp_color_manager_v1"
+            and creation_call.method == "create_windows_scrgb"
+        ):
+            return _classify_windows_scrgb_description_for_window(
+                calls, calls_by_index, manager_id, description_id, creation_idx
+            )
+        if (
+            creation_call.interface == "wp_image_description_creator_params_v1"
+            and creation_call.method == "create"
+        ):
+            return _classify_parametric_description_for_window(
+                calls, calls_by_index, creations, manager_id, description_id, creation_idx
+            )
+
+    return _unknown_color_result(
+        f"wp_image_description_v1#{description_id} was not created via a supported creator or method"
+    )
 
 
 DEFAULT_APP_ID = "io.github.rusmikev.CineHDR"
@@ -1493,7 +1620,7 @@ def validate_composite_window_trace(
                         )
                     continue
 
-                color_eval = _classify_parametric_description_for_window(
+                color_eval = _classify_description_for_window(
                     calls, calls_by_index, creations, manager_id, description_id, creation_idx
                 )
                 base_matched = {
