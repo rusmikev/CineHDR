@@ -148,6 +148,14 @@
      - Проходит через полный общий путь проверок доказательства: проверка `app_id` окна, происхождение от менеджера целевой поверхности, отсутствие переиспользования ID, получение `ready`/`ready2` до `set_image_description`, отсутствие замены или отмены до коммита, последующий `commit` целевой поверхности и изоляция от объектов других реестров/менеджеров;
      - Не требует параметрического creator, `set_tf_named`, `set_luminances` или `get_information` (запрещён протоколом для этого типа);
      - Параметрическое `ext_linear` без проверенных luminances остаётся `UNKNOWN`.
+  9. **Распознавание параметрического HDR-описания `ext_linear` с проверенными `set_luminances` (`AGENTS.md` §8, `color-management-v1.xml` строки 148–149, 308–313, 1216–1275, `wayland-protocols-devel-1.49-1.fc44.noarch`, `2026-10-21`)**:
+     В `validate_composite_window_trace` расширен строгий параметрический путь `composite_window` для `tf_named=ext_linear` (`tf_named=5`) с проверенными именованными primaries (`primaries_named` 1..10):
+     - Требует обязательного предварительного объявления `wp_color_manager_v1.feature.set_luminances` (feature 4) именно тем менеджером, который создал creator, до вызова `set_luminances`. При отсутствии объявления или объявлении другим менеджером возвращается `status: UNKNOWN` с диагностической причиной;
+     - Учитывает ровно один вызов `set_luminances(min_lum, max_lum, reference_lum)` того же creator до вызова `create`. Повторные, повреждённые, отрицательные, выходящие за диапазон `uint32` (0..4294967296) аргументы, вызовы на чужих creator или после `create()` возвращают `UNKNOWN`;
+     - Аргументы передаются строго как целые без знака: `min_lum` в cd/m² × 10000, `max_lum` и `reference_lum` в cd/m² без масштабирования; строго проверяются физические ограничения `max_lum * 10000 > min_lum` и `reference_lum * 10000 > min_lum` без ошибок округления;
+     - Классифицируется как HDR (`semantic_class="hdr"`, `color_type="custom_p{prim}_tf5"`) строго при выполнении критерия различимости `max_lum > reference_lum` (per `AGENTS.md` §8); при `max_lum <= reference_lum` описание остаётся `UNKNOWN` (`semantic_class="unknown"`);
+     - Без явного вызова `set_luminances` параметрическое `ext_linear` остаётся `UNKNOWN` (значения по умолчанию не подставляются);
+     - После классификации применяется весь существующий строгий путь проверок доказательства: `ready`/`ready2` → `set_image_description` → `commit` на целевой поверхности без промежуточной замены на SDR или ошибок протокола.
 
 #### 2.2. Проверяемые источники
 - Коммит `074c38cf577183e57c36f64b9e40c78bcfd870a9` (`fix: bypass KWin/GTK color management deadlock via linear extended and graceful SDR fallback`).
@@ -238,6 +246,9 @@
 - **Распознавание предопределённого HDR-описания Windows-scRGB в composite_window (C2a, решение D7, AGENTS §8)**:
   - `TestGtkCmPolicy.test_composite_window_windows_scrgb_positive` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_composite_window_windows_scrgb_negative_and_fallback_controls` (`tools/validation/test_wayland_color_trace.py`)
+- **Распознавание параметрического HDR-описания ext_linear с проверенными set_luminances в composite_window (C2a, AGENTS §8)**:
+  - `TestGtkCmPolicy.test_composite_window_ext_linear_luminances_positive` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestGtkCmPolicy.test_composite_window_ext_linear_luminances_negative_and_fallback_controls` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).

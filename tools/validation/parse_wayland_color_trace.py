@@ -677,21 +677,44 @@ FEATURE_WINDOWS_BT2100 = 8
 SUPPORTED_FEATURE_RE = re.compile(
     r'^\s*(?:(?P<val>0x[0-9a-fA-F]+|\d+)|"(?P<name>[^"]+)"|(?P<ident>[A-Za-z_][A-Za-z0-9_]*))\s*$'
 )
+SET_LUMINANCES_RE = re.compile(
+    r"^\s*(?P<min>[^,]+)\s*,\s*(?P<max>[^,]+)\s*,\s*(?P<ref>[^,]+)\s*$"
+)
+UINT32_MAX = 0xFFFFFFFF
 
 
-def _matches_windows_scrgb_feature(args: str) -> bool:
-    """Check if supported_feature arguments advertise windows_scrgb (feature 7)."""
+def _parse_uint32(val_str: str) -> int | None:
+    """Parse an unsigned 32-bit integer string strictly without signs."""
+    val_str = val_str.strip()
+    if not val_str or val_str.startswith("-") or val_str.startswith("+"):
+        return None
+    try:
+        val = int(val_str, 0)
+    except ValueError:
+        return None
+    if 0 <= val <= UINT32_MAX:
+        return val
+    return None
+
+
+def _matches_feature(args: str, feature_val: int, feature_name: str) -> bool:
+    """Check if supported_feature arguments advertise the given feature."""
     m = SUPPORTED_FEATURE_RE.match(args)
     if m is None:
         return False
     val = m.group("val")
     if val is not None:
         try:
-            return int(val, 0) == FEATURE_WINDOWS_SCRGB
+            return int(val, 0) == feature_val
         except ValueError:
             return False
     name = m.group("name") or m.group("ident")
-    return name == "windows_scrgb"
+    return name == feature_name
+
+
+def _matches_windows_scrgb_feature(args: str) -> bool:
+    """Check if supported_feature arguments advertise windows_scrgb (feature 7)."""
+    return _matches_feature(args, FEATURE_WINDOWS_SCRGB, "windows_scrgb")
 
 
 def _classify_named_color_metadata(
@@ -1069,6 +1092,114 @@ def _format_parametric_color_result(prim_val: int, tf_val: int) -> dict[str, Any
     }
 
 
+def _parse_and_check_luminance_args(
+    args: str, creator_id: int, prim_val: int, tf_val: int
+) -> tuple[int, int, int] | dict[str, Any]:
+    """Parse and check physical bounds for set_luminances arguments."""
+    m = SET_LUMINANCES_RE.match(args)
+    if m is None:
+        return _unknown_color_result(
+            f"malformed or out-of-range set_luminances arguments on creator "
+            f"wp_image_description_creator_params_v1#{creator_id}",
+            primaries_named=prim_val,
+            tf_named=tf_val,
+            color_type=f"custom_p{prim_val}_tf{tf_val}",
+        )
+
+    min_lum = _parse_uint32(m["min"])
+    max_lum = _parse_uint32(m["max"])
+    reference_lum = _parse_uint32(m["ref"])
+    if min_lum is None or max_lum is None or reference_lum is None:
+        return _unknown_color_result(
+            f"malformed or out-of-range set_luminances arguments on creator "
+            f"wp_image_description_creator_params_v1#{creator_id}",
+            primaries_named=prim_val,
+            tf_named=tf_val,
+            color_type=f"custom_p{prim_val}_tf{tf_val}",
+        )
+
+    if not (max_lum * 10000 > min_lum and reference_lum * 10000 > min_lum):
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} has invalid luminances: "
+            f"max_lum*10000 ({max_lum * 10000}) and reference_lum*10000 ({reference_lum * 10000}) "
+            f"must be strictly greater than min_lum ({min_lum})",
+            primaries_named=prim_val,
+            tf_named=tf_val,
+            color_type=f"custom_p{prim_val}_tf{tf_val}",
+        )
+
+    return min_lum, max_lum, reference_lum
+
+
+def _validate_parametric_creator_luminances(
+    calls: list[TraceCall],
+    manager_id: int,
+    creator_id: int,
+    param_calls: list[TraceCall],
+    prim_val: int,
+    tf_val: int,
+) -> dict[str, Any]:
+    """Validate set_luminances on parametric creator for ext_linear HDR recognition."""
+    lum_calls = [c for c in param_calls if c.method == "set_luminances"]
+    if len(lum_calls) > 1:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} had multiple set_luminances "
+            "requests (already_set / contradictory)",
+            primaries_named=prim_val,
+            tf_named=tf_val,
+            color_type=f"custom_p{prim_val}_tf{tf_val}",
+        )
+
+    if not lum_calls:
+        return _unknown_color_result(
+            "ext_linear transfer function without luminance parsing is unverified for composite_window",
+            primaries_named=prim_val,
+            tf_named=tf_val,
+            color_type=f"custom_p{prim_val}_tf{tf_val}",
+        )
+
+    lum_call = lum_calls[0]
+    has_feature = any(
+        c.interface == "wp_color_manager_v1"
+        and c.object_id == manager_id
+        and c.method == "supported_feature"
+        and c.index < lum_call.index
+        and _matches_feature(c.args, FEATURE_SET_LUMINANCES, "set_luminances")
+        for c in calls
+    )
+    if not has_feature:
+        return _unknown_color_result(
+            f"wp_color_manager_v1#{manager_id} did not advertise feature.set_luminances "
+            f"(feature {FEATURE_SET_LUMINANCES}) before set_luminances at index {lum_call.index}",
+            primaries_named=prim_val,
+            tf_named=tf_val,
+            color_type=f"custom_p{prim_val}_tf{tf_val}",
+        )
+
+    parsed_res = _parse_and_check_luminance_args(lum_call.args, creator_id, prim_val, tf_val)
+    if isinstance(parsed_res, dict):
+        return parsed_res
+    min_lum, max_lum, reference_lum = parsed_res
+
+    if max_lum <= reference_lum:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} ext_linear has "
+            f"max_lum ({max_lum}) <= reference_lum ({reference_lum}); "
+            "HDR distinction criterion (max_lum > reference_lum per AGENTS.md §8) is not met",
+            primaries_named=prim_val,
+            tf_named=tf_val,
+            color_type=f"custom_p{prim_val}_tf{tf_val}",
+        )
+
+    return {
+        "semantic_class": "hdr",
+        "reason": None,
+        "primaries_named": prim_val,
+        "tf_named": tf_val,
+        "color_type": f"custom_p{prim_val}_tf{tf_val}",
+    }
+
+
 def _classify_parametric_description_for_window(
     calls: list[TraceCall],
     calls_by_index: dict[int, TraceCall],
@@ -1083,8 +1214,8 @@ def _classify_parametric_description_for_window(
     that created wp_image_description_v1#description_id, bound from manager_id.
     Parameters modified after create, foreign creators, reused creator IDs, or contradictory
     parameter calls invalidate the candidate.
-    Non-parametric creators, ext_linear, unrevealed, or metadata only from get_information
-    are classified as 'unknown' for composite_window.
+    Non-parametric creators, ext_linear without luminances, unrevealed, or metadata only from
+    get_information are classified as 'unknown' for composite_window.
     """
     lifecycle_res = _validate_creator_lifecycle(
         calls, calls_by_index, creations, manager_id, description_id, creation_idx
@@ -1097,6 +1228,11 @@ def _classify_parametric_description_for_window(
     if isinstance(params_res, dict):
         return params_res
     prim_val, tf_val = params_res
+
+    if tf_val == TF_NAMED_EXT_LINEAR:
+        return _validate_parametric_creator_luminances(
+            calls, manager_id, creator_id, param_calls, prim_val, tf_val
+        )
 
     return _format_parametric_color_result(prim_val, tf_val)
 

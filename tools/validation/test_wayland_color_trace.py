@@ -2724,6 +2724,193 @@ class TestGtkCmPolicy(unittest.TestCase):
         self.assertEqual(ev_pel["status"], "UNKNOWN")
         self.assertIn("ext_linear transfer function without luminance parsing is unverified", ev_pel["reason"])
 
+    @staticmethod
+    def _make_ext_linear_trace(
+        *,
+        feature_line: str = "wp_color_manager_v1#3.supported_feature(4)",
+        lum_line: str = "-> wp_image_description_creator_params_v1#50.set_luminances(2000, 1000, 203)",
+        post_create_line: str = "",
+        intervening_lines: str = "",
+        commit_line: str = "-> wl_surface#61.commit()",
+        early_prefix: str = "",
+        primaries_val: int = 6,
+    ) -> str:
+        body = [
+            '[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)',
+            '[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)',
+            "[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)",
+        ]
+        if feature_line:
+            body.append(f"[ 1042.0035] {feature_line}")
+        body.extend([
+            "[ 1042.004]  wp_color_manager_v1#3.done()",
+            "[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)",
+            '[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)',
+            "[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)",
+            '[ 1042.008]  -> xdg_toplevel#68.set_app_id("io.github.rusmikev.CineHDR")',
+            "[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)",
+        ])
+        if early_prefix:
+            body.append(early_prefix)
+        body.extend([
+            "[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)",
+            f"[ 1042.011]  -> wp_image_description_creator_params_v1#50.set_primaries_named({primaries_val})",
+            "[ 1042.012]  -> wp_image_description_creator_params_v1#50.set_tf_named(5)",
+        ])
+        if lum_line:
+            body.append(f"[ 1042.0125] {lum_line}")
+        body.append("[ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)")
+        if post_create_line:
+            body.append(f"[ 1042.0135] {post_create_line}")
+        body.extend([
+            "[ 1042.014]  wp_image_description_v1#31.ready(101)",
+            "[ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)",
+        ])
+        if intervening_lines:
+            body.append(intervening_lines)
+        if commit_line:
+            body.append(f"[ 1042.016]  {commit_line}")
+        return "\n".join(body)
+
+    def test_composite_window_ext_linear_luminances_positive(self):
+        """Positive control: valid ext_linear with set_luminances grants PASS in composite_window."""
+        trace = self._make_ext_linear_trace()
+        evidence = validate_composite_window_trace(trace)
+        self.assertEqual(evidence["status"], "PASS")
+        self.assertEqual(evidence["oracle"], "primary_composite_window")
+        matched_img = evidence["matched"]["image_description"]
+        self.assertEqual(matched_img["id"], 31)
+        self.assertEqual(matched_img["color_type"], "custom_p6_tf5")
+        self.assertEqual(matched_img["semantic_class"], "hdr")
+        self.assertEqual(matched_img["primaries_named"], 6)
+        self.assertEqual(matched_img["tf_named"], 5)
+        self.assertEqual(matched_img["readiness"]["identity"], 101)
+
+    def test_composite_window_ext_linear_luminances_negative_and_fallback_controls(self):
+        """Negative and fallback controls for ext_linear with set_luminances."""
+        # 1. max_lum == ref_lum and max_lum < ref_lum -> UNKNOWN (HDR distinction criterion not met)
+        for lum_args in ("2000, 203, 203", "2000, 203, 1000"):
+            with self.subTest(lum_args=lum_args):
+                tr = self._make_ext_linear_trace(
+                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
+                )
+                ev = validate_composite_window_trace(tr)
+                self.assertEqual(ev["status"], "UNKNOWN")
+                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
+                self.assertIn("max_lum", ev["reason"])
+
+        # 2. max_lum*10000 <= min_lum or ref_lum*10000 <= min_lum -> UNKNOWN
+        for lum_args in ("10000000, 1000, 203", "2030000, 1000, 203"):
+            with self.subTest(lum_args=lum_args):
+                tr = self._make_ext_linear_trace(
+                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
+                )
+                ev = validate_composite_window_trace(tr)
+                self.assertEqual(ev["status"], "UNKNOWN")
+                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
+                self.assertIn("must be strictly greater than min_lum", ev["reason"])
+
+        # 3. Scale boundary conditions: max <= min or ref <= min -> UNKNOWN
+        for lum_args in ("800000, 80, 50", "799999, 80, 50"):
+            with self.subTest(scale_boundary=lum_args):
+                tr = self._make_ext_linear_trace(
+                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
+                )
+                ev = validate_composite_window_trace(tr)
+                self.assertEqual(ev["status"], "UNKNOWN")
+                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
+                self.assertIn("must be strictly greater than min_lum", ev["reason"])
+
+        # 4. Negative, malformed, or uint32 overflow arguments -> UNKNOWN
+        for lum_args in ("-1, 1000, 203", "2000, -1, 203", "2000, broken, 203", "4294967296, 1000, 203"):
+            with self.subTest(bad_arg=lum_args):
+                tr = self._make_ext_linear_trace(
+                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
+                )
+                ev = validate_composite_window_trace(tr)
+                self.assertEqual(ev["status"], "UNKNOWN")
+                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
+                self.assertIn("malformed or out-of-range set_luminances arguments", ev["reason"])
+
+        # 5. Missing set_luminances, repeated calls, foreign creator, or after create -> UNKNOWN
+        ev_missing = validate_composite_window_trace(self._make_ext_linear_trace(lum_line=""))
+        self.assertEqual(ev_missing["status"], "UNKNOWN")
+        self.assertIn("without luminance parsing is unverified", ev_missing["reason"])
+
+        tr_repeat = self._make_ext_linear_trace(
+            lum_line="-> wp_image_description_creator_params_v1#50.set_luminances(2000, 1000, 203)\n"
+            "[ 1042.0126] -> wp_image_description_creator_params_v1#50.set_luminances(2000, 1000, 203)"
+        )
+        ev_repeat = validate_composite_window_trace(tr_repeat)
+        self.assertEqual(ev_repeat["status"], "UNKNOWN")
+        self.assertIn("multiple set_luminances requests", ev_repeat["reason"])
+
+        tr_foreign = self._make_ext_linear_trace(
+            lum_line="-> wp_image_description_creator_params_v1#99.set_luminances(2000, 1000, 203)"
+        )
+        ev_foreign = validate_composite_window_trace(tr_foreign)
+        self.assertEqual(ev_foreign["status"], "UNKNOWN")
+        self.assertIn("without luminance parsing is unverified", ev_foreign["reason"])
+
+        tr_post = self._make_ext_linear_trace(
+            lum_line="",
+            post_create_line="-> wp_image_description_creator_params_v1#50.set_luminances(2000, 1000, 203)",
+        )
+        ev_post = validate_composite_window_trace(tr_post)
+        self.assertEqual(ev_post["status"], "UNKNOWN")
+        self.assertIn("method set_luminances invoked", ev_post["reason"])
+        self.assertIn("after create() destructor", ev_post["reason"])
+
+        # 6. Missing feature.set_luminances, foreign manager, or late advertisement -> UNKNOWN
+        ev_no_feat = validate_composite_window_trace(self._make_ext_linear_trace(feature_line=""))
+        self.assertEqual(ev_no_feat["status"], "UNKNOWN")
+        self.assertIn("did not advertise feature.set_luminances", ev_no_feat["reason"])
+
+        tr_foreign_mgr = self._make_ext_linear_trace(
+            feature_line="wp_color_manager_v1#99.supported_feature(4)"
+        )
+        ev_foreign_mgr = validate_composite_window_trace(tr_foreign_mgr)
+        self.assertEqual(ev_foreign_mgr["status"], "UNKNOWN")
+        self.assertIn("did not advertise feature.set_luminances", ev_foreign_mgr["reason"])
+
+        tr_late_feat = self._make_ext_linear_trace(
+            feature_line="",
+            post_create_line="wp_color_manager_v1#3.supported_feature(4)",
+        )
+        ev_late_feat = validate_composite_window_trace(tr_late_feat)
+        self.assertEqual(ev_late_feat["status"], "UNKNOWN")
+        self.assertIn("did not advertise feature.set_luminances", ev_late_feat["reason"])
+
+        # 7. HDR description replaced by SDR before commit -> TraceValidationError
+        sdr_lines = (
+            "[ 1042.0151] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#51)\n"
+            "[ 1042.0152] -> wp_image_description_creator_params_v1#51.set_primaries_named(1)\n"
+            "[ 1042.0153] -> wp_image_description_creator_params_v1#51.set_tf_named(1)\n"
+            "[ 1042.0154] -> wp_image_description_creator_params_v1#51.create(new id wp_image_description_v1#32)\n"
+            "[ 1042.0155] wp_image_description_v1#32.ready(102)\n"
+            "[ 1042.0156] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#32, 0)"
+        )
+        tr_sdr_replaced = self._make_ext_linear_trace(intervening_lines=sdr_lines)
+        with self.assertRaises(TraceValidationError) as cm_sdr:
+            validate_composite_window_trace(tr_sdr_replaced)
+        self.assertIn("only SDR color descriptions were committed", str(cm_sdr.exception))
+
+        # 8. Early UNKNOWN commit, then valid ext_linear HDR commit -> PASS for second candidate
+        early_unknown = (
+            "[ 1042.0091] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#49)\n"
+            "[ 1042.0092] -> wp_image_description_creator_params_v1#49.set_tf_named(11)\n"
+            "[ 1042.0093] -> wp_image_description_creator_params_v1#49.create(new id wp_image_description_v1#30)\n"
+            "[ 1042.0094] wp_image_description_v1#30.ready(100)\n"
+            "[ 1042.0095] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#30, 0)\n"
+            "[ 1042.0096] -> wl_surface#61.commit()"
+        )
+        tr_early = self._make_ext_linear_trace(early_prefix=early_unknown)
+        ev_early = validate_composite_window_trace(tr_early)
+        self.assertEqual(ev_early["status"], "PASS")
+        self.assertEqual(ev_early["matched"]["image_description"]["id"], 31)
+        self.assertEqual(ev_early["matched"]["image_description"]["semantic_class"], "hdr")
+        self.assertEqual(ev_early["matched"]["image_description"]["color_type"], "custom_p6_tf5")
+
 
     def test_multiphase_with_custom_app_id_and_default_fallback(self):
         trace = """
