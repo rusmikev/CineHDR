@@ -1138,6 +1138,63 @@ class TestGtkCmPolicy(unittest.TestCase):
         self.assertEqual(descs[43]["semantic_class"], "sdr")
         self.assertEqual(descs[43]["color_type"], "custom_pNone_tf1")
 
+    def test_classify_named_color_metadata(self):
+        """Pure classification of named primaries and transfer functions into color_type and semantic_class."""
+        from tools.validation.parse_wayland_color_trace import (
+            PRIM_NAMED_BT2020,
+            PRIM_NAMED_SRGB,
+            TF_NAMED_BT1886,
+            TF_NAMED_EXT_LINEAR,
+            TF_NAMED_HLG,
+            TF_NAMED_SRGB,
+            TF_NAMED_ST2084_PQ,
+            _classify_named_color_metadata,
+        )
+
+        # Standard sRGB + sRGB transfer -> srgb_bt709, sdr
+        self.assertEqual(
+            _classify_named_color_metadata(PRIM_NAMED_SRGB, TF_NAMED_SRGB),
+            ("srgb_bt709", "sdr"),
+        )
+        # Rec.2100 PQ -> rec2100_pq, hdr
+        self.assertEqual(
+            _classify_named_color_metadata(PRIM_NAMED_BT2020, TF_NAMED_ST2084_PQ),
+            ("rec2100_pq", "hdr"),
+        )
+        # Rec.2100 HLG -> rec2100_hlg, hdr
+        self.assertEqual(
+            _classify_named_color_metadata(PRIM_NAMED_BT2020, TF_NAMED_HLG),
+            ("rec2100_hlg", "hdr"),
+        )
+        # Custom / WCG-SDR: BT.2020 + BT.1886 -> custom_p6_tf1, sdr
+        self.assertEqual(
+            _classify_named_color_metadata(PRIM_NAMED_BT2020, TF_NAMED_BT1886),
+            ("custom_p6_tf1", "sdr"),
+        )
+        # sRGB + PQ -> custom_p1_tf11, hdr
+        self.assertEqual(
+            _classify_named_color_metadata(PRIM_NAMED_SRGB, TF_NAMED_ST2084_PQ),
+            ("custom_p1_tf11", "hdr"),
+        )
+        # ext_linear without luminance parsing -> unknown
+        self.assertEqual(
+            _classify_named_color_metadata(PRIM_NAMED_BT2020, TF_NAMED_EXT_LINEAR),
+            ("custom_p6_tf5", "unknown"),
+        )
+        # Incomplete / unrevealed
+        self.assertEqual(
+            _classify_named_color_metadata(None, None),
+            ("unrevealed", "unknown"),
+        )
+        self.assertEqual(
+            _classify_named_color_metadata(PRIM_NAMED_BT2020, None),
+            ("custom_p6_tfNone", "unknown"),
+        )
+        self.assertEqual(
+            _classify_named_color_metadata(None, TF_NAMED_ST2084_PQ),
+            ("custom_pNone_tf11", "hdr"),
+        )
+
     def test_multiphase_trace_hlg_transfer_rejected_for_pq(self):
         """Negative regression: HLG transfer function (tf=13) is rejected when PQ (tf=11) is required."""
         trace = """

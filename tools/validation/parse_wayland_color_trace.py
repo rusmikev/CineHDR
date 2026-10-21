@@ -662,6 +662,38 @@ NAMED_SDR_TRANSFER_FUNCTIONS = frozenset({
 })
 
 
+def _classify_named_color_metadata(
+    primaries_named: int | None,
+    tf_named: int | None,
+) -> tuple[str, str]:
+    """Pure classification of named primaries and transfer function into (color_type, semantic_class)."""
+    if primaries_named == PRIM_NAMED_SRGB and tf_named in (
+        TF_NAMED_BT1886,
+        TF_NAMED_GAMMA22,
+        TF_NAMED_GAMMA28,
+        TF_NAMED_SRGB,
+        TF_NAMED_COMPOUND_POWER_2_4,
+    ):
+        color_type = "srgb_bt709"
+    elif primaries_named == PRIM_NAMED_BT2020 and tf_named == TF_NAMED_ST2084_PQ:
+        color_type = "rec2100_pq"
+    elif primaries_named == PRIM_NAMED_BT2020 and tf_named == TF_NAMED_HLG:
+        color_type = "rec2100_hlg"
+    elif primaries_named is not None or tf_named is not None:
+        color_type = f"custom_p{primaries_named}_tf{tf_named}"
+    else:
+        color_type = "unrevealed"
+
+    if tf_named in NAMED_HDR_TRANSFER_FUNCTIONS:
+        semantic_class = "hdr"
+    elif tf_named in NAMED_SDR_TRANSFER_FUNCTIONS:
+        semantic_class = "sdr"
+    else:
+        semantic_class = "unknown"
+
+    return color_type, semantic_class
+
+
 def _extract_image_descriptions_info(calls: list[TraceCall]) -> dict[int, dict[str, Any]]:
     """Extract color metadata (primaries, tf, color_type, semantic_class) for image descriptions.
 
@@ -723,33 +755,257 @@ def _extract_image_descriptions_info(calls: list[TraceCall]) -> dict[int, dict[s
                         desc_entry["tf_named"] = int(m["tf"])
 
     for did, data in descs.items():
-        prim = data.get("primaries_named")
-        tf = data.get("tf_named")
-        if prim == PRIM_NAMED_SRGB and tf in (
-            TF_NAMED_BT1886,
-            TF_NAMED_GAMMA22,
-            TF_NAMED_GAMMA28,
-            TF_NAMED_SRGB,
-            TF_NAMED_COMPOUND_POWER_2_4,
-        ):
-            data["color_type"] = "srgb_bt709"
-        elif prim == PRIM_NAMED_BT2020 and tf == TF_NAMED_ST2084_PQ:
-            data["color_type"] = "rec2100_pq"
-        elif prim == PRIM_NAMED_BT2020 and tf == TF_NAMED_HLG:
-            data["color_type"] = "rec2100_hlg"
-        elif prim is not None or tf is not None:
-            data["color_type"] = f"custom_p{prim}_tf{tf}"
-        else:
-            data["color_type"] = "unrevealed"
-
-        if tf in NAMED_HDR_TRANSFER_FUNCTIONS:
-            data["semantic_class"] = "hdr"
-        elif tf in NAMED_SDR_TRANSFER_FUNCTIONS:
-            data["semantic_class"] = "sdr"
-        else:
-            data["semantic_class"] = "unknown"
+        data["color_type"], data["semantic_class"] = _classify_named_color_metadata(
+            data.get("primaries_named"),
+            data.get("tf_named"),
+        )
 
     return descs
+
+
+def _unknown_color_result(
+    reason: str,
+    *,
+    primaries_named: int | None = None,
+    tf_named: int | None = None,
+    color_type: str = "unrevealed",
+) -> dict[str, Any]:
+    return {
+        "semantic_class": "unknown",
+        "reason": reason,
+        "primaries_named": primaries_named,
+        "tf_named": tf_named,
+        "color_type": color_type,
+    }
+
+
+def _validate_creator_lifecycle(
+    calls: list[TraceCall],
+    calls_by_index: dict[int, TraceCall],
+    creations: dict[tuple[str, int], list[int]],
+    manager_id: int,
+    description_id: int,
+    creation_idx: int,
+) -> tuple[int, list[TraceCall]] | dict[str, Any]:
+    """Verify origin, lifetime, and usage bounds of the creator params object."""
+    creation_call = calls_by_index.get(creation_idx)
+    if (
+        creation_call is None
+        or creation_call.interface != "wp_image_description_creator_params_v1"
+        or creation_call.method != "create"
+    ):
+        return _unknown_color_result(
+            f"wp_image_description_v1#{description_id} was not created via "
+            "wp_image_description_creator_params_v1.create"
+        )
+
+    creator_id = creation_call.object_id
+    creator_creations = creations.get(
+        ("wp_image_description_creator_params_v1", creator_id), []
+    )
+    if not creator_creations:
+        return _unknown_color_result(
+            f"creation of creator wp_image_description_creator_params_v1#{creator_id} not found"
+        )
+
+    if len(creator_creations) > 1:
+        return _unknown_color_result(
+            f"wp_image_description_creator_params_v1#{creator_id} was recreated in the trace "
+            f"({len(creator_creations)} creations observed); creator ID reuse is rejected"
+        )
+
+    creator_create_idx = creator_creations[0]
+    if creator_create_idx >= creation_idx:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} at index {creator_create_idx} "
+            f"was created after create() call at {creation_idx}"
+        )
+
+    creator_create_call = calls_by_index.get(creator_create_idx)
+    if (
+        creator_create_call is None
+        or creator_create_call.interface != "wp_color_manager_v1"
+        or creator_create_call.method != "create_parametric_creator"
+        or creator_create_call.object_id != manager_id
+    ):
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} was not created by "
+            f"wp_color_manager_v1#{manager_id}"
+        )
+
+    creator_calls = [
+        c
+        for c in calls
+        if c.interface == "wp_image_description_creator_params_v1"
+        and c.object_id == creator_id
+    ]
+
+    for c in creator_calls:
+        if c.index < creator_create_idx:
+            return _unknown_color_result(
+                f"creator wp_image_description_creator_params_v1#{creator_id} was used at index {c.index} "
+                f"before its creation at {creator_create_idx}"
+            )
+        if c.index > creation_idx:
+            return _unknown_color_result(
+                f"creator wp_image_description_creator_params_v1#{creator_id} had method {c.method} "
+                f"invoked at index {c.index} after create() destructor at {creation_idx}"
+            )
+
+    param_calls = [
+        c for c in creator_calls if creator_create_idx < c.index < creation_idx
+    ]
+    return creator_id, param_calls
+
+
+def _validate_parametric_creator_primaries(
+    creator_id: int,
+    param_calls: list[TraceCall],
+) -> int | dict[str, Any]:
+    """Validate uniqueness, presence, and coordinates/enum of primaries."""
+    prim_named_calls = [c for c in param_calls if c.method == "set_primaries_named"]
+    prim_custom_calls = [c for c in param_calls if c.method == "set_primaries"]
+    other_prim_calls = [
+        c
+        for c in param_calls
+        if c.method.startswith("set_primaries_")
+        and c.method != "set_primaries_named"
+    ]
+    total_prim_calls = len(prim_named_calls) + len(prim_custom_calls) + len(other_prim_calls)
+
+    if total_prim_calls > 1:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} had multiple primaries "
+            "requests (already_set / contradictory)"
+        )
+
+    if total_prim_calls == 0:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} did not set primaries "
+            "(incomplete_set / unrevealed)"
+        )
+
+    if prim_custom_calls:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} used custom set_primaries "
+            "which is unverified for composite_window",
+            color_type="custom_primaries",
+        )
+
+    if other_prim_calls:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} used non-standard primaries "
+            f"method {other_prim_calls[0].method}"
+        )
+
+    m_prim = SET_PRIMARIES_NAMED_RE.match(prim_named_calls[0].args)
+    if m_prim is None:
+        return _unknown_color_result(
+            f"malformed set_primaries_named args on creator wp_image_description_creator_params_v1#{creator_id}"
+        )
+
+    prim_val = int(m_prim["primaries"])
+    if prim_val not in NAMED_PRIMARIES:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} set unknown named primaries "
+            f"{prim_val} (invalid_primaries_named)",
+            primaries_named=prim_val,
+            color_type=f"unknown_p{prim_val}",
+        )
+
+    return prim_val
+
+
+def _validate_parametric_creator_tf(
+    creator_id: int,
+    param_calls: list[TraceCall],
+    prim_val: int,
+) -> int | dict[str, Any]:
+    """Validate uniqueness, presence, and curve/enum of transfer function."""
+    tf_named_calls = [c for c in param_calls if c.method == "set_tf_named"]
+    tf_power_calls = [c for c in param_calls if c.method == "set_tf_power"]
+    other_tf_calls = [
+        c
+        for c in param_calls
+        if c.method.startswith("set_tf_")
+        and c.method not in ("set_tf_named", "set_tf_power")
+    ]
+    total_tf_calls = len(tf_named_calls) + len(tf_power_calls) + len(other_tf_calls)
+
+    if total_tf_calls > 1:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} had multiple transfer "
+            "characteristic requests (already_set / contradictory)"
+        )
+
+    if total_tf_calls == 0:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} did not set a transfer "
+            "function (incomplete_set / unrevealed)",
+            primaries_named=prim_val,
+            color_type=f"custom_p{prim_val}_tfNone",
+        )
+
+    if tf_power_calls:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} used set_tf_power "
+            "which is unverified for composite_window",
+            primaries_named=prim_val,
+            color_type="custom_power_tf",
+        )
+
+    if other_tf_calls:
+        return _unknown_color_result(
+            f"creator wp_image_description_creator_params_v1#{creator_id} used non-standard transfer "
+            f"method {other_tf_calls[0].method}",
+            primaries_named=prim_val,
+        )
+
+    m_tf = SET_TF_NAMED_RE.match(tf_named_calls[0].args)
+    if m_tf is None:
+        return _unknown_color_result(
+            f"malformed set_tf_named args on creator wp_image_description_creator_params_v1#{creator_id}",
+            primaries_named=prim_val,
+        )
+
+    return int(m_tf["tf"])
+
+
+def _validate_parametric_creator_parameters(
+    creator_id: int,
+    param_calls: list[TraceCall],
+) -> tuple[int, int] | dict[str, Any]:
+    """Validate mandatory primaries and transfer function parameters on creator."""
+    prim_res = _validate_parametric_creator_primaries(creator_id, param_calls)
+    if isinstance(prim_res, dict):
+        return prim_res
+
+    tf_res = _validate_parametric_creator_tf(creator_id, param_calls, prim_res)
+    if isinstance(tf_res, dict):
+        return tf_res
+
+    return prim_res, tf_res
+
+
+def _format_parametric_color_result(prim_val: int, tf_val: int) -> dict[str, Any]:
+    """Format final classification dictionary for a valid parametric description."""
+    color_type, semantic_class = _classify_named_color_metadata(prim_val, tf_val)
+    if semantic_class == "hdr":
+        reason = None
+    elif semantic_class == "sdr":
+        reason = f"transfer function {tf_val} is SDR"
+    elif tf_val == TF_NAMED_EXT_LINEAR:
+        reason = "ext_linear transfer function without luminance parsing is unverified for composite_window"
+    else:
+        reason = f"transfer function {tf_val} is not a recognized named HDR transfer"
+
+    return {
+        "semantic_class": semantic_class,
+        "reason": reason,
+        "primaries_named": prim_val,
+        "tf_named": tf_val,
+        "color_type": color_type,
+    }
 
 
 def _classify_parametric_description_for_window(
@@ -769,303 +1025,19 @@ def _classify_parametric_description_for_window(
     Non-parametric creators, ext_linear, unrevealed, or metadata only from get_information
     are classified as 'unknown' for composite_window.
     """
-    creation_call = calls_by_index.get(creation_idx)
-    if (
-        creation_call is None
-        or creation_call.interface != "wp_image_description_creator_params_v1"
-        or creation_call.method != "create"
-    ):
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"wp_image_description_v1#{description_id} was not created via "
-                "wp_image_description_creator_params_v1.create"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    creator_id = creation_call.object_id
-    creator_creations = creations.get(
-        ("wp_image_description_creator_params_v1", creator_id), []
+    lifecycle_res = _validate_creator_lifecycle(
+        calls, calls_by_index, creations, manager_id, description_id, creation_idx
     )
-    if not creator_creations:
-        return {
-            "semantic_class": "unknown",
-            "reason": f"creation of creator wp_image_description_creator_params_v1#{creator_id} not found",
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
+    if isinstance(lifecycle_res, dict):
+        return lifecycle_res
+    creator_id, param_calls = lifecycle_res
 
-    if len(creator_creations) > 1:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"wp_image_description_creator_params_v1#{creator_id} was recreated in the trace "
-                f"({len(creator_creations)} creations observed); creator ID reuse is rejected"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
+    params_res = _validate_parametric_creator_parameters(creator_id, param_calls)
+    if isinstance(params_res, dict):
+        return params_res
+    prim_val, tf_val = params_res
 
-    creator_create_idx = creator_creations[0]
-    if creator_create_idx >= creation_idx:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} at index {creator_create_idx} "
-                f"was created after create() call at {creation_idx}"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    creator_create_call = calls_by_index.get(creator_create_idx)
-    if (
-        creator_create_call is None
-        or creator_create_call.interface != "wp_color_manager_v1"
-        or creator_create_call.method != "create_parametric_creator"
-        or creator_create_call.object_id != manager_id
-    ):
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} was not created by "
-                f"wp_color_manager_v1#{manager_id}"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    creator_calls = [
-        c
-        for c in calls
-        if c.interface == "wp_image_description_creator_params_v1"
-        and c.object_id == creator_id
-    ]
-
-    for c in creator_calls:
-        if c.index < creator_create_idx:
-            return {
-                "semantic_class": "unknown",
-                "reason": (
-                    f"creator wp_image_description_creator_params_v1#{creator_id} was used at index {c.index} "
-                    f"before its creation at {creator_create_idx}"
-                ),
-                "primaries_named": None,
-                "tf_named": None,
-                "color_type": "unrevealed",
-            }
-        if c.index > creation_idx:
-            return {
-                "semantic_class": "unknown",
-                "reason": (
-                    f"creator wp_image_description_creator_params_v1#{creator_id} had method {c.method} "
-                    f"invoked at index {c.index} after create() destructor at {creation_idx}"
-                ),
-                "primaries_named": None,
-                "tf_named": None,
-                "color_type": "unrevealed",
-            }
-
-    param_calls = [
-        c for c in creator_calls if creator_create_idx < c.index < creation_idx
-    ]
-
-    tf_named_calls = [c for c in param_calls if c.method == "set_tf_named"]
-    tf_power_calls = [c for c in param_calls if c.method == "set_tf_power"]
-    other_tf_calls = [
-        c
-        for c in param_calls
-        if c.method.startswith("set_tf_")
-        and c.method not in ("set_tf_named", "set_tf_power")
-    ]
-    total_tf_calls = len(tf_named_calls) + len(tf_power_calls) + len(other_tf_calls)
-
-    if total_tf_calls > 1:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} had multiple transfer "
-                "characteristic requests (already_set / contradictory)"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    prim_named_calls = [c for c in param_calls if c.method == "set_primaries_named"]
-    prim_custom_calls = [c for c in param_calls if c.method == "set_primaries"]
-    other_prim_calls = [
-        c
-        for c in param_calls
-        if c.method.startswith("set_primaries_")
-        and c.method != "set_primaries_named"
-    ]
-    total_prim_calls = len(prim_named_calls) + len(prim_custom_calls) + len(other_prim_calls)
-
-    if total_prim_calls > 1:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} had multiple primaries "
-                "requests (already_set / contradictory)"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    # Verify primaries first
-    if total_prim_calls == 0:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} did not set primaries "
-                "(incomplete_set / unrevealed)"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    if prim_custom_calls:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} used custom set_primaries "
-                "which is unverified for composite_window"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "custom_primaries",
-        }
-
-    if other_prim_calls:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} used non-standard primaries "
-                f"method {other_prim_calls[0].method}"
-            ),
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    m_prim = SET_PRIMARIES_NAMED_RE.match(prim_named_calls[0].args)
-    if m_prim is None:
-        return {
-            "semantic_class": "unknown",
-            "reason": f"malformed set_primaries_named args on creator wp_image_description_creator_params_v1#{creator_id}",
-            "primaries_named": None,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    prim_val = int(m_prim["primaries"])
-    if prim_val not in NAMED_PRIMARIES:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} set unknown named primaries "
-                f"{prim_val} (invalid_primaries_named)"
-            ),
-            "primaries_named": prim_val,
-            "tf_named": None,
-            "color_type": f"unknown_p{prim_val}",
-        }
-
-    # Verify transfer function
-    if total_tf_calls == 0:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} did not set a transfer "
-                "function (incomplete_set / unrevealed)"
-            ),
-            "primaries_named": prim_val,
-            "tf_named": None,
-            "color_type": f"custom_p{prim_val}_tfNone",
-        }
-
-    if tf_power_calls:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} used set_tf_power "
-                "which is unverified for composite_window"
-            ),
-            "primaries_named": prim_val,
-            "tf_named": None,
-            "color_type": "custom_power_tf",
-        }
-
-    if other_tf_calls:
-        return {
-            "semantic_class": "unknown",
-            "reason": (
-                f"creator wp_image_description_creator_params_v1#{creator_id} used non-standard transfer "
-                f"method {other_tf_calls[0].method}"
-            ),
-            "primaries_named": prim_val,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-
-    m_tf = SET_TF_NAMED_RE.match(tf_named_calls[0].args)
-    if m_tf is None:
-        return {
-            "semantic_class": "unknown",
-            "reason": f"malformed set_tf_named args on creator wp_image_description_creator_params_v1#{creator_id}",
-            "primaries_named": prim_val,
-            "tf_named": None,
-            "color_type": "unrevealed",
-        }
-    tf_val = int(m_tf["tf"])
-
-    if prim_val == PRIM_NAMED_SRGB and tf_val in (
-        TF_NAMED_BT1886,
-        TF_NAMED_GAMMA22,
-        TF_NAMED_GAMMA28,
-        TF_NAMED_SRGB,
-        TF_NAMED_COMPOUND_POWER_2_4,
-    ):
-        color_type = "srgb_bt709"
-    elif prim_val == PRIM_NAMED_BT2020 and tf_val == TF_NAMED_ST2084_PQ:
-        color_type = "rec2100_pq"
-    elif prim_val == PRIM_NAMED_BT2020 and tf_val == TF_NAMED_HLG:
-        color_type = "rec2100_hlg"
-    elif prim_val is not None or tf_val is not None:
-        color_type = f"custom_p{prim_val}_tf{tf_val}"
-    else:
-        color_type = "unrevealed"
-
-    if tf_val in NAMED_HDR_TRANSFER_FUNCTIONS:
-        semantic_class = "hdr"
-        reason = None
-    elif tf_val in NAMED_SDR_TRANSFER_FUNCTIONS:
-        semantic_class = "sdr"
-        reason = f"transfer function {tf_val} is SDR"
-    elif tf_val == TF_NAMED_EXT_LINEAR:
-        semantic_class = "unknown"
-        reason = "ext_linear transfer function without luminance parsing is unverified for composite_window"
-    else:
-        semantic_class = "unknown"
-        reason = f"transfer function {tf_val} is not a recognized named HDR transfer"
-
-    return {
-        "semantic_class": semantic_class,
-        "reason": reason,
-        "primaries_named": prim_val,
-        "tf_named": tf_val,
-        "color_type": color_type,
-    }
+    return _format_parametric_color_result(prim_val, tf_val)
 
 
 DEFAULT_APP_ID = "io.github.rusmikev.CineHDR"
