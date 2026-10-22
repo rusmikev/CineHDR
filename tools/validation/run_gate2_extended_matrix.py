@@ -23,7 +23,7 @@ try:
 except ImportError:
     Image = None
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 WORK_ROOT = PROJECT_ROOT.parent
 
 _default_source = WORK_ROOT / "mpv-gpu-next"

@@ -23,12 +23,14 @@ except ImportError:
     Image = None
     HAS_PILLOW = False
 
-_TESTS_DIR = str(Path(__file__).resolve().parent)
-if _TESTS_DIR not in sys.path:
-    sys.path.insert(0, _TESTS_DIR)
+_TESTS_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _TESTS_DIR.parent
+for _path in (str(_TESTS_DIR), str(_PROJECT_ROOT)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 import generate_patterns
-import run_gate2_extended_matrix
+from tools.validation import run_gate2_extended_matrix
 import run_pixel_pipeline
 
 
