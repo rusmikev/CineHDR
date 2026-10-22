@@ -681,15 +681,16 @@ SET_LUMINANCES_RE = re.compile(
     r"^\s*(?P<min>[^,]+)\s*,\s*(?P<max>[^,]+)\s*,\s*(?P<ref>[^,]+)\s*$"
 )
 UINT32_MAX = 0xFFFFFFFF
+UINT32_ASCII_RE = re.compile(r"^[0-9]+$")
 
 
 def _parse_uint32(val_str: str) -> int | None:
     """Parse an unsigned 32-bit integer string strictly without signs."""
     val_str = val_str.strip()
-    if not val_str or val_str.startswith("-") or val_str.startswith("+"):
+    if not val_str or not UINT32_ASCII_RE.match(val_str):
         return None
     try:
-        val = int(val_str, 0)
+        val = int(val_str, 10)
     except ValueError:
         return None
     if 0 <= val <= UINT32_MAX:

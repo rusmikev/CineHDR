@@ -2810,16 +2810,46 @@ class TestGtkCmPolicy(unittest.TestCase):
                 self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
                 self.assertIn("must be strictly greater than min_lum", ev["reason"])
 
-        # 3. Scale boundary conditions: max <= min or ref <= min -> UNKNOWN
-        for lum_args in ("800000, 80, 50", "799999, 80, 50"):
-            with self.subTest(scale_boundary=lum_args):
-                tr = self._make_ext_linear_trace(
-                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
-                )
-                ev = validate_composite_window_trace(tr)
-                self.assertEqual(ev["status"], "UNKNOWN")
-                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
-                self.assertIn("must be strictly greater than min_lum", ev["reason"])
+        # 3. Scale boundary conditions:
+        # (799999, 1000, 80) -> PASS
+        tr_scale_pass = self._make_ext_linear_trace(
+            lum_line="-> wp_image_description_creator_params_v1#50.set_luminances(799999, 1000, 80)"
+        )
+        ev_scale_pass = validate_composite_window_trace(tr_scale_pass)
+        self.assertEqual(ev_scale_pass["status"], "PASS")
+        self.assertEqual(ev_scale_pass["matched"]["image_description"]["semantic_class"], "hdr")
+        self.assertNotIn("reason", ev_scale_pass)
+
+        # (800000, 1000, 80) -> UNKNOWN due to reference <= min (reference_lum*10000 <= min_lum)
+        tr_scale_ref = self._make_ext_linear_trace(
+            lum_line="-> wp_image_description_creator_params_v1#50.set_luminances(800000, 1000, 80)"
+        )
+        ev_scale_ref = validate_composite_window_trace(tr_scale_ref)
+        self.assertEqual(ev_scale_ref["status"], "UNKNOWN")
+        self.assertEqual(ev_scale_ref["matched"]["image_description"]["semantic_class"], "unknown")
+        self.assertIn("must be strictly greater than min_lum", ev_scale_ref["reason"])
+        self.assertIn("reference_lum*10000 (800000)", ev_scale_ref["reason"])
+
+        # (799999, 80, 81) -> UNKNOWN due to missing HDR criterion, but NOT invalid range
+        tr_scale_hdr = self._make_ext_linear_trace(
+            lum_line="-> wp_image_description_creator_params_v1#50.set_luminances(799999, 80, 81)"
+        )
+        ev_scale_hdr = validate_composite_window_trace(tr_scale_hdr)
+        self.assertEqual(ev_scale_hdr["status"], "UNKNOWN")
+        self.assertEqual(ev_scale_hdr["matched"]["image_description"]["semantic_class"], "unknown")
+        self.assertIn("HDR distinction criterion", ev_scale_hdr["reason"])
+        self.assertNotIn("must be strictly greater than min_lum", ev_scale_hdr["reason"])
+
+        # (800000, 80, 81) -> UNKNOWN due to max <= min (max_lum*10000 <= min_lum)
+        tr_scale_max = self._make_ext_linear_trace(
+            lum_line="-> wp_image_description_creator_params_v1#50.set_luminances(800000, 80, 81)"
+        )
+        ev_scale_max = validate_composite_window_trace(tr_scale_max)
+        self.assertEqual(ev_scale_max["status"], "UNKNOWN")
+        self.assertEqual(ev_scale_max["matched"]["image_description"]["semantic_class"], "unknown")
+        self.assertIn("must be strictly greater than min_lum", ev_scale_max["reason"])
+        self.assertIn("max_lum*10000 (800000)", ev_scale_max["reason"])
+        self.assertNotIn("HDR distinction criterion", ev_scale_max["reason"])
 
         # 4. Negative, malformed, or uint32 overflow arguments -> UNKNOWN
         for lum_args in ("-1, 1000, 203", "2000, -1, 203", "2000, broken, 203", "4294967296, 1000, 203"):
@@ -2910,6 +2940,85 @@ class TestGtkCmPolicy(unittest.TestCase):
         self.assertEqual(ev_early["matched"]["image_description"]["id"], 31)
         self.assertEqual(ev_early["matched"]["image_description"]["semantic_class"], "hdr")
         self.assertEqual(ev_early["matched"]["image_description"]["color_type"], "custom_p6_tf5")
+
+    def test_composite_window_ext_linear_uint32_parsing_regressions(self):
+        """Compact parameterized regressions for set_luminances uint32 parsing via validate_composite_window_trace."""
+        # 1. Underscores in each of the three arguments -> UNKNOWN
+        underscore_cases = (
+            "2_000, 1000, 203",
+            "2000, 1_000, 203",
+            "2000, 1000, 2_03",
+        )
+        for lum_args in underscore_cases:
+            with self.subTest(underscores=lum_args):
+                tr = self._make_ext_linear_trace(
+                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
+                )
+                ev = validate_composite_window_trace(tr)
+                self.assertEqual(ev["status"], "UNKNOWN")
+                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
+                self.assertIn("malformed or out-of-range set_luminances arguments", ev["reason"])
+
+        # 2. Binary, octal, hex, fractions, signs, and Unicode digits -> UNKNOWN
+        non_ascii_or_radix_cases = (
+            "0b11111010000, 1000, 203",
+            "2000, 0b1111101000, 203",
+            "2000, 1000, 0b11001011",
+            "0o3720, 1000, 203",
+            "2000, 0o1750, 203",
+            "2000, 1000, 0o313",
+            "0x7d0, 1000, 203",
+            "2000, 0x3e8, 203",
+            "2000, 1000, 0xcb",
+            "+2000, 1000, 203",
+            "2000, +1000, 203",
+            "2000, 1000, +203",
+            "2000.0, 1000, 203",
+            "2000, 1000.5, 203",
+            "2000, 1000, 203.0",
+            "2000, 1000, \u0662\u0660\u0663",
+        )
+        for lum_args in non_ascii_or_radix_cases:
+            with self.subTest(non_decimal_or_radix=lum_args):
+                tr = self._make_ext_linear_trace(
+                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
+                )
+                ev = validate_composite_window_trace(tr)
+                self.assertEqual(ev["status"], "UNKNOWN")
+                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
+                self.assertIn("malformed or out-of-range set_luminances arguments", ev["reason"])
+
+        # 3. Standard decimal values retain behavior -> PASS
+        decimal_cases = (
+            "2000, 1000, 203",
+            "0, 1000, 203",
+            "  2000  ,  1000  ,  203  ",
+        )
+        for lum_args in decimal_cases:
+            with self.subTest(decimal=lum_args):
+                tr = self._make_ext_linear_trace(
+                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
+                )
+                ev = validate_composite_window_trace(tr)
+                self.assertEqual(ev["status"], "PASS")
+                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "hdr")
+                self.assertNotIn("reason", ev)
+
+        # 4. Overflow of any of the three arguments -> UNKNOWN
+        overflow_cases = (
+            "4294967296, 1000, 203",
+            "2000, 4294967296, 203",
+            "2000, 1000, 4294967296",
+        )
+        for lum_args in overflow_cases:
+            with self.subTest(overflow=lum_args):
+                tr = self._make_ext_linear_trace(
+                    lum_line=f"-> wp_image_description_creator_params_v1#50.set_luminances({lum_args})"
+                )
+                ev = validate_composite_window_trace(tr)
+                self.assertEqual(ev["status"], "UNKNOWN")
+                self.assertEqual(ev["matched"]["image_description"]["semantic_class"], "unknown")
+                self.assertIn("malformed or out-of-range set_luminances arguments", ev["reason"])
 
 
     def test_multiphase_with_custom_app_id_and_default_fallback(self):
