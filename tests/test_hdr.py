@@ -1950,6 +1950,32 @@ class TestHdrDetectionDolbyVision(unittest.TestCase):
         # Should be true
         self.assertTrue(controller.is_hdr_active)
 
+    def test_dovi_unsupported_property_and_reshaping_capability(self):
+        """Verify real HdrController.dovi_unsupported property across profiles and reshaping toggles."""
+        from src.hdr_controller import HdrController
+        mock = MagicMock()
+        mock.__getitem__.side_effect = lambda k: "auto" if k in ("target-trc", "target-prim", "target-peak") else None
+        controller = HdrController(mock)
+        try:
+            # 1. Profile 8, unsupported=False, reshaping=False -> False
+            controller.supports_dovi_reshaping = False
+            controller._dovi_info = {"profile": 8, "level": 6, "unsupported": False}
+            self.assertFalse(controller.dovi_unsupported)
+
+            # 2. Profile 5, unsupported=True, reshaping=False -> True
+            controller._dovi_info = {"profile": 5, "level": 6, "unsupported": True}
+            self.assertTrue(controller.dovi_unsupported)
+
+            # 3. Same Profile 5, reshaping=True -> False
+            controller.supports_dovi_reshaping = True
+            self.assertFalse(controller.dovi_unsupported)
+
+            # 4. Switching back reshaping=False -> True
+            controller.supports_dovi_reshaping = False
+            self.assertTrue(controller.dovi_unsupported)
+        finally:
+            controller.disconnect()
+
 
 class TestSurfaceSubmissionOverride(unittest.TestCase):
     def test_surface_submission_proven_default_false(self):
