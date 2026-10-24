@@ -435,7 +435,7 @@ class TestGtkCmPolicy(unittest.TestCase):
         from src.gtk_cm_policy import gtk_color_managed
         ok, reason = gtk_color_managed(None, env={"GDK_DEBUG": "color-mgmt"})
         self.assertFalse(ok)
-        self.assertIn("wp_color_manager_v1", reason)
+        self.assertEqual(reason, "color management capabilities unavailable or unknown")
 
     def test_gtk_color_managed_kwin_missing_srgb(self):
         from src.gtk_cm_policy import (

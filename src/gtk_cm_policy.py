@@ -158,12 +158,15 @@ def gtk_color_managed(caps: Optional[CmCaps], env=os.environ) -> Tuple[bool, str
     if not gtk_cm_opted_in(env):
         return False, "GTK: color management disabled without GDK_DEBUG=color-mgmt"
     if caps is None:
-        return False, "compositor did not announce wp_color_manager_v1"
+        return False, "color management capabilities unavailable or unknown"
     if INTENT_PERCEPTUAL not in caps.intents:
         return False, "missing perceptual render intent"
-    if (FEAT_PARAMETRIC not in caps.features or TF_SRGB not in caps.tfs
-            or not (PRIM_SRGB in caps.primaries or FEAT_SET_PRIMARIES in caps.features)):
-        return False, "GTK cannot create sRGB image description (missing TF srgb)"
+    if FEAT_PARAMETRIC not in caps.features:
+        return False, "GTK cannot create sRGB image description: missing parametric feature"
+    if TF_SRGB not in caps.tfs:
+        return False, "GTK cannot create sRGB image description: missing TF srgb"
+    if not (PRIM_SRGB in caps.primaries or FEAT_SET_PRIMARIES in caps.features):
+        return False, "GTK cannot create sRGB image description: missing sRGB primaries"
     return True, "ok"
 
 def gtk_can_tag_hdr(caps: Optional[CmCaps], tf: int = TF_PQ) -> bool:

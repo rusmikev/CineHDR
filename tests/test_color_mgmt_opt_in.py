@@ -405,22 +405,22 @@ class TestGtkColorManagedCaps(unittest.TestCase):
     def test_kwin_caps_missing_srgb_fails_closed(self):
         ok, reason = gtk_color_managed(self.kwin_caps, env={"GDK_DEBUG": "color-mgmt"})
         self.assertFalse(ok)
-        self.assertIn("missing TF srgb", reason)
+        self.assertEqual(reason, "GTK cannot create sRGB image description: missing TF srgb")
 
     def test_missing_caps_fails_closed(self):
         ok, reason = gtk_color_managed(None, env={"GDK_DEBUG": "color-mgmt"})
         self.assertFalse(ok)
-        self.assertIn("wp_color_manager_v1", reason)
+        self.assertEqual(reason, "color management capabilities unavailable or unknown")
         self.assertFalse(gtk_can_tag_hdr(None))
 
     def test_opt_in_missing_or_opt_out_rejected(self):
         ok, reason = gtk_color_managed(self.mutter_caps, env={})
         self.assertFalse(ok)
-        self.assertIn("GDK_DEBUG=color-mgmt", reason)
+        self.assertEqual(reason, "GTK: color management disabled without GDK_DEBUG=color-mgmt")
 
         ok, reason = gtk_color_managed(self.mutter_caps, env={"CINEHDR_NO_COLOR_MGMT": "1"})
         self.assertFalse(ok)
-        self.assertIn("GDK_DEBUG=color-mgmt", reason)
+        self.assertEqual(reason, "GTK: color management disabled without GDK_DEBUG=color-mgmt")
 
     def test_missing_perceptual_intent_fails_closed(self):
         caps = CmCaps(
@@ -431,7 +431,7 @@ class TestGtkColorManagedCaps(unittest.TestCase):
         )
         ok, reason = gtk_color_managed(caps, env={"GDK_DEBUG": "color-mgmt"})
         self.assertFalse(ok)
-        self.assertIn("perceptual", reason)
+        self.assertEqual(reason, "missing perceptual render intent")
 
     def test_missing_parametric_feature_fails_closed(self):
         caps = CmCaps(
@@ -442,7 +442,7 @@ class TestGtkColorManagedCaps(unittest.TestCase):
         )
         ok, reason = gtk_color_managed(caps, env={"GDK_DEBUG": "color-mgmt"})
         self.assertFalse(ok)
-        self.assertIn("missing TF srgb", reason)
+        self.assertEqual(reason, "GTK cannot create sRGB image description: missing parametric feature")
 
     def test_missing_srgb_primaries_and_set_primaries_fails_closed(self):
         caps = CmCaps(
@@ -453,7 +453,7 @@ class TestGtkColorManagedCaps(unittest.TestCase):
         )
         ok, reason = gtk_color_managed(caps, env={"GDK_DEBUG": "color-mgmt"})
         self.assertFalse(ok)
-        self.assertIn("missing TF srgb", reason)
+        self.assertEqual(reason, "GTK cannot create sRGB image description: missing sRGB primaries")
 
     def test_set_primaries_allows_custom_primaries_for_srgb_and_hdr(self):
         caps = CmCaps(
