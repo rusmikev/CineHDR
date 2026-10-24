@@ -464,6 +464,7 @@ class TestProbeContract(unittest.TestCase):
                 )
 
     def test_complete_probe_evidence_is_accepted_without_color_threshold(self) -> None:
+        """Validate probe evidence against historical Gate 2 threshold policy (formerly ADR-0005)."""
         fixture = fixture_provenance("hdr")
         result = probe_result("hdr", "opengl")
         run_pixel_pipeline.validate_fixture_provenance(fixture)
@@ -475,7 +476,7 @@ class TestProbeContract(unittest.TestCase):
         self.assertTrue(diagnostics["neutral_axis_pass"])
         self.assertTrue(diagnostics["reference_white_pass"])
         self.assertEqual(diagnostics["verdict"], "PASS")
-        self.assertIn("ADR-0005", diagnostics["threshold_policy"])
+        self.assertIn("ADR-0005", diagnostics["threshold_policy"])  # Preserves historical policy identifier
 
     def test_synthetic_threshold_violations_fail_verdict(self) -> None:
         result = probe_result("hdr", "opengl")

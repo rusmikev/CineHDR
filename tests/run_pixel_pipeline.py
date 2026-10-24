@@ -543,7 +543,8 @@ def validate_probe_result(
         raise PipelineError("probe did not record exactly one requested frame")
 
 
-# ADR-0005 Gate 2 Thresholds
+# Historical Gate 2 Thresholds (formerly ADR-0005, see git show 0d3d57a:docs/adr/0005-gate2-thresholds.md)
+# These numerical thresholds belong to the historical offscreen EGL tool and do not form 1.0 release gates.
 THRESHOLD_BLACK_MAX = 0.002
 THRESHOLD_REF_WHITE_DELTA_MAX = 0.015
 THRESHOLD_NEUTRAL_AXIS_MAX_DELTA = 0.005
@@ -559,7 +560,7 @@ def expected_reference_white_luminance(fixture_mode: str) -> float:
 
 
 def diagnostic_invariants(result: dict[str, Any]) -> dict[str, Any]:
-    """Report evidence and evaluate against ADR-0005 Gate 2 thresholds."""
+    """Report evidence and evaluate against historical Gate 2 thresholds (formerly ADR-0005)."""
 
     patches = {patch["name"]: patch for patch in result["readback"]["patches"]}
     triples = {name: tuple(float(patch[channel]) for channel in ("r", "g", "b")) for name, patch in patches.items()}

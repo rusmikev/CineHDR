@@ -242,7 +242,7 @@ def decode_and_validate_png(
     min_b, max_b = extrema[2]
 
     # Empty-frame structural check on Pillow-decoded 8-bit RGB (<= 2 code values).
-    # ADR-0005's normalized PQ FBO threshold does not derive this PNG tolerance.
+    # Historical ADR-0005 normalized PQ FBO threshold does not derive this PNG tolerance.
     if max_r <= 2 and max_g <= 2 and max_b <= 2:
         return False, "all_black_frame", None
 
@@ -265,7 +265,7 @@ def validate_pattern_patches(img: Any) -> tuple[bool, str, dict[str, Any]]:
     - Structural checks (Image Structural Integrity): confirms valid rasterization,
       patch layout, monotonic contrast, channel dominance, and absence of pipeline corruption
       (such as uninitialized buffers or channel swaps).
-    - Color accuracy certification: explicitly marked False. ADR-0005 defines analytical error
+    - Color accuracy certification: explicitly marked False. Historical ADR-0005 defined analytical error
       bounds exclusively for offscreen FP16 FBO readback in normalized PQ coordinates.
       mpv screenshot-to-file saves high-bit-depth PNG images which are downscaled to 8-bit RGB
       in Pillow; multiplying normalized float PQ bounds by 255 does not constitute an analytical
