@@ -21,7 +21,7 @@
 
 | Сценарий | Уровень | GNOME-AMD | GNOME-Intel | GNOME-NVIDIA | KDE-AMD | KDE-NVIDIA |
 |---|---|---|---|---|---|---|
-| SDR play (управление, seek, выход) | L2/L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| SDR play (управление, seek, выход) | L2/L3 | PASS 2026-10-24 a24fe81 (L2) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Эталон mpv подтверждён по выходному пути (API/контекст + L3p его поверхности) | L3/L3p | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HDR10 `auto` — протокольная трасса | L3p | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HDR10 `auto` — визуальная приёмка на паттерне | L4 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
@@ -36,7 +36,7 @@
 | Перенос окна HDR ↔ SDR панель | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Переключение HDR в DE во время проигрывания | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Плейлист HDR → SDR → HDR | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
-| Выход во время проигрывания (нет краша) | L2 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| Выход во время проигрывания (нет краша) | L2 | PASS 2026-10-24 a24fe81 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Отключение монитора во время проигрывания | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | 4K60 без пропусков кадров | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | hwdec активен (vaapi / nvdec) | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
