@@ -983,14 +983,17 @@ class TestHdrDiagnostics(unittest.TestCase):
                      "compositor_cm_row", "offload_row", "monitor_hdr_row"):
             setattr(diag, attr, MockActionRow())
 
-        diag.update_diagnostics()
-        # Profile 5 must be reported as unrenderable and SDR-forced, without
-        # claiming any IPT -> Rec.2100 PQ conversion takes place.
-        subtitle = diag.dovi_profile_row.subtitle
-        self.assertIn("Profile 5", subtitle)
-        self.assertIn("SDR", subtitle)
-        self.assertNotIn("Rec.2100", subtitle)
-        self.assertTrue(diag.dovi_profile_row.visible)
+        for mode in ("auto", "force-hdr"):
+            with self.subTest(hdr_mode=mode):
+                MockController.hdr_mode = mode
+                diag.update_diagnostics()
+                # Profile 5 must be reported as unrenderable and SDR-forced, without
+                # claiming any IPT -> Rec.2100 PQ conversion takes place.
+                subtitle = diag.dovi_profile_row.subtitle
+                self.assertIn("Profile 5", subtitle)
+                self.assertIn("SDR", subtitle)
+                self.assertNotIn("Rec.2100", subtitle)
+                self.assertTrue(diag.dovi_profile_row.visible)
 
     @unittest.mock.patch("src.hdr_diagnostics.check_hdr_support", return_value=True)
     def test_update_diagnostics_dolby_vision_profile_8(self, mock_check):
