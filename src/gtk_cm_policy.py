@@ -28,6 +28,7 @@ _GDK_COLOR_MGMT = "color-mgmt"
 
 COLOR_MGMT_OPT_IN_ENV = "CINEHDR_EXPERIMENTAL_COLOR_MGMT"
 COLOR_MGMT_OPT_IN_FLAG = "--experimental-color-mgmt"
+COLOR_MGMT_OPT_OUT_ENV = "CINEHDR_NO_COLOR_MGMT"
 
 # apply_color_mgmt_opt_in() results
 OPT_IN_NOT_REQUESTED = "not-requested"
@@ -44,6 +45,12 @@ def gdk_debug_enables_color_mgmt(value: str) -> bool:
     """True if GDK would enable color management for this GDK_DEBUG value."""
     tokens = {t.lower() for t in _gdk_debug_tokens(value)}
     return (_GDK_COLOR_MGMT in tokens) != ("all" in tokens)
+
+
+def gdk_debug_excludes_color_mgmt(value: str) -> bool:
+    """True if GDK_DEBUG explicitly subtracts color-mgmt using all:color-mgmt."""
+    tokens = {t.lower() for t in _gdk_debug_tokens(value)}
+    return "all" in tokens and _GDK_COLOR_MGMT in tokens
 
 
 def gtk_cm_opted_in(env=os.environ) -> bool:
@@ -70,8 +77,15 @@ def color_mgmt_opt_in_requested(env: Mapping[str, str], argv: Sequence[str]) -> 
     return env.get(COLOR_MGMT_OPT_IN_ENV) == "1" or COLOR_MGMT_OPT_IN_FLAG in argv
 
 
+def color_mgmt_opt_out_requested(env: Mapping[str, str]) -> bool:
+    return env.get(COLOR_MGMT_OPT_OUT_ENV) == "1"
+
+
 def apply_color_mgmt_opt_in(
-    env: MutableMapping[str, str], argv: Sequence[str], gtk_initialized: bool
+    env: MutableMapping[str, str],
+    argv: Sequence[str],
+    gtk_initialized: bool,
+    default_enabled: bool = False,
 ) -> str:
     """Translate CineHDR's opt-in into GDK_DEBUG=color-mgmt.
 
@@ -81,15 +95,29 @@ def apply_color_mgmt_opt_in(
     gtk_cm_opted_in() keeps describing what GTK actually does instead of
     letting the HDR gate believe in color management GTK never enabled.
 
+    When default_enabled is True (used in the installed Flatpak launcher),
+    color-mgmt is enabled by default unless opt-out (CINEHDR_NO_COLOR_MGMT=1)
+    is set or GDK_DEBUG explicitly disables it (e.g. all:color-mgmt).
+
     Must not import gi: launchers call it before any GTK import.
     """
-    if not color_mgmt_opt_in_requested(env, argv):
-        return OPT_IN_NOT_REQUESTED
     current = env.get("GDK_DEBUG", "")
     if gdk_debug_enables_color_mgmt(current):
         return OPT_IN_ALREADY_ENABLED
+
+    if color_mgmt_opt_out_requested(env):
+        return OPT_IN_NOT_REQUESTED
+
+    explicit = color_mgmt_opt_in_requested(env, argv)
+    if not explicit and not default_enabled:
+        return OPT_IN_NOT_REQUESTED
+
+    if not explicit and gdk_debug_excludes_color_mgmt(current):
+        return OPT_IN_NOT_REQUESTED
+
     if gtk_initialized:
         return OPT_IN_TOO_LATE
+
     env["GDK_DEBUG"] = with_color_mgmt(current)
     return OPT_IN_APPLIED
 
