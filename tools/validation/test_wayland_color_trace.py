@@ -3490,7 +3490,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(rep["scope"], TRACE_ONLY_L3P_SCOPE)
             self.assertEqual(rep["expected_app_id"], "mpv")
             self.assertEqual(rep["observed_app_id"], "mpv")
-            self.assertEqual(rep["matched"]["surface"]["attached_buffers"], [99])
+            self.assertEqual(rep["matched"]["surface"]["effective_buffer_id"], 99)
 
             # Rejection on invalid oracle
             with self.assertRaises(TraceValidationError):
@@ -3539,7 +3539,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["observed_app_id"], "mpv")
             self.assertEqual(data["matched"]["surface"]["app_id"], "mpv")
             self.assertEqual(data["matched"]["surface"]["wl_surface_id"], 61)
-            self.assertEqual(data["matched"]["surface"]["attached_buffers"], [99])
+            self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
             self.assertEqual(data["matched"]["image_description"]["tf_named"], 11)
             self.assertEqual(data["matched"]["image_description"]["primaries_named"], 6)
             self.assertIn("L3p protocol evidence", data["scope"])
@@ -3641,6 +3641,98 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertTrue(data.get("trace_only"))
             self.assertEqual(data.get("protocol_evidence_level"), "L3p")
             self.assertIn("attach observed only on other surface(s)", data["error"])
+
+    def test_trace_only_synthetic_attach_after_commit_rejected(self):
+        """Hermetic CLI test: negative control where attach occurs after the chosen HDR commit fails with status=FAIL."""
+        lines = []
+        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+            if "attach" in line:
+                continue
+            lines.append(line)
+            if "wl_surface#61.commit()" in line:
+                lines.append('[ 1042.015]  -> wl_surface#61.attach(wl_buffer#99, 0, 0)')
+        trace_late_attach = "\n".join(lines)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_late_attach, encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = main([
+                    "--trace-only",
+                    "--trace", str(trace_path),
+                    "--app-id", "mpv",
+                    "--output", str(out_path),
+                ])
+            self.assertEqual(status, 1)
+            self.assertIn("attach was observed only after this commit", stderr.getvalue())
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertTrue(data.get("trace_only"))
+            self.assertEqual(data.get("protocol_evidence_level"), "L3p")
+            self.assertIn("attach was observed only after this commit", data["error"])
+
+    def test_trace_only_synthetic_attach_null_before_commit_rejected(self):
+        """Hermetic CLI test: negative control where buffer is replaced with nil before HDR commit fails with status=FAIL."""
+        lines = []
+        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+            lines.append(line)
+            if "attach(wl_buffer#99" in line:
+                lines.append('[ 1042.0136] -> wl_surface#61.attach(nil, 0, 0)')
+        trace_null_attach = "\n".join(lines)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_null_attach, encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = main([
+                    "--trace-only",
+                    "--trace", str(trace_path),
+                    "--app-id", "mpv",
+                    "--output", str(out_path),
+                ])
+            self.assertEqual(status, 1)
+            self.assertIn("buffer was detached or set to null prior to commit", stderr.getvalue())
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertTrue(data.get("trace_only"))
+            self.assertEqual(data.get("protocol_evidence_level"), "L3p")
+            self.assertIn("buffer was detached or set to null prior to commit", data["error"])
+
+    def test_trace_only_synthetic_preserved_buffer_from_previous_commit_succeeds(self):
+        """Hermetic CLI test: buffer committed in prior commit remains effective for HDR commit without new attach."""
+        lines = []
+        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+            if "attach(wl_buffer#99" in line:
+                continue
+            if "xdg_toplevel#68.set_app_id" in line:
+                lines.append(line)
+                lines.append('[ 1042.0085] -> wl_surface#61.attach(wl_buffer#99, 0, 0)')
+                lines.append('[ 1042.0086] -> wl_surface#61.commit()')
+                continue
+            lines.append(line)
+        trace_preserved = "\n".join(lines)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_preserved, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 0)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "PASS")
+            self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
 
     def test_trace_only_synthetic_subsurface_detected_returns_unknown(self):
         """Hermetic CLI test: when subsurfaces are present for the window, video surface origin is ambiguous -> status=UNKNOWN."""

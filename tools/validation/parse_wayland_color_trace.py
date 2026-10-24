@@ -128,7 +128,7 @@ GET_SUBSURFACE_RE = re.compile(
     r"wl_surface(?:#|@)(?P<child_surface_id>\d+)\s*,\s*wl_surface(?:#|@)(?P<parent_surface_id>\d+)\s*$"
 )
 ATTACH_RE = re.compile(
-    r"^\s*wl_buffer(?:#|@)(?P<buffer_id>\d+)\s*,\s*(?P<x>-?\d+)\s*,\s*(?P<y>-?\d+)\s*$"
+    r"^\s*(?:wl_buffer(?:#|@)(?P<buffer_id>\d+)|(?P<null>nil|NULL|null|0))\s*,\s*(?P<x>-?\d+)\s*,\s*(?P<y>-?\d+)\s*$"
 )
 GET_VIEWPORT_RE = re.compile(
     r"^\s*new id (?:wp_viewport|\[unknown\])(?:#|@)(?P<viewport_id>\d+)\s*,\s*"
@@ -597,7 +597,10 @@ def _surface_roles_and_attaches(
         elif call.interface == "wl_surface" and call.method == "attach":
             match = ATTACH_RE.match(call.args)
             if match is not None:
-                buf_id = int(match["buffer_id"])
+                if match["buffer_id"] is not None:
+                    buf_id = int(match["buffer_id"])
+                else:
+                    buf_id = 0
                 surface_attaches.setdefault(call.object_id, []).append(buf_id)
         elif call.interface == "wp_viewporter" and call.method == "get_viewport":
             match = GET_VIEWPORT_RE.match(call.args)
@@ -2330,6 +2333,51 @@ def create_failure_evidence(
     }
 
 
+def _effective_buffer_at_commit(
+    calls: list[TraceCall],
+    target_surf: int,
+    target_commit_index: int,
+) -> int | None:
+    """Determine the effective non-zero wl_buffer active at target_commit_index per Wayland double-buffering.
+
+    wl_surface.attach updates the pending buffer state.
+    wl_surface.commit applies pending state to the current state.
+    If no attach occurred since the previous commit, the current buffer remains unchanged.
+    attach(nil, ...) or attach(0, ...) sets pending buffer to None, unmapping the surface upon commit.
+    Attaches occurring after target_commit_index have no effect on this commit.
+    """
+    current_buffer: int | None = None
+    pending_buffer: int | None = None
+    pending_attached = False
+
+    for call in calls:
+        if call.index > target_commit_index:
+            break
+        if call.interface == "wl_surface" and call.object_id == target_surf:
+            if call.method == "destroy":
+                current_buffer = None
+                pending_buffer = None
+                pending_attached = False
+            elif call.method == "attach":
+                match = ATTACH_RE.match(call.args)
+                if match is not None:
+                    pending_attached = True
+                    if match["buffer_id"] is not None:
+                        buf_val = int(match["buffer_id"])
+                        pending_buffer = buf_val if buf_val != 0 else None
+                    else:
+                        pending_buffer = None
+            elif call.method == "commit":
+                if pending_attached:
+                    current_buffer = pending_buffer
+                    pending_attached = False
+                    pending_buffer = None
+                if call.index == target_commit_index:
+                    return current_buffer
+
+    return current_buffer
+
+
 def create_trace_only_report(
     trace_path: Path,
     expected_app_id: str,
@@ -2350,17 +2398,44 @@ def create_trace_only_report(
     evidence = validate_composite_window_trace(trace_text, expected_app_id=target_app_id)
 
     # Fail-closed autonomous video surface proof (L3p):
-    # PASS requires a verified non-zero wl_surface.attach on the target window surface
-    # and absence of subsurface offload ambiguity.
+    # PASS requires a verified non-zero wl_buffer active at the chosen HDR commit_index
+    # per Wayland double-buffered surface state, and absence of subsurface offload ambiguity.
     calls = _calls(trace_text)
     toplevel_surfaces, subsurfaces, surface_attaches, _ = _surface_roles_and_attaches(calls)
     matched_surface = evidence.get("matched", {}).get("surface", {})
     target_surf = matched_surface.get("wl_surface_id")
-    if target_surf is None:
+    target_commit_index = matched_surface.get("commit_index")
+    if target_surf is None or target_commit_index is None:
         raise TraceValidationError("target window surface could not be identified from trace evidence")
 
-    target_buffers = [b for b in surface_attaches.get(target_surf, []) if b != 0]
-    if not target_buffers:
+    effective_buffer = _effective_buffer_at_commit(calls, target_surf, target_commit_index)
+    if effective_buffer is None:
+        has_post_commit_attach = any(
+            c.interface == "wl_surface"
+            and c.object_id == target_surf
+            and c.method == "attach"
+            and c.index > target_commit_index
+            for c in calls
+        )
+        if has_post_commit_attach:
+            raise TraceValidationError(
+                f"no non-zero wl_buffer was effective on target window surface (wl_surface#{target_surf}) "
+                f"at HDR commit (index {target_commit_index}); wl_surface.attach was observed only after this commit"
+            )
+
+        had_attach_prior = any(
+            c.interface == "wl_surface"
+            and c.object_id == target_surf
+            and c.method == "attach"
+            and c.index < target_commit_index
+            for c in calls
+        )
+        if had_attach_prior:
+            raise TraceValidationError(
+                f"no non-zero wl_buffer was effective on target window surface (wl_surface#{target_surf}) "
+                f"at HDR commit (index {target_commit_index}); buffer was detached or set to null prior to commit"
+            )
+
         other_attaches = {
             s: [b for b in bufs if b != 0]
             for s, bufs in surface_attaches.items()
@@ -2391,7 +2466,7 @@ def create_trace_only_report(
             "trace": _input_reference(trace_path),
         }
     )
-    evidence.setdefault("matched", {}).setdefault("surface", {})["attached_buffers"] = target_buffers
+    matched_surface["effective_buffer_id"] = effective_buffer
 
     if app_subsurfaces:
         subsurface_names = ", ".join(f"wl_surface#{s}" for s in sorted(app_subsurfaces))
