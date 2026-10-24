@@ -172,6 +172,69 @@ def make_publication_report(
     return "\n".join(lines) + "\n"
 
 
+def make_fbo_pixel_measurements_artifact(
+    backend="legacy",
+    session_id="test-session-12345",
+    overall_result="PASS",
+    tolerance=0.020,
+    min_distinction=0.150,
+    modify_fn=None,
+) -> dict:
+    from src.gpu_validation import CANONICAL_PATCH_NAMES, compute_samples_hash
+
+    sdr_samples = {
+        name: (1.0, 1.0, 1.0, 1.0) if "white" in name else (0.0, 0.0, 0.0, 1.0)
+        for name in CANONICAL_PATCH_NAMES
+    }
+    hdr_samples = {
+        name: (0.58, 0.58, 0.58, 1.0) if "white" in name else (0.0, 0.0, 0.0, 1.0)
+        for name in CANONICAL_PATCH_NAMES
+    }
+    phases = {}
+    for phase, is_hdr, epoch, fbo_fmt, is_flt in (
+        ("initial_sdr", False, 1, "GL_RGBA8", False),
+        ("hdr", True, 2, "GL_RGBA16F", True),
+        ("return_sdr", False, 3, "GL_RGBA8", False),
+    ):
+        smp = hdr_samples if is_hdr else sdr_samples
+        samples_list = {k: list(v) for k, v in smp.items()}
+        phases[phase] = {
+            "status": "CAPTURED",
+            "phase": phase,
+            "slot_id": epoch - 1,
+            "epoch": epoch,
+            "frame_generation": epoch,
+            "target_properties": (
+                {"target-trc": "pq", "target-prim": "bt.2020", "target-peak": 1000}
+                if is_hdr
+                else {"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"}
+            ),
+            "fbo_format": fbo_fmt,
+            "is_float": is_flt,
+            "width": 1920,
+            "height": 1080,
+            "fixture_hash": "a" * 64,
+            "raw_samples_hash": compute_samples_hash(smp),
+            "patch_samples": samples_list,
+        }
+    data = {
+        "schema": "cinehdr.gate2w.fbo-pixel-measurements.v1",
+        "backend": backend,
+        "session_id": session_id,
+        "created_at": "2026-09-26 10:00:00 UTC",
+        "overall_result": overall_result,
+        "tolerance": float(tolerance),
+        "tolerance_status": "preliminary",
+        "min_hdr_distinction": float(min_distinction),
+        "readback_errors": [],
+        "provenance_errors": [],
+        "phases": phases,
+    }
+    if modify_fn is not None:
+        modify_fn(data)
+    return data
+
+
 class WaylandPublicationScenarioTests(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp(prefix="cinehdr_pub_test_")
@@ -217,57 +280,14 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         min_distinction=0.150,
         modify_fn=None,
     ) -> tuple[Path, str, dict]:
-        from src.gpu_validation import CANONICAL_PATCH_NAMES, compute_samples_hash
-        sdr_samples = {
-            name: (1.0, 1.0, 1.0, 1.0) if "white" in name else (0.0, 0.0, 0.0, 1.0)
-            for name in CANONICAL_PATCH_NAMES
-        }
-        hdr_samples = {
-            name: (0.58, 0.58, 0.58, 1.0) if "white" in name else (0.0, 0.0, 0.0, 1.0)
-            for name in CANONICAL_PATCH_NAMES
-        }
-        phases = {}
-        for phase, is_hdr, epoch, fbo_fmt, is_flt in (
-            ("initial_sdr", False, 1, "GL_RGBA8", False),
-            ("hdr", True, 2, "GL_RGBA16F", True),
-            ("return_sdr", False, 3, "GL_RGBA8", False),
-        ):
-            smp = hdr_samples if is_hdr else sdr_samples
-            samples_list = {k: list(v) for k, v in smp.items()}
-            phases[phase] = {
-                "status": "CAPTURED",
-                "phase": phase,
-                "slot_id": epoch - 1,
-                "epoch": epoch,
-                "frame_generation": epoch,
-                "target_properties": (
-                    {"target-trc": "pq", "target-prim": "bt.2020", "target-peak": 1000}
-                    if is_hdr else
-                    {"target-trc": "auto", "target-prim": "auto", "target-peak": "auto"}
-                ),
-                "fbo_format": fbo_fmt,
-                "is_float": is_flt,
-                "width": 1920,
-                "height": 1080,
-                "fixture_hash": "a" * 64,
-                "raw_samples_hash": compute_samples_hash(smp),
-                "patch_samples": samples_list,
-            }
-        data = {
-            "schema": "cinehdr.gate2w.fbo-pixel-measurements.v1",
-            "backend": backend,
-            "session_id": self.session_id,
-            "created_at": "2026-09-26 10:00:00 UTC",
-            "overall_result": overall_result,
-            "tolerance": float(tolerance),
-            "tolerance_status": "preliminary",
-            "min_hdr_distinction": float(min_distinction),
-            "readback_errors": [],
-            "provenance_errors": [],
-            "phases": phases,
-        }
-        if modify_fn is not None:
-            modify_fn(data)
+        data = make_fbo_pixel_measurements_artifact(
+            backend=backend,
+            session_id=self.session_id,
+            overall_result=overall_result,
+            tolerance=tolerance,
+            min_distinction=min_distinction,
+            modify_fn=modify_fn,
+        )
         artifact_path = self.backend_dir / f"gate2-wayland-fbo-pixels-{backend}-{stamp}.json"
         artifact_text = json.dumps(data, indent=2, sort_keys=True) + "\n"
         artifact_path.write_text(artifact_text, encoding="utf-8")
@@ -908,7 +928,7 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         self._write_instance_info()
 
         res = self._run_eval(backend="legacy")
-        self.assertEqual(res.returncode, 1)
+        self.assertEqual(res.returncode, 2)
         self.assertIn("UNKNOWN (legacy)", res.stdout)
         self.assertEqual(res.stderr, "")
 
@@ -932,6 +952,62 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         self.assertEqual(facts["fbo_pixel_measurements"]["status"], "PASS")
         self.assertEqual(facts["publication_report"]["result"], "PASS")
         self.assertFalse(facts["gate2w_overall_closed"])
+
+    def test_stale_unknown_facts_invalidated_on_subsequent_failure(self):
+        """Pre-existing UNKNOWN facts cannot be used when subsequent evaluation fails (e.g. damaged FBO)."""
+        # 1. First run: valid FBO + UNKNOWN trace -> returns 2, writes session_facts.json
+        pix_path, pix_sha, pix_data = self._write_valid_fbo_pixel_artifact(backend="legacy")
+        rep = make_publication_report(
+            result="PASS",
+            expected_backend="legacy",
+            active_api="opengl",
+            fbo_pixel_artifact=pix_path.name,
+            fbo_pixel_sha=pix_sha,
+            fbo_pixel_verified=True,
+        )
+        (self.backend_dir / "gate2-wayland-publication-legacy-20260926.txt").write_text(rep, encoding="utf-8")
+        unknown_trace = VALID_TRACE_SNIPPET.replace("set_tf_named(11)", "set_tf_named(5)")
+        (self.backend_dir / "wayland-client.raw.log").write_text(unknown_trace, encoding="utf-8")
+        self._write_instance_info()
+
+        res1 = self._run_eval(backend="legacy")
+        self.assertEqual(res1.returncode, 2)
+        facts_file = self.backend_dir / "session_facts.json"
+        self.assertTrue(facts_file.exists())
+        facts1 = json.loads(facts_file.read_text(encoding="utf-8"))
+        self.assertEqual(facts1["backend_result"], "UNKNOWN")
+
+        # 2. Damage FBO artifact in the same backend directory
+        fbo_dict = json.loads(pix_path.read_text(encoding="utf-8"))
+        fbo_dict["phases"].pop("hdr")
+        pix_path.write_text(json.dumps(fbo_dict), encoding="utf-8")
+
+        # 3. Repeat evaluation in the same backend directory
+        res2 = self._run_eval(backend="legacy")
+        self.assertEqual(res2.returncode, 1)  # Strict FAIL, not 2
+        self.assertIn("FAIL: mandatory FBO pixel measurements artifact is incomplete or invalid", res2.stderr)
+        self.assertFalse(facts_file.exists())  # Stale UNKNOWN facts deleted and not regenerated
+
+        # 4. Verify in shell that failure is not suppressed and cannot proceed or classify as UNKNOWN
+        cmd = [
+            "bash",
+            "-c",
+            f'source "{SCRIPT_PATH}"\n'
+            f'expected_app_commit="{EXP_APP_COMMIT}"\n'
+            f'expected_runtime_commit="{EXP_RT_COMMIT}"\n'
+            'eval_rc=0\n'
+            f'evaluate_session_results "{self.backend_dir}" "legacy" "{self.session_id}" "12345" "true" || eval_rc=$?\n'
+            'if [[ ${eval_rc} -eq 2 ]]; then\n'
+            '    echo "ERROR: treated as controlled UNKNOWN" >&2; exit 99\n'
+            'elif [[ ${eval_rc} -ne 0 ]]; then\n'
+            '    echo "REJECTED_AS_FAILURE: ${eval_rc}"\n'
+            '    exit "${eval_rc}"\n'
+            'fi\n',
+        ]
+        res3 = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
+        self.assertEqual(res3.returncode, 1)
+        self.assertIn("REJECTED_AS_FAILURE: 1", res3.stdout)
+        self.assertFalse(facts_file.exists())
 
     def test_unknown_protocol_with_damaged_fbo_artifact_fails(self):
         """UNKNOWN protocol combined with damaged mandatory FBO artifact fails closed without session_facts."""
@@ -1288,94 +1364,283 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         self.assertEqual(summary["backends"]["gpu-next"]["status"], "NOT_RUN")
         self.assertFalse(summary["claim_boundaries"]["container_session_correlated"])
 
-    def test_shell_control_path_with_unknown_protocol_writes_summary_and_exits_nonzero(self):
-        """The shell control path allows UNKNOWN to reach summary generation and exits with non-zero code."""
-        run_dir = Path(self.test_dir) / "shell_path_run"
-        legacy_dir = run_dir / "legacy"
-        legacy_dir.mkdir(parents=True)
-        (legacy_dir / "process_exit_code.txt").write_text("0\n", encoding="utf-8")
-        (legacy_dir / "cleanup_status.json").write_text(
-            json.dumps({"status": "CLEAN", "instance_terminated": True}),
-            encoding="utf-8",
+    def _run_real_runner(
+        self,
+        backend_arg: str,
+        legacy_mode: str = "PASS",
+        gpu_next_mode: str = "PASS",
+        target_script: Path | None = None,
+    ) -> tuple[subprocess.CompletedProcess, Path]:
+        runner_script = target_script if target_script is not None else SCRIPT_PATH
+        env_dir = Path(tempfile.mkdtemp(prefix="runner_env_"))
+        self.addCleanup(lambda: shutil.rmtree(env_dir, ignore_errors=True))
+
+        mock_bin = env_dir / "bin"
+        mock_bin.mkdir()
+        mock_state = env_dir / "state"
+        mock_state.mkdir()
+        fake_runtime = env_dir / "run_user"
+        fake_runtime.mkdir()
+        test_reports = env_dir / "reports"
+        test_reports.mkdir()
+        fixture_dir = test_reports / "fixtures"
+        fixture_dir.mkdir(parents=True)
+        (fixture_dir / "cinehdr-gate2-hevc-main10-yuv420p10-lossless-sdr.mp4").touch()
+        (fixture_dir / "cinehdr-gate2-hevc-main10-yuv420p10-lossless-hdr.mp4").touch()
+
+        # Mock sha256sum so fixtures pass verification
+        sha_script = mock_bin / "sha256sum"
+        sha_script.write_text(
+            '#!/usr/bin/env bash\n'
+            'for arg in "$@"; do\n'
+            '    if [[ "${arg}" =~ cinehdr-gate2-hevc-main10-yuv420p10-lossless-hdr\\.mp4$ ]]; then\n'
+            '        echo "bc437162b00b6565ca486ecc0a67704b6f099ebccf03cf671b2a0f87e94e021d  ${arg}"\n'
+            '        exit 0\n'
+            '    elif [[ "${arg}" =~ cinehdr-gate2-hevc-main10-yuv420p10-lossless-sdr\\.mp4$ ]]; then\n'
+            '        echo "41393a0ee9dd887a1f11d4b21946fef3d1f49e72127719eefd1ac40aa9d5e360  ${arg}"\n'
+            '        exit 0\n'
+            '    fi\n'
+            'done\n'
+            'exec /usr/bin/sha256sum "$@"\n'
         )
-        cp = configparser.ConfigParser()
-        cp["Application"] = {"name": EXP_APP_ID}
-        cp["Instance"] = {
-            "instance-id": "55512",
-            "app-commit": EXP_APP_COMMIT,
-            "runtime-commit": EXP_RT_COMMIT,
-        }
-        with open(legacy_dir / "instance_info", "w", encoding="utf-8") as f:
-            cp.write(f)
+        sha_script.chmod(sha_script.stat().st_mode | stat.S_IEXEC)
 
-        orig_backend_dir = self.backend_dir
-        self.backend_dir = legacy_dir
-        try:
-            pix_path, pix_sha, pix_data = self._write_valid_fbo_pixel_artifact(backend="legacy")
-            rep = make_publication_report(
-                result="PASS",
-                expected_backend="legacy",
-                active_api="opengl",
-                fbo_pixel_artifact=pix_path.name,
-                fbo_pixel_sha=pix_sha,
-                fbo_pixel_verified=True,
-                session_id=self.session_id,
-                instance_id="55512",
-            )
-            (legacy_dir / "gate2-wayland-publication-legacy-1.txt").write_text(rep, encoding="utf-8")
+        # Helper script for flatpak mock artifact generation
+        gen_script = env_dir / "mock_gen.py"
+        gen_script.write_text(f"""import json, hashlib, sys, time, os
+from pathlib import Path
+b_name, b_dir_s, s_id, inst, mode = sys.argv[1:6]
+b_dir = Path(b_dir_s)
+b_dir.mkdir(parents=True, exist_ok=True)
 
-            unknown_trace = VALID_TRACE_SNIPPET.replace("set_tf_named(11)", "set_tf_named(5)")
-            (legacy_dir / "wayland-client.raw.log").write_text(unknown_trace, encoding="utf-8")
+sys.path.insert(0, "{REPO_DIR}")
+from tests.test_wayland_publication_scenario import VALID_TRACE_SNIPPET, make_publication_report, make_fbo_pixel_measurements_artifact
 
-            cmd = [
-                "bash",
-                "-c",
-                f'source "{SCRIPT_PATH}"\n'
-                f'expected_app_commit="{EXP_APP_COMMIT}"\n'
-                f'expected_runtime_commit="{EXP_RT_COMMIT}"\n'
-                f'run_dir="{run_dir}"\n'
-                'eval_rc=0\n'
-                f'evaluate_session_results "{legacy_dir}" "legacy" "{self.session_id}" "55512" "true" || eval_rc=$?\n'
-                'if [[ ${eval_rc} -ne 0 ]]; then\n'
-                f'    facts_file="{legacy_dir}/session_facts.json"\n'
-                '    if [[ -f "${facts_file}" ]] && grep -q \'"backend_result"[[:space:]]*:[[:space:]]*"UNKNOWN"\' "${facts_file}"; then\n'
-                '        : # controlled UNKNOWN\n'
-                '    else\n'
-                '        exit "${eval_rc}"\n'
-                '    fi\n'
-                'fi\n'
-                'write_gate2w_summary "legacy"\n'
-                'summary_file="${run_dir}/gate2w_summary.json"\n'
-                'run_status="$(python3 - "${summary_file}" "legacy" << \'PY_STATUS_EOF\'\n'
-                'import json, sys\n'
-                'with open(sys.argv[1], encoding="utf-8") as f:\n'
-                '    s = json.load(f)\n'
-                'st = s.get("backends", {}).get("legacy", {}).get("status")\n'
-                'print(st if st in ("PASS", "UNKNOWN") else "FAIL")\n'
-                'PY_STATUS_EOF\n'
-                ')"\n'
-                'if [[ "${run_status}" == "PASS" ]]; then\n'
-                '    echo "Gate 2W publication validation sequence completed successfully."\n'
-                '    exit 0\n'
-                'elif [[ "${run_status}" == "UNKNOWN" ]]; then\n'
-                '    echo "Gate 2W publication validation sequence finished with UNKNOWN protocol evidence."\n'
-                '    exit 1\n'
-                'else\n'
-                '    echo "Gate 2W publication validation sequence failed."\n'
-                '    exit 1\n'
-                'fi\n',
-            ]
-            res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
-            self.assertEqual(res.returncode, 1)
-            self.assertIn("Gate 2W publication validation sequence finished with UNKNOWN protocol evidence.", res.stdout)
-            self.assertNotIn("completed successfully", res.stdout)
-            summary_file = run_dir / "gate2w_summary.json"
-            self.assertTrue(summary_file.exists())
-            summary_data = json.loads(summary_file.read_text(encoding="utf-8"))
-            self.assertEqual(summary_data["gate2w_status"], "OPEN")
-            self.assertEqual(summary_data["backends"]["legacy"]["status"], "UNKNOWN")
-        finally:
-            self.backend_dir = orig_backend_dir
+pix_data = make_fbo_pixel_measurements_artifact(
+    backend=b_name,
+    session_id=s_id,
+    modify_fn=(lambda d: d["phases"].pop("hdr")) if mode == "FAIL" else None,
+)
+
+pix_path = b_dir / f"gate2-wayland-fbo-pixels-{{b_name}}-20260926.json"
+pix_text = json.dumps(pix_data, indent=2) + "\\n"
+pix_path.write_text(pix_text, encoding="utf-8")
+pix_sha = hashlib.sha256(pix_text.encode("utf-8")).hexdigest()
+
+rep_text = make_publication_report(
+    result="PASS",
+    expected_backend=b_name,
+    active_api="opengl" if b_name == "legacy" else "opengl-next",
+    fbo_pixel_artifact=pix_path.name,
+    fbo_pixel_sha=pix_sha,
+    fbo_pixel_verified=True,
+    session_id=s_id,
+    instance_id=inst,
+)
+rep_path = b_dir / f"gate2-wayland-publication-{{b_name}}-20260926.txt"
+rep_path.write_text(rep_text, encoding="utf-8")
+now = time.time()
+os.utime(rep_path, (now + 5, now + 5))
+
+if mode == "PASS":
+    trace_text = VALID_TRACE_SNIPPET
+elif mode == "UNKNOWN":
+    trace_text = VALID_TRACE_SNIPPET.replace("set_tf_named(11)", "set_tf_named(5)")
+else: # FAIL
+    trace_text = VALID_TRACE_SNIPPET
+
+(b_dir / "wayland-client.raw.log").write_text(trace_text, encoding="utf-8")
+""")
+
+        # Mock flatpak command handling preflight, ps, kill, info, and run
+        mock_flatpak = mock_bin / "flatpak"
+        mock_flatpak.write_text(f"""#!/usr/bin/env bash
+cmd="$1"
+shift
+if [[ "${{cmd}}" == "ps" ]]; then
+    if [[ -f "{mock_state}/active_instance" ]]; then
+        cat "{mock_state}/active_instance"
+    fi
+    exit 0
+fi
+if [[ "${{cmd}}" == "kill" ]]; then
+    inst="$1"
+    rm -f "{mock_state}/active_instance"
+    rm -rf "{fake_runtime}/.flatpak/${{inst}}"
+    exit 0
+fi
+if [[ "${{cmd}}" == "info" ]]; then
+    if [[ "$1" == "--show-commit" ]]; then
+        ref="$2"
+        if [[ "${{ref}}" =~ io\\.github\\.rusmikev\\.CineHDR ]]; then
+            echo "{EXP_APP_COMMIT}"
+        else
+            echo "{EXP_RT_COMMIT}"
+        fi
+        exit 0
+    elif [[ "$1" == "--show-runtime" ]]; then
+        echo "runtime/org.gnome.Platform/x86_64/46"
+        exit 0
+    else
+        exit 0
+    fi
+fi
+if [[ "${{cmd}}" == "run" ]]; then
+    b_name=""
+    b_dir=""
+    s_id=""
+    app_c=""
+    rt_c=""
+    for a in "$@"; do
+        case "$a" in
+            --env=CINEHDR_RENDER_BACKEND=*) b_name="${{a#*CINEHDR_RENDER_BACKEND=}}" ;;
+            --env=CINEHDR_GPU_VALIDATION_REPORT_DIR=*) b_dir="${{a#*CINEHDR_GPU_VALIDATION_REPORT_DIR=}}" ;;
+            --env=CINEHDR_DIAGNOSTICS_SESSION_ID=*) s_id="${{a#*CINEHDR_DIAGNOSTICS_SESSION_ID=}}" ;;
+            --env=CINEHDR_EXPECTED_APP_COMMIT=*) app_c="${{a#*CINEHDR_EXPECTED_APP_COMMIT=}}" ;;
+            --env=CINEHDR_EXPECTED_RUNTIME_COMMIT=*) rt_c="${{a#*CINEHDR_EXPECTED_RUNTIME_COMMIT=}}" ;;
+        esac
+    done
+    inst="12345"
+    echo "${{inst}}" >&3
+    echo "${{inst}} io.github.rusmikev.CineHDR" > "{mock_state}/active_instance"
+    mkdir -p "{fake_runtime}/.flatpak/${{inst}}"
+    cat > "{fake_runtime}/.flatpak/${{inst}}/info" << INI
+[Application]
+name={EXP_APP_ID}
+
+[Instance]
+instance-id=${{inst}}
+app-commit=${{app_c}}
+runtime-commit=${{rt_c}}
+INI
+    mode="PASS"
+    if [[ "${{b_name}}" == "legacy" ]]; then
+        mode="${{TEST_MOCK_LEGACY:-PASS}}"
+    elif [[ "${{b_name}}" == "gpu-next" ]]; then
+        mode="${{TEST_MOCK_GPU_NEXT:-PASS}}"
+    fi
+    python3 "{gen_script}" "${{b_name}}" "${{b_dir}}" "${{s_id}}" "${{inst}}" "${{mode}}"
+    exit 0
+fi
+exec /usr/bin/flatpak "${{cmd}}" "$@"
+""")
+        mock_flatpak.chmod(mock_flatpak.stat().st_mode | stat.S_IEXEC)
+
+        run_dir = env_dir / f"run_{backend_arg}_{legacy_mode}_{gpu_next_mode}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        bash_cmd = f"""
+source "{runner_script}"
+report_root="{test_reports}"
+run_dir="{run_dir}"
+runtime_base="{fake_runtime}"
+expected_app_commit="{EXP_APP_COMMIT}"
+expected_runtime_commit="{EXP_RT_COMMIT}"
+export WAYLAND_DISPLAY="wayland-test-0"
+export PATH="{mock_bin}:$PATH"
+export TEST_MOCK_LEGACY="{legacy_mode}"
+export TEST_MOCK_GPU_NEXT="{gpu_next_mode}"
+main "$@"
+"""
+        res = subprocess.run(
+            ["bash", "-c", bash_cmd, "--", "--backend", backend_arg],
+            capture_output=True,
+            text=True,
+            cwd=REPO_DIR,
+        )
+        return res, run_dir
+
+    def test_real_shell_runner_single_pass_exits_zero(self):
+        """Real runner with single PASS backend completes successfully with exit code 0."""
+        res, run_dir = self._run_real_runner(backend_arg="legacy", legacy_mode="PASS")
+        self.assertEqual(res.returncode, 0, f"STDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+        self.assertIn("Gate 2W publication validation sequence completed successfully.", res.stdout)
+        summary_file = run_dir / "gate2w_summary.json"
+        self.assertTrue(summary_file.exists())
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        self.assertEqual(summary["backends"]["legacy"]["status"], "PASS")
+        self.assertEqual(summary["gate2w_status"], "OPEN")
+
+    def test_real_shell_runner_single_unknown_writes_summary_and_exits_nonzero(self):
+        """Real runner with single UNKNOWN backend writes summary and exits with non-zero exit code 1."""
+        res, run_dir = self._run_real_runner(backend_arg="legacy", legacy_mode="UNKNOWN")
+        self.assertEqual(res.returncode, 1, f"STDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+        self.assertIn("Gate 2W publication validation sequence finished with UNKNOWN protocol evidence.", res.stdout)
+        self.assertNotIn("completed successfully", res.stdout)
+        summary_file = run_dir / "gate2w_summary.json"
+        self.assertTrue(summary_file.exists())
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        self.assertEqual(summary["backends"]["legacy"]["status"], "UNKNOWN")
+        self.assertEqual(summary["gate2w_status"], "OPEN")
+        self.assertFalse(summary["gate2w_closed"])
+
+    def test_real_shell_runner_first_unknown_continues_to_second_backend(self):
+        """When legacy backend is UNKNOWN, runner must not abort early and must proceed to gpu-next."""
+        res, run_dir = self._run_real_runner(backend_arg="all", legacy_mode="UNKNOWN", gpu_next_mode="PASS")
+        self.assertEqual(res.returncode, 1, f"STDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+        self.assertTrue((run_dir / "legacy" / "session_facts.json").exists())
+        self.assertTrue((run_dir / "gpu-next" / "session_facts.json").exists())
+        summary_file = run_dir / "gate2w_summary.json"
+        self.assertTrue(summary_file.exists())
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        self.assertEqual(summary["backends"]["legacy"]["status"], "UNKNOWN")
+        self.assertEqual(summary["backends"]["gpu-next"]["status"], "PASS")
+        self.assertIn("Gate 2W publication validation sequence finished with UNKNOWN protocol evidence.", res.stdout)
+
+    def test_real_shell_runner_pass_and_unknown_matrix_aggregation(self):
+        """When legacy is PASS and gpu-next is UNKNOWN, overall result is UNKNOWN and exits non-zero."""
+        res, run_dir = self._run_real_runner(backend_arg="all", legacy_mode="PASS", gpu_next_mode="UNKNOWN")
+        self.assertEqual(res.returncode, 1, f"STDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+        self.assertTrue((run_dir / "legacy" / "session_facts.json").exists())
+        self.assertTrue((run_dir / "gpu-next" / "session_facts.json").exists())
+        summary_file = run_dir / "gate2w_summary.json"
+        self.assertTrue(summary_file.exists())
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        self.assertEqual(summary["backends"]["legacy"]["status"], "PASS")
+        self.assertEqual(summary["backends"]["gpu-next"]["status"], "UNKNOWN")
+        self.assertIn("Gate 2W publication validation sequence finished with UNKNOWN protocol evidence.", res.stdout)
+
+    def test_real_shell_runner_real_failure_does_not_become_controlled_unknown(self):
+        """Real failure (e.g. damaged FBO) fails closed with exit 1 and does not produce UNKNOWN session facts."""
+        res, run_dir = self._run_real_runner(backend_arg="legacy", legacy_mode="FAIL")
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("FAIL (legacy): evaluation failed with exit code 1", res.stderr)
+        self.assertFalse((run_dir / "legacy" / "session_facts.json").exists())
+
+    def test_real_shell_runner_mutation_sensitivity(self):
+        """Verify that real runner tests are sensitive to mutations in the shell script branches."""
+        script_text = SCRIPT_PATH.read_text(encoding="utf-8")
+
+        mut_dir = Path(tempfile.mkdtemp(prefix="runner_mut_"))
+        self.addCleanup(lambda: shutil.rmtree(mut_dir, ignore_errors=True))
+
+        # Mutation 1: erroneously exit 0 on UNKNOWN in main()
+        mut1_text = script_text.replace(
+            'elif [[ "${run_status}" == "UNKNOWN" ]]; then\n        echo "Gate 2W publication validation sequence finished with UNKNOWN protocol evidence."\n        echo "Reports preserved in: ${run_dir}"\n        exit 1',
+            'elif [[ "${run_status}" == "UNKNOWN" ]]; then\n        echo "Gate 2W publication validation sequence finished with UNKNOWN protocol evidence."\n        echo "Reports preserved in: ${run_dir}"\n        exit 0',
+        )
+        self.assertNotEqual(mut1_text, script_text)
+        mut1_script = mut_dir / "mut1.sh"
+        mut1_script.write_text(mut1_text, encoding="utf-8")
+        mut1_script.chmod(mut1_script.stat().st_mode | stat.S_IEXEC)
+
+        res1, _ = self._run_real_runner(backend_arg="legacy", legacy_mode="UNKNOWN", target_script=mut1_script)
+        self.assertEqual(res1.returncode, 0, "Mutation 1 should have produced exit code 0")
+
+        # Mutation 2: ignore eval_rc == 2 in run_backend() (fail instead of handle controlled UNKNOWN)
+        mut2_text = script_text.replace(
+            'if [[ ${eval_rc} -eq 2 ]]; then',
+            'if false; then',
+        )
+        self.assertNotEqual(mut2_text, script_text)
+        mut2_script = mut_dir / "mut2.sh"
+        mut2_script.write_text(mut2_text, encoding="utf-8")
+        mut2_script.chmod(mut2_script.stat().st_mode | stat.S_IEXEC)
+
+        res2, run_dir2 = self._run_real_runner(
+            backend_arg="all", legacy_mode="UNKNOWN", gpu_next_mode="PASS", target_script=mut2_script
+        )
+        self.assertEqual(res2.returncode, 2, "Mutation 2 should have aborted with exit code 2")
+        self.assertFalse((run_dir2 / "gpu-next").exists(), "gpu-next should not have been reached under mutation 2")
 
     def test_cleanup_handler_writes_cleanup_status(self):
         """cleanup_handler records status and signal in cleanup_status.json."""

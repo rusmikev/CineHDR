@@ -18,7 +18,7 @@ umask 077
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd -P)"
-report_root="${CINEHDR_REPORT_ROOT:-${repo_root}/validation-reports}"
+report_root="${repo_root}/validation-reports"
 run_stamp="$(date +%Y%m%d-%H%M%S)"
 run_dir="${report_root}/wayland-publication-${run_stamp}-$$"
 
@@ -256,6 +256,9 @@ evaluate_session_results() {
     local session_id="$3"
     local instance_id="${4:-}"
     local check_trace="${5:-true}"
+
+    # Invalidate stale session facts or protocol report before new evaluation
+    rm -f -- "${b_dir}/session_facts.json" "${b_dir}/gate2-wayland-color-management-${backend}.json"
 
     python3 - "${b_dir}" "${backend}" "${session_id}" "${instance_id}" "${check_trace}" \
         "${expected_app_commit}" "${expected_runtime_commit}" "${app_id}" "${repo_root}" << 'PY_EVAL_EOF'
@@ -537,7 +540,7 @@ if backend_result == "PASS":
     sys.exit(0)
 else:
     print(f"UNKNOWN ({backend}): protocol submission unverified in session {session_id}: {protocol_reason}")
-    sys.exit(1)
+    sys.exit(2)
 PY_EVAL_EOF
 }
 
@@ -765,11 +768,26 @@ EOF
 
     local eval_rc=0
     evaluate_session_results "${backend_dir}" "${backend}" "${session_id}" "${test_instance_id}" "${prot_trace}" || eval_rc=$?
-    if [[ ${eval_rc} -ne 0 ]]; then
+    if [[ ${eval_rc} -eq 2 ]]; then
         local facts_file="${backend_dir}/session_facts.json"
-        if [[ -f "${facts_file}" ]] && grep -q '"backend_result"[[:space:]]*:[[:space:]]*"UNKNOWN"' "${facts_file}"; then
+        local is_unknown="NO"
+        if [[ -f "${facts_file}" ]]; then
+            is_unknown="$(python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        d = json.load(f)
+    print("YES" if d.get("backend_result") == "UNKNOWN" else "NO")
+except Exception:
+    print("NO")
+' "${facts_file}" 2>/dev/null || echo "NO")"
+        fi
+        if [[ "${is_unknown}" == "YES" ]]; then
             return 0
         fi
+        echo "FAIL (${backend}): evaluation reported UNKNOWN exit code 2 but session facts are invalid" >&2
+        exit 1
+    elif [[ ${eval_rc} -ne 0 ]]; then
         echo "FAIL (${backend}): evaluation failed with exit code ${eval_rc}" >&2
         exit "${eval_rc}"
     fi
