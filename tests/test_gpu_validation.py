@@ -1689,7 +1689,11 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertNotIn("DRI_PRIME=", launcher)
 
     def test_launcher_is_strict_and_validator_remains_opt_in(self):
-        launcher = (ROOT / "run_gpu_validation.sh").read_text(encoding="utf-8")
+        launcher_path = ROOT / "tools" / "validation" / "run_gpu_validation.sh"
+        self.assertFalse((ROOT / "run_gpu_validation.sh").exists())
+        self.assertTrue(launcher_path.is_file())
+        launcher = launcher_path.read_text(encoding="utf-8")
+        self.assertIn('cd -- "${repo_root}"', launcher)
         main = (ROOT / "src/main.py").read_text(encoding="utf-8")
         self.assertIn('CINEHDR_RENDER_BACKEND="gpu-next"', launcher)
         self.assertIn('CINEHDR_GPU_VALIDATION="${validation_mode}"', launcher)

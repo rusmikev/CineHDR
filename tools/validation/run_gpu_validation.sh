@@ -2,14 +2,15 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-mpv_prefix="${CINEHDR_MPV_PREFIX:-${script_dir}/../mpv-gpu-next-prefix}"
+repo_root="$(cd -- "${script_dir}/../.." && pwd)"
+mpv_prefix="${CINEHDR_MPV_PREFIX:-${repo_root}/../mpv-gpu-next-prefix}"
 gpu_next_lib_dir="${mpv_prefix}/lib64"
 gpu_next_lib="${gpu_next_lib_dir}/libmpv.so.2"
 
 usage() {
     echo "Использование:" >&2
-    echo "  ./run_gpu_validation.sh <видеофайл> [quick|soak|sdr-soak|lifecycle]" >&2
-    echo "  ./run_gpu_validation.sh <SDR-файл> <HDR-файл> transition" >&2
+    echo "  tools/validation/run_gpu_validation.sh <видеофайл> [quick|soak|sdr-soak|lifecycle]" >&2
+    echo "  tools/validation/run_gpu_validation.sh <SDR-файл> <HDR-файл> transition" >&2
 }
 
 video_files=()
@@ -68,7 +69,7 @@ export LD_LIBRARY_PATH="${gpu_next_lib_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH
 export GDK_BACKEND="wayland"
 export CINEHDR_RENDER_BACKEND="gpu-next"
 export CINEHDR_GPU_VALIDATION="${validation_mode}"
-export CINEHDR_GPU_VALIDATION_REPORT_DIR="${script_dir}/validation-reports"
+export CINEHDR_GPU_VALIDATION_REPORT_DIR="${repo_root}/validation-reports"
 
 mkdir -p -- "${CINEHDR_GPU_VALIDATION_REPORT_DIR}"
 run_stamp="$(date +%Y%m%d-%H%M%S)"
@@ -77,7 +78,7 @@ run_marker="$(mktemp "${CINEHDR_GPU_VALIDATION_REPORT_DIR}/.validation-start.XXX
 trap 'rm -f -- "${run_marker}"' EXIT
 
 echo "CineHDR: полный журнал проверки: ${validation_log}"
-cd -- "${script_dir}"
+cd -- "${repo_root}"
 set +e
 python3 -c \
     'import logging, runpy; logging.basicConfig(level=logging.INFO); runpy.run_path("run_dev.py", run_name="__main__")' \
