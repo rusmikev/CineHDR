@@ -317,10 +317,8 @@ report_sha = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
 report_lines = [line.strip() for line in report_text.splitlines()]
 if "Overall result: PASS" not in report_lines:
     sys.exit(f"FAIL: publication report for {backend} did not PASS: {report_path}")
-if "Surface submission test override: enabled" not in report_lines:
-    sys.exit(f"FAIL: publication report lacks active test override: {report_path}")
-if "Override scope: test setup; not proof of Wayland submission or normal auto-mode behavior" not in report_lines:
-    sys.exit(f"FAIL: publication report lacks override scope disclosure: {report_path}")
+if "Compositor surface submission: unverified (GDK texture publication only)" not in report_lines:
+    sys.exit(f"FAIL: publication report lacks surface submission boundary disclosure: {report_path}")
 if f"Expected backend: {backend}" not in report_lines:
     sys.exit(f"FAIL: publication report expected backend mismatch: expected {backend}")
 
@@ -580,7 +578,6 @@ run_backend() {
         --instance-id-fd=3
         --env="CINEHDR_RENDER_BACKEND=${backend}"
         --env="CINEHDR_GPU_VALIDATION=publication"
-        --env="CINEHDR_FORCE_SURFACE_SUBMISSION=1"
         --env="CINEHDR_GPU_VALIDATION_REPORT_DIR=${backend_dir}"
         --env="CINEHDR_PUBLICATION_EXPECTED_BACKEND=${backend}"
         --env="CINEHDR_PUBLICATION_FIXTURE_PROFILE=${fixture_profile}"

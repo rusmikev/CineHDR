@@ -760,11 +760,6 @@ def validation_config_from_env(
                 f"got {value!r}"
             )
         publication_values[name] = value
-    if raw_mode == "publication" and source.get("CINEHDR_FORCE_SURFACE_SUBMISSION") != "1":
-        raise ValueError(
-            "publication validation requires CINEHDR_FORCE_SURFACE_SUBMISSION=1 "
-            "in the isolated test process; this override is not Wayland submission proof"
-        )
     return GpuValidationConfig(
         raw_mode,
         report_dir,
@@ -3065,9 +3060,8 @@ class GpuValidationSession:
             "Media path: omitted",
             "Saved-position/session/watch-later/playlist writes: disabled",
             "Validation HDR mode: auto (temporary; saved preference unchanged)",
-            "Surface submission test override: "
-            + ("enabled" if os.environ.get("CINEHDR_FORCE_SURFACE_SUBMISSION") == "1" else "disabled"),
-            "Override scope: test setup; not proof of Wayland submission or normal auto-mode behavior",
+            "Auto gate evaluation: hdr_output_allowed (CM-global, GTK opt-in, monitor HDR, caps)",
+            "Compositor surface submission: unverified (GDK texture publication only)",
             f"Fixture profile: {self.config.fixture_profile}",
             f"Fixture revision: {self.config.fixture_revision}",
             f"Fixture SDR SHA-256: {self.config.fixture_sdr_sha256}",

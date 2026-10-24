@@ -115,7 +115,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def publication_environment(**overrides):
     environment = {
         "CINEHDR_GPU_VALIDATION": "publication",
-        "CINEHDR_FORCE_SURFACE_SUBMISSION": "1",
         "CINEHDR_PUBLICATION_EXPECTED_BACKEND": "gpu-next",
         "CINEHDR_PUBLICATION_FIXTURE_PROFILE": PUBLICATION_FIXTURE_PROFILE,
         "CINEHDR_PUBLICATION_FIXTURE_REVISION": PUBLICATION_FIXTURE_REVISION,
@@ -281,18 +280,11 @@ class ValidationConfigTests(unittest.TestCase):
         self.assertEqual(config.fixture_hdr_sha256, PUBLICATION_HDR_SHA256)
         self.assertEqual(config.fixture_sdr_sha256, PUBLICATION_SDR_SHA256)
 
-    def test_publication_requires_exact_isolated_surface_override(self):
-        for value in (None, "0", "true"):
-            environment = publication_environment()
-            if value is None:
-                environment.pop("CINEHDR_FORCE_SURFACE_SUBMISSION")
-            else:
-                environment["CINEHDR_FORCE_SURFACE_SUBMISSION"] = value
-            with self.subTest(value=value), self.assertRaisesRegex(
-                ValueError, "CINEHDR_FORCE_SURFACE_SUBMISSION=1"
-            ):
-                validation_config_from_env(environment)
-        self.assertEqual(validation_config_from_env(publication_environment()).mode, "publication")
+    def test_publication_config_does_not_require_surface_override(self):
+        environment = publication_environment()
+        environment.pop("CINEHDR_FORCE_SURFACE_SUBMISSION", None)
+        config = validation_config_from_env(environment)
+        self.assertEqual(config.mode, "publication")
 
     def test_publication_rejects_missing_backend_or_fixture_hash(self):
         missing_backend = publication_environment()
@@ -1228,7 +1220,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             # 8. Missing app directory -> False
             self.assertFalse(is_verified_flatpak_container(info_file, app_dir=tdp / "no-such-app", mounts_path=mounts_ro))
 
-    def test_publication_report_discloses_actual_override_scope(self):
+    def test_publication_report_discloses_surface_submission_boundary(self):
         session = GpuValidationSession.__new__(GpuValidationSession)
         with tempfile.TemporaryDirectory() as report_dir:
             session.config = validation_config_from_env(
@@ -1240,14 +1232,11 @@ class PublicationEvidenceTests(unittest.TestCase):
             session._metrics_snapshot = lambda: publication_metrics("hdr")
             session._renderer_facts = lambda: ("opengl-next", "active")
             session._expected_active_api = lambda: "opengl-next"
-            with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "1"}):
-                report_path, _ = session._write_publication_report("offline probe")
+            report_path, _ = session._write_publication_report("offline probe")
             report = report_path.read_text(encoding="utf-8")
-            self.assertIn("Surface submission test override: enabled", report)
-            self.assertIn(
-                "Override scope: test setup; not proof of Wayland submission or normal auto-mode behavior",
-                report,
-            )
+            self.assertIn("Compositor surface submission: unverified (GDK texture publication only)", report)
+            self.assertIn("Auto gate evaluation: hdr_output_allowed", report)
+            self.assertNotIn("CINEHDR_FORCE_SURFACE_SUBMISSION", report)
 
     def test_publication_evaluation_rejects_backend_fallback_and_runtime_drift(self):
         final = publication_metrics("hdr")
@@ -1666,8 +1655,8 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertIn(".flatpak/${test_instance_id}/info", launcher)
         self.assertIn("CINEHDR_RENDER_BACKEND=${backend}", launcher)
         self.assertIn("CINEHDR_GPU_VALIDATION=publication", launcher)
-        self.assertIn('        --env="CINEHDR_FORCE_SURFACE_SUBMISSION=1"', launcher)
-        self.assertIn('if "Surface submission test override: enabled" not in report_lines:', launcher)
+        self.assertNotIn("CINEHDR_FORCE_SURFACE_SUBMISSION", launcher)
+        self.assertIn('if "Compositor surface submission: unverified (GDK texture publication only)" not in report_lines:', launcher)
         self.assertIn("CINEHDR_PUBLICATION_EXPECTED_BACKEND=${backend}", launcher)
         self.assertIn("CINEHDR_PUBLICATION_FIXTURE_PROFILE=${fixture_profile}", launcher)
         self.assertIn("CINEHDR_PUBLICATION_FIXTURE_REVISION=${fixture_revision}", launcher)

@@ -303,8 +303,8 @@
      В ранних прогонах Gate 1/Gate 2 пользовательские настройки `autocreate-playlist=filter` и `restore-last-playlist` подгружали посторонние файлы из каталога пользователя, а `hwdec=auto` выбирал прямой `vaapi`, тогда как для сопоставимой проверки обоих бэкендов в `prepare_validation_player(..., "publication")` требуется `hwdec="vaapi-copy"`, `pause="yes"`, `keep-open="yes"`.
   3. **Дефект 3C (ошибка формулы размеров текстуры при дробном масштабировании Wayland `1.25` и формата строки версии `libplacebo` в Run 4, `2026-10-04`)**:
      В GNOME Run 4 при дробном масштабе монитора `1.25` (`_cached_scale = 1.25`, виджет `1120×630`) `MpvVideoWidget` создавал текстуру `1400×788`, тогда как валидатор умножал размер виджета на целочисленный `scale_factor == 2` (`2240×1260`) и ложно валил проверку размеров. Одновременно строка версии `libplacebo` `"v7.360.1 (v7.360.1)"` внутри контейнера отклонялась проверкой, ожидавшей только `"v7.360.1"`.
-  4. **Дефект 3D (блокировка HDR в режиме `auto` в изолированном прогоне без `CINEHDR_FORCE_SURFACE_SUBMISSION=1`, `2026-10-04`)**:
-     Поскольку в продукте режим `auto` закрыт гейтом `is_surface_submission_proven() == False`, валидационный режим `publication` требует явного тестового переопределения `CINEHDR_FORCE_SURFACE_SUBMISSION=1` с обязательной фиксацией строки `Surface submission test override: enabled` и ограничений `Override scope` в отчёте.
+  4. **Дефект 3D (раскрытие границы доказательств: публикация текстуры не доказывает передачу HDR композитору, `2026-10-04`, актуализация P1.1 `2026-10-24`)**:
+     Исторически режим `auto` был закрыт временным заглушечным гейтом `is_surface_submission_proven() == False` и требовал тестового переопределения `CINEHDR_FORCE_SURFACE_SUBMISSION=1`. По задаче P1.1 переменная `CINEHDR_FORCE_SURFACE_SUBMISSION` удалена: гейт `auto` вычисляется динамически функцией `hdr_output_allowed()` по runtime-критериям (CM-global, GTK opt-in, монитор под окном HDR, caps). Отчёт публикации обязан фиксировать раскрытие границ доказательств (`Compositor surface submission: unverified (GDK texture publication only)`), подчеркивая, что подготовка и публикация PQ-текстуры в GTK не является подтверждением передачи HDR композитору.
   5. **Дефект 3E (отказ проверки `/app/lib/libmpv.so.2.5.0` внутри Flatpak-контейнера и защита от подмены библиотеки, `2026-10-03` — `2026-10-04`)**:
      Внутри Flatpak-контейнера `libmpv` загружается из `/app/lib/libmpv.so.2.5.0`, что первоначально отклонялось проверкой хостового префикса `mpv-gpu-next-prefix/lib64`. В `is_verified_flatpak_container()` и `publication_runtime_errors()` введена строгая проверка `/.flatpak-info`, read-only монтирования `/app` в `/proc/self/mountinfo` и канонического пути `/app/lib/libmpv.so.2.5.0` с отбраковкой любых внешних путей (`/usr/lib`, `/tmp`, симлинков наружу).
   6. **Дефект 3F (перезапись `cleanup_status.json` в `EXIT`-ловушке и ложный возврат `0` при пропаже `.flatpak/<id>/info` в `run_wayland_publication_validation.sh`, `2026-10-04`)**:
@@ -364,10 +364,10 @@
   - `PublicationEvidenceTests.test_publication_texture_evidence_fractional_scale_matching_run4` (`tests/test_gpu_validation.py`)
   - `PublicationEvidenceTests.test_publication_libplacebo_version_strict_formats` (`tests/test_gpu_validation.py`)
   - `PublicationEvidenceTests.test_missing_actual_texture_getter_is_unavailable_not_intended_state` (`tests/test_gpu_validation.py`)
-- **Дефект 3D (обязательность `CINEHDR_FORCE_SURFACE_SUBMISSION=1` и раскрытия `Override scope` в отчёте)**:
-  - `ValidationConfigTests.test_publication_requires_exact_isolated_surface_override` (`tests/test_gpu_validation.py`)
-  - `PublicationEvidenceTests.test_publication_report_discloses_actual_override_scope` (`tests/test_gpu_validation.py`)
-  - `WaylandPublicationScenarioTests.test_report_without_override_or_scope_is_rejected` (`tests/test_wayland_publication_scenario.py`)
+- **Дефект 3D (удаление `CINEHDR_FORCE_SURFACE_SUBMISSION` и раскрытие границы `Compositor surface submission: unverified`)**:
+  - `ValidationConfigTests.test_publication_config_does_not_require_surface_override` (`tests/test_gpu_validation.py`)
+  - `PublicationEvidenceTests.test_publication_report_discloses_surface_submission_boundary` (`tests/test_gpu_validation.py`)
+  - `WaylandPublicationScenarioTests.test_report_without_surface_submission_disclosure_is_rejected` (`tests/test_wayland_publication_scenario.py`)
 - **Дефект 3E (проверка `/app/lib/libmpv.so.2.5.0` внутри верифицированного Flatpak-контейнера и отбраковка подмены библиотеки)**:
   - `PublicationEvidenceTests.test_flatpak_candidate_libmpv_path_and_foreign_substitution` (`tests/test_gpu_validation.py`)
   - `PublicationEvidenceTests.test_is_verified_flatpak_container_facts` (`tests/test_gpu_validation.py`)
@@ -434,7 +434,7 @@
 - **Что доказывает живой запуск `tools/validation/run_wayland_publication_validation.sh` (на реальном GPU и Wayland-сессии)**:
   - При успешном запуске `--backend all --protocol-trace` в отдельных процессах `legacy` (`opengl`) и `gpu-next` (`opengl-next`) установленного Flatpak-пакета обе фикстуры (`SDR` и `HDR`) проходят паузовый цикл `SDR → HDR → SDR → HDR` с новым кадром на каждом шаге, валидными `Gdk.GLTexture`, прошедшим `PausedTransitionPixelOracle`, протокольной цепочкой `primary_composite` в границах §2.6 и чистым завершением (`CLEAN`). Выбор одного бэкенда или `--no-protocol-trace` соответственно сужает результат.
 - **Чего НЕ доказывает**:
-  - Отсутствие пропусков кадров при длительном воспроизведении (60 fps soak) или поведение в нормальном режиме `auto` без тестового `CINEHDR_FORCE_SURFACE_SUBMISSION=1`.
+  - Отсутствие пропусков кадров при длительном воспроизведении (60 fps soak).
   - Реальный физический HDR-вывод монитора (тон-маппинг композитора и яркость на экране проверяются только визуальным/фотометрическим оракулом L4).
 
 #### 3.7. Точки подключения в продукте

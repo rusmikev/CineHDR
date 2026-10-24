@@ -109,8 +109,7 @@ def make_publication_report(
     session_id: str | None = "test-session-12345",
     instance_id: str | None = "248765847",
     process_id: int | None = 2,
-    override: bool = True,
-    scope: bool = True,
+    surface_submission_disclosure: bool = True,
     fbo_pixel_artifact: str | None = None,
     fbo_pixel_sha: str | None = None,
     fbo_pixel_verified: bool = True,
@@ -133,11 +132,9 @@ def make_publication_report(
         "Renderer status: active",
         "Hardware decoding: vaapi-copy",
     ]
-    if override:
-        lines.append("Surface submission test override: enabled")
-    if scope:
+    if surface_submission_disclosure:
         lines.append(
-            "Override scope: test setup; not proof of Wayland submission or normal auto-mode behavior"
+            "Compositor surface submission: unverified (GDK texture publication only)"
         )
     if session_id is not None:
         lines.append(f"Session ID: {session_id}")
@@ -851,16 +848,14 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         self.assertEqual(res.returncode, 1)
         self.assertIn("WARNING: Flatpak instance 12345 was not confirmed terminated", res.stderr)
 
-    def test_report_without_override_or_scope_is_rejected(self):
-        for override, scope in ((False, True), (True, False)):
-            with self.subTest(override=override, scope=scope):
-                report = make_publication_report(override=override, scope=scope)
-                (self.backend_dir / "gate2-wayland-publication-legacy-20260926.txt").write_text(
-                    report, encoding="utf-8"
-                )
-                result = self._run_eval(backend="legacy")
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("override", result.stderr.lower())
+    def test_report_without_surface_submission_disclosure_is_rejected(self):
+        report = make_publication_report(surface_submission_disclosure=False)
+        (self.backend_dir / "gate2-wayland-publication-legacy-20260926.txt").write_text(
+            report, encoding="utf-8"
+        )
+        result = self._run_eval(backend="legacy")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("surface submission", result.stderr.lower())
 
     def test_acceptance_valid_same_session_evidence(self):
         """Positive test verifying full proven identity, metadata, exit code 0, trace PASS, and FBO pixel artifact."""
