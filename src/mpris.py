@@ -85,6 +85,8 @@ INTERFACE = """
 </node>
 """
 
+NODE_INFO = Gio.DBusNodeInfo.new_for_xml(INTERFACE)
+
 
 class MPRIS:
     def __init__(self, app: Adw.Application) -> None:
@@ -98,22 +100,23 @@ class MPRIS:
         self._app.connect("notify::active-window", self.update_props)
 
     def _on_bus_acquired(self, _source, res):
+        def register_obj(con, iface):
+            con.register_object_with_closures2(
+                object_path=self._path,
+                interface_info=iface,
+                method_call_closure=self._on_method_call,
+                get_property_closure=self._on_get_property,
+                set_property_closure=self._on_set_property,
+            )
+
         def register():
             try:
                 self._con = Gio.bus_get_finish(res)
                 Gio.bus_own_name_on_connection(
                     self._con, self._bus_name, Gio.BusNameOwnerFlags.NONE, None, None
                 )
-
-                node_info = Gio.DBusNodeInfo.new_for_xml(INTERFACE)
-                for interface in node_info.interfaces:
-                    self._con.register_object_with_closures2(
-                        object_path=self._path,
-                        interface_info=interface,
-                        method_call_closure=self._on_method_call,
-                        get_property_closure=self._on_get_property,
-                        set_property_closure=self._on_set_property,
-                    )
+                for interface in NODE_INFO.interfaces:
+                    idle_add_once(register_obj, self._con, interface)
             except Exception:
                 logger.exception("MPRIS Bus failed")
 

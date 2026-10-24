@@ -36,7 +36,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("GObject", "2.0")
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from .diagnostics_report import DiagnosticsExporter
 from .hdr_menu import HdrMenuButton
@@ -74,8 +74,6 @@ from .utils import (
 )
 logger = logging.getLogger(__name__)
 gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
-
-DEFAULT_WIDTH, DEFAULT_HEIGHT = 1120, 630
 
 
 def safe_mpv_file_error_label(value: object) -> str:
@@ -218,6 +216,7 @@ class CineWindow(Adw.ApplicationWindow):
         self._hide_icon_indicator: bool = True
         self.skip_pause_obs_count: int = 0
         self._playing_on_press: bool = False
+        self._duration: float = 0.0
         self.thumb_area: ThumbPreviewGLArea | None = None
         self._thumb_w: int = 1280
         self.is_local_path: bool = True
@@ -391,7 +390,7 @@ class CineWindow(Adw.ApplicationWindow):
             "/io/github/rusmikev/CineHDR/shortcuts-dialog.ui"
         )
         self.shortcuts_dialog = cast(
-            Adw.ShortcutsDialog,  # pyright: ignore[reportAttributeAccessIssue]
+            Adw.ShortcutsDialog,
             builder.get_object("shortcuts_dialog"),
         )
         populate_shortcuts_dialog_mpv(self.shortcuts_dialog, self._input_bindings)
@@ -402,8 +401,6 @@ class CineWindow(Adw.ApplicationWindow):
         history_dialog.present(self)
 
     def _setup_widgets(self):
-        self.set_default_size(DEFAULT_WIDTH, DEFAULT_HEIGHT)
-
         for widget in [
             self.controls_wrap_box,
             self.volume_box,
@@ -526,13 +523,18 @@ class CineWindow(Adw.ApplicationWindow):
             click_gesture = Gtk.GestureClick(button=btn_num)
             click_gesture.connect("pressed", self._on_click_pressed, MBTN)
             click_gesture.connect("released", self._on_click_released, MBTN)
-            self.video_overlay.add_controller(click_gesture)
+            self.toast_overlay.add_controller(click_gesture)
 
         long_press = Gtk.GestureLongPress.new()
         long_press.connect("pressed", self._on_click_hold)
         long_press.connect("end", self._cancel_click_hold)
         long_press.connect("cancelled", self._cancel_click_hold)
         self.window_handle.add_controller(long_press)
+
+        for c in self.window_handle.observe_controllers():
+            if isinstance(c, Gtk.GestureClick):
+                c.set_propagation_phase(Gtk.PropagationPhase.NONE)
+                c.set_button(9)
 
         @self._connect("notify::visible-dialog")
         def on_vis_dialog_change(*args):
@@ -557,7 +559,7 @@ class CineWindow(Adw.ApplicationWindow):
                 self._is_inactive = True
 
         drop_target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
-        drop_target.set_gtypes([Gdk.FileList, GObject.TYPE_STRING])
+        drop_target.set_gtypes([Gdk.FileList, str])
         drop_target.connect("enter", self._on_drop_enter)
         drop_target.connect("leave", self._on_drop_leave)
         drop_target.connect("drop", self._on_drop)
@@ -577,7 +579,7 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self._connect("notify::maximized")
         def on_maximized_change(*args):
-            settings.set_boolean("is-maximized", self.is_maximized())
+            settings.set_boolean("is-maximized", self.props.maximized)
 
         self.connect("notify::fullscreened", self._set_fs_state)
 
@@ -604,23 +606,6 @@ class CineWindow(Adw.ApplicationWindow):
 
                 popover.connect("closed", on_popv_closed)
 
-        # TODO: remove for gnome 51
-        # Somehow because the options menu contains other menus popovers inside,
-        # when closing it, contains_pointer from header/controls still returns True,
-        # even if not hovering; setting Gtk.PropagationLimit.NONE seems to be the only way to fix it
-        # Also affects click behaviour, when closing without the workaround, click gesture wont work
-        # and will activate the window_handle clicks instead, until controls are hovered again
-
-        def set_p_limit_workaround(btn, _gparam):
-            limit = (
-                Gtk.PropagationLimit.NONE
-                if btn.props.active
-                else Gtk.PropagationLimit.SAME_NATIVE
-            )
-            self.motion_controls.set_propagation_limit(limit)
-
-        self.options_menu_btn.connect("notify::active", set_p_limit_workaround)
-        self.hdr_menu_btn.connect("notify::active", set_p_limit_workaround)
 
     def _set_fs_state(self, _window, _gparam):
         is_fullscreen = self.props.fullscreened
@@ -1047,19 +1032,18 @@ class CineWindow(Adw.ApplicationWindow):
         a.stop() if self._is_audio else a.load_file(self._video_path)
 
     def _hide_time_tooltip(self, *args):
-        self.prev_reveal = False
+        self._prev_reveal = False
         self.tooltip_thumb_revealer.set_reveal_child(False)
         self.tooltip_label_revealer.set_reveal_child(False)
 
     def _set_time_tooltip(self, *args):
         self._prev_prog_motion_xy = (-1, -1)  # triggers _on_progress_motion
-        self.width = self.get_width()
-        self.prog_width = self.video_progress_scale.get_width()
-        self.duration = float(self.mpv.duration or 0)
-        self.prev_reveal = False
+        self._width = self.get_width()
+        self._prog_width = self.video_progress_scale.get_width()
+        self._prev_reveal = False
 
     def _move_time_tooltip(self, revealer, layer: Gtk.Fixed, x, tooltip_w):
-        x_pos = max(0, min(x - (tooltip_w / 2) + 23, self.width - tooltip_w))
+        x_pos = max(0, min(x - (tooltip_w / 2) + 23, self._width - tooltip_w))
         layer.move(revealer, x_pos, 0)
 
     def _on_progress_motion(self, _controller, x, y):
@@ -1073,16 +1057,16 @@ class CineWindow(Adw.ApplicationWindow):
 
         show_thumb = self.thumb_area is not None and not self._is_audio
 
-        if not self.prev_reveal:
+        if not self._prev_reveal:
             self.tooltip_thumb_revealer.set_reveal_child(show_thumb)
             self.tooltip_label_revealer.set_reveal_child(True)
-            self.prev_reveal = True
+            self._prev_reveal = True
 
-        if self.prog_width <= 0:
+        if self._prog_width <= 0:
             return
 
-        percentage = max(0, min(1, x / self.prog_width))
-        self._hover_time = percentage * self.duration
+        percentage = max(0, min(1, x / self._prog_width))
+        self._hover_time = percentage * self._duration
 
         title = None
         if self._chapters:
@@ -1302,7 +1286,7 @@ class CineWindow(Adw.ApplicationWindow):
             self._playing_on_press = not self.mpv.pause
             if self._playing_on_press:
                 self.skip_pause_obs_count += 1
-                self.mpv.command("set", "pause", "yes")
+                self.mpv.command_async("set", "pause", "yes")
         except Exception:
             logger.exception("_on_progress_pressed failed")
             self.skip_pause_obs_count = 0
@@ -1312,7 +1296,7 @@ class CineWindow(Adw.ApplicationWindow):
             if self._playing_on_press:
                 self.skip_pause_obs_count += 1
                 self._playing_on_press = False
-                self.mpv.command("set", "pause", "no")
+                self.mpv.command_async("set", "pause", "no")
         except Exception:
             logger.exception("_on_progress_released failed")
             self.skip_pause_obs_count = 0
@@ -1571,8 +1555,7 @@ class CineWindow(Adw.ApplicationWindow):
 
     def _on_click_pressed(self, gesture, _n_press, x, y, button):
         self.skip_pause_obs_count = 0
-        if self._is_hovering_ui() and button != "MBTN_MID":
-            return
+
 
         if button == "MBTN_LEFT":
             self._left_clk = settings.get_int("left-click")
@@ -1611,7 +1594,6 @@ class CineWindow(Adw.ApplicationWindow):
             new_speed = self._prev_speed * 2
             self.mpv.speed = new_speed
             self.mpv.show_text(f"{new_speed:g}× ⯈⯈", "100000000")
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         except mpv.ShutdownError:
             pass
 
@@ -1624,7 +1606,6 @@ class CineWindow(Adw.ApplicationWindow):
             logger.exception("_run_command failed")
 
     def _on_click_released(self, gesture, n_press, _x, _y, button):
-        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         ignored_btn = button in ("MBTN_BACK", "MBTN_FORWARD")
         ignore_left = (
             self._is_inactive
@@ -1734,27 +1715,7 @@ class CineWindow(Adw.ApplicationWindow):
         separator_hover = self.motion_controls_separator.props.contains_pointer
         hovering = (controls_hover or header_hover) and not separator_hover
         return hovering
-    def set_window_size(self, width, height):
-        if width <= 0 or height <= 0:
-            return
 
-        aspect_ratio = width / height
-        base_size = DEFAULT_HEIGHT
-
-        if aspect_ratio < 1:
-            new_h = int(base_size / aspect_ratio)
-            new_w = base_size
-        else:
-            new_w = int(base_size * aspect_ratio)
-            new_h = base_size
-
-        MAX_W, MAX_H = 1280, 720
-        if new_w > MAX_W or new_h > MAX_H:
-            scale = min(MAX_W / new_w, MAX_H / new_h)
-            new_w = int(new_w * scale)
-            new_h = int(new_h * scale)
-
-        self.set_default_size(new_w, new_h)
 
     def _sync_inhibit(self):
         try:
@@ -1781,7 +1742,7 @@ class CineWindow(Adw.ApplicationWindow):
 
         if not self._hide_icon_indicator:
             self.revealer_icon_indicator.set_reveal_child(True)
-            timeout_add_once(350, self.revealer_icon_indicator.set_reveal_child, False)
+            timeout_add_once(385, self.revealer_icon_indicator.set_reveal_child, False)
 
     def on_first_media_frame_published(
         self,
@@ -2063,7 +2024,7 @@ class CineWindow(Adw.ApplicationWindow):
                 scale.add_mark(b_time, Gtk.PositionType.BOTTOM, None)
                 btn.remove_css_class("a-loop")
 
-            if ab_off and name == "ab-loop-a":
+            if ab_off:
                 btn.remove_css_class("a-loop")
                 scale.clear_marks()
                 for chapter in self._chapters:
@@ -2135,7 +2096,9 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("duration")
         def on_duration_change(_name, value):
-            idle_add_once(self._update_duration, float(value or 0))
+            val = float(value or 0)
+            self._duration = val
+            idle_add_once(self._update_duration, val)
 
         def sync_mute(muted):
             self.mute_toggle_btn.handler_block(self.mute_handler_id)

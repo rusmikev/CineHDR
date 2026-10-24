@@ -247,13 +247,7 @@ def populate_shortcuts_dialog_mpv(dialog, mpv_bindings):
 
     for title, items in sections.items():
         if items:
-            section_widget = Adw.ShortcutsSection(  # pyright: ignore[reportAttributeAccessIssue]
-                title=title
-            )
+            section_widget = Adw.ShortcutsSection(title=title)
             dialog.add(section_widget)
             for label, accels in items:
-                section_widget.add(
-                    Adw.ShortcutsItem(  # pyright: ignore[reportAttributeAccessIssue]
-                        title=label, accelerator=accels
-                    )
-                )
+                section_widget.add(Adw.ShortcutsItem(title=label, accelerator=accels))

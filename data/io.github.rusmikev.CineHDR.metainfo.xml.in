@@ -70,6 +70,13 @@
   </requires>
 
   <releases>
+    <release version="1.8.7.0" date="2026-10-24">
+      <description translate="no">
+        <ul>
+          <li>Merged upstream Cine v1.8.7 (improved startup, dynamic window sizing based on screen size, fixed mouse click handling)</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.5.2.0" date="2026-08-23">
       <description translate="no">
         <ul>

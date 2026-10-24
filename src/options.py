@@ -112,20 +112,14 @@ class OptionsMenuButton(Gtk.MenuButton):
             spin_down.props.width_request = 50
             spin_up.props.width_request = 50
 
-        # TODO: remove for gnome 51
-        # GTK bug: not possible to close popover after opening dropdown
-        self.popv_motion = Gtk.EventControllerMotion()
-        for btn_num in range(1, 4):
-            gesture_click = Gtk.GestureClick(button=btn_num)
-            gesture_click.connect("pressed", self._popdown)
-            self.popover.add_controller(gesture_click)
-        self.popover.add_controller(self.popv_motion)
-
-    def _popdown(self, *args):
-        if not self.popv_motion.props.contains_pointer:
-            self.grab_focus()
-            self.popover.popdown()
-            self.grab_focus()
+    def _set_sensitive(self, button: Gtk.Button, sensitive: bool):
+        # Sometimes when clicking a reset button, motion_controls contains pointer
+        # will change to True even though the cursor is not hovering
+        # which will result in clicks not working and ui not hiding (likely a GTK issue).
+        # Using can_target and can_focus instead of set_sensitive to fix this.
+        button.set_can_target(sensitive)
+        button.set_can_focus(sensitive)
+        button.props.opacity = 1 if sensitive else 0.4
 
     def _on_active_changed(self, *arg):
         if not self.get_active():
@@ -134,7 +128,7 @@ class OptionsMenuButton(Gtk.MenuButton):
 
         aspect_overr = cast(float, self._win.mpv["video-aspect-override"])
         target_val = aspect_overr if aspect_overr > 0 else -1
-        self.aspect_reset_btn.set_sensitive(target_val != -1)
+        self._set_sensitive(self.aspect_reset_btn, target_val != -1)
 
         aspects = self.aspect_list
         for i in range(aspects.get_n_items()):
@@ -161,7 +155,7 @@ class OptionsMenuButton(Gtk.MenuButton):
         def set_open_val(spin, reset_btn, val, default_val=0.0):
             if spin.get_value() != val:
                 spin.set_value(val)
-            reset_btn.set_sensitive(abs(val - default_val) > 0.001)
+            self._set_sensitive(reset_btn, abs(val - default_val) > 0.001)
 
         controls = [
             ("video-zoom", self.zoom_spin, self.zoom_reset_btn, 0.0),
@@ -180,19 +174,19 @@ class OptionsMenuButton(Gtk.MenuButton):
             set_open_val(spin, reset_btn, val, default_val=default)
 
         rotate_val = int(self._win.mpv["video-rotate"] or 0)
-        self.rotate_reset_btn.set_sensitive(rotate_val != 0)
+        self._set_sensitive(self.rotate_reset_btn, rotate_val != 0)
 
-        self.flip_reset_btn.set_sensitive(self._has_flip())
+        self._set_sensitive(self.flip_reset_btn, self._has_flip())
 
         try:
             crop_str = cast(str, self._win.mpv["video-crop"])
 
             if not crop_str:
                 self.crop_dropdown.set_selected(0)
-                self.crop_reset_btn.set_sensitive(False)
+                self._set_sensitive(self.crop_reset_btn, False)
                 return
 
-            self.crop_reset_btn.set_sensitive(True)
+            self._set_sensitive(self.crop_reset_btn, True)
 
             # Crop from cine: 1900x958
             # from autocrop: 1900x958+0+60
@@ -208,7 +202,7 @@ class OptionsMenuButton(Gtk.MenuButton):
         except Exception:
             logger.exception("Failed to get crop")
             self.crop_dropdown.set_selected(0)
-            self.crop_reset_btn.set_sensitive(False)
+            self._set_sensitive(self.crop_reset_btn, False)
 
     @Gtk.Template.Callback()
     def _on_reset_all_options(self, _btn):
@@ -234,23 +228,23 @@ class OptionsMenuButton(Gtk.MenuButton):
         item_str = model.get_string(idx)
         val = "no" if idx == 0 else item_str
         self._win.mpv.command_async("set", "video-aspect-override", val)
-        self.aspect_reset_btn.set_sensitive(idx != 0)
+        self._set_sensitive(self.aspect_reset_btn, idx != 0)
 
     @Gtk.Template.Callback()
     def _on_aspect_reset(self, _btn):
         self.aspect_dropdown.set_selected(0)
-        self.aspect_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.aspect_reset_btn, False)
 
     # --- CROP ---
     @Gtk.Template.Callback()
     def _on_crop_reset(self, button):
         self.crop_dropdown.set_selected(0)
-        self.crop_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.crop_reset_btn, False)
 
     @Gtk.Template.Callback()
     def _on_crop_changed(self, dropdown, *args):
         idx = dropdown.get_selected()
-        self.crop_reset_btn.set_sensitive(idx != 0)
+        self._set_sensitive(self.crop_reset_btn, idx != 0)
 
         if idx == 0:
             self._win.mpv.command_async("set", "video-crop", "")
@@ -279,19 +273,19 @@ class OptionsMenuButton(Gtk.MenuButton):
         curr = cast(int, self._win.mpv["video-rotate"] or 0)
         next_rot = (curr + 90) % 360
         self._win.mpv.command_async("set", "video-rotate", next_rot)
-        self.rotate_reset_btn.set_sensitive(next_rot != 0)
+        self._set_sensitive(self.rotate_reset_btn, next_rot != 0)
 
     @Gtk.Template.Callback()
     def _on_rotate_left(self, _btn):
         curr = cast(int, self._win.mpv["video-rotate"] or 0)
         next_rot = (curr - 90) % 360
         self._win.mpv.command_async("set", "video-rotate", next_rot)
-        self.rotate_reset_btn.set_sensitive(next_rot != 0)
+        self._set_sensitive(self.rotate_reset_btn, next_rot != 0)
 
     @Gtk.Template.Callback()
     def _on_rotate_reset(self, _btn):
         self._win.mpv.command_async("set", "video-rotate", 0)
-        self.rotate_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.rotate_reset_btn, False)
 
     def _has_flip(self):
         shaders = cast(list, self._win.mpv.glsl_shaders)
@@ -302,125 +296,125 @@ class OptionsMenuButton(Gtk.MenuButton):
     def _on_flip_horiz(self, _btn):
         mpv = self._win.mpv
         mpv.command("change-list", "glsl-shaders", "toggle", FLIP_H)
-        self.flip_reset_btn.set_sensitive(self._has_flip())
+        self._set_sensitive(self.flip_reset_btn, self._has_flip())
 
     @Gtk.Template.Callback()
     def _on_flip_vert(self, _btn):
         mpv = self._win.mpv
         mpv.command("change-list", "glsl-shaders", "toggle", FLIP_V)
-        self.flip_reset_btn.set_sensitive(self._has_flip())
+        self._set_sensitive(self.flip_reset_btn, self._has_flip())
 
     @Gtk.Template.Callback()
     def _on_flip_reset(self, _btn):
         mpv = self._win.mpv
         mpv.command_async("change-list", "glsl-shaders", "remove", FLIP_H)
         mpv.command_async("change-list", "glsl-shaders", "remove", FLIP_V)
-        self.flip_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.flip_reset_btn, False)
 
     # --- ZOOM ---
     @Gtk.Template.Callback()
     def _on_zoom_changed(self, spin):
         val = round(spin.get_value(), 4)
         self._win.mpv["video-zoom"] = val
-        self.zoom_reset_btn.set_sensitive(val != 0.0)
+        self._set_sensitive(self.zoom_reset_btn, val != 0.0)
 
     @Gtk.Template.Callback()
     def _on_zoom_reset(self, _btn):
         self.zoom_spin.set_value(0)
-        self.zoom_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.zoom_reset_btn, False)
 
     # --- CONTRAST ---
     @Gtk.Template.Callback()
     def _on_contrast_changed(self, spin):
         val = int(spin.get_value())
         self._win.mpv["contrast"] = val
-        self.contrast_reset_btn.set_sensitive(val != 0)
+        self._set_sensitive(self.contrast_reset_btn, val != 0)
 
     @Gtk.Template.Callback()
     def _on_contrast_reset(self, _btn):
         self.contrast_spin.set_value(0)
-        self.contrast_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.contrast_reset_btn, False)
 
     # --- BRIGHTNESS ---
     @Gtk.Template.Callback()
     def _on_brightness_changed(self, spin):
         val = int(spin.get_value())
         self._win.mpv["brightness"] = val
-        self.brightness_reset_btn.set_sensitive(val != 0)
+        self._set_sensitive(self.brightness_reset_btn, val != 0)
 
     @Gtk.Template.Callback()
     def _on_brightness_reset(self, _btn):
         self.brightness_spin.set_value(0)
-        self.brightness_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.brightness_reset_btn, False)
 
     # --- GAMMA ---
     @Gtk.Template.Callback()
     def _on_gamma_changed(self, spin):
         val = int(spin.get_value())
         self._win.mpv["gamma"] = val
-        self.gamma_reset_btn.set_sensitive(val != 0)
+        self._set_sensitive(self.gamma_reset_btn, val != 0)
 
     @Gtk.Template.Callback()
     def _on_gamma_reset(self, _btn):
         self.gamma_spin.set_value(0)
-        self.gamma_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.gamma_reset_btn, False)
 
     # --- SATURATION ---
     @Gtk.Template.Callback()
     def _on_saturation_changed(self, spin):
         val = int(spin.get_value())
         self._win.mpv["saturation"] = val
-        self.saturation_reset_btn.set_sensitive(val != 0)
+        self._set_sensitive(self.saturation_reset_btn, val != 0)
 
     @Gtk.Template.Callback()
     def _on_saturation_reset(self, _btn):
         self.saturation_spin.set_value(0)
-        self.saturation_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.saturation_reset_btn, False)
 
     # --- HUE ---
     @Gtk.Template.Callback()
     def _on_hue_changed(self, spin):
         val = int(spin.get_value())
         self._win.mpv["hue"] = val
-        self.hue_reset_btn.set_sensitive(val != 0)
+        self._set_sensitive(self.hue_reset_btn, val != 0)
 
     @Gtk.Template.Callback()
     def _on_hue_reset(self, _btn):
         self.hue_spin.set_value(0)
-        self.hue_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.hue_reset_btn, False)
 
     # --- SUBTITLE DELAY ---
     @Gtk.Template.Callback()
     def _on_sub_delay_changed(self, spin):
         val = round(spin.get_value(), 4)
         self._win.mpv["sub-delay"] = val
-        self.sub_delay_reset_btn.set_sensitive(val != 0.0)
+        self._set_sensitive(self.sub_delay_reset_btn, val != 0.0)
 
     @Gtk.Template.Callback()
     def _on_sub_delay_reset(self, _btn):
         self.sub_delay_spin.set_value(0)
-        self.sub_delay_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.sub_delay_reset_btn, False)
 
     # --- AUDIO DELAY ---
     @Gtk.Template.Callback()
     def _on_audio_delay_changed(self, spin):
         val = round(spin.get_value(), 4)
         self._win.mpv["audio-delay"] = val
-        self.audio_delay_reset_btn.set_sensitive(val != 0.0)
+        self._set_sensitive(self.audio_delay_reset_btn, val != 0.0)
 
     @Gtk.Template.Callback()
     def _on_audio_delay_reset(self, _btn):
         self.audio_delay_spin.set_value(0)
-        self.audio_delay_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.audio_delay_reset_btn, False)
 
     # --- PLAYBACK SPEED ---
     @Gtk.Template.Callback()
     def _on_speed_changed(self, spin):
         val = round(spin.get_value(), 4)
         self._win.mpv["speed"] = val
-        self.speed_reset_btn.set_sensitive(abs(val - 1.0) > 0.001)
+        self._set_sensitive(self.speed_reset_btn, abs(val - 1.0) > 0.001)
 
     @Gtk.Template.Callback()
     def _on_speed_reset(self, _btn):
         self.speed_spin.set_value(1.0)
-        self.speed_reset_btn.set_sensitive(False)
+        self._set_sensitive(self.speed_reset_btn, False)

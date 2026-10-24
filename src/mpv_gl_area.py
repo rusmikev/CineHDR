@@ -48,8 +48,18 @@ class BaseGLArea(Gtk.GLArea):
         super().__init__(**kwargs)
         self._ctx: mpv.MpvRenderContext | None = None
         self._fbo = ctypes.c_int()
+        self._fbo_width = 0
+        self._fbo_height = 0
+
         self.connect("realize", self._on_realize)
         self.connect("render", self._on_render)
+        self.connect("resize", self._set_w_h)
+        self.connect("notify::scale-factor", self._set_w_h)
+
+    def _set_w_h(self, *args):
+        scale = self.props.scale_factor
+        self._fbo_width = self.get_width() * scale
+        self._fbo_height = self.get_height() * scale
 
     def _setup_mpv_context(self, mpv_instance: mpv.MPV) -> mpv.MpvRenderContext | None:
         try:
@@ -81,8 +91,8 @@ class BaseGLArea(Gtk.GLArea):
             self._ctx.render(
                 flip_y=True,
                 opengl_fbo={
-                    "w": self.get_width() * self.props.scale_factor,
-                    "h": self.get_height() * self.props.scale_factor,
+                    "w": self._fbo_width,
+                    "h": self._fbo_height,
                     "fbo": self._fbo.value,
                 },
             )

@@ -155,7 +155,7 @@ class Playlist(Adw.Dialog):
         self.playlist_list_view.remove_css_class("view")
 
         drop_target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
-        drop_target.set_gtypes([Gdk.FileList, GObject.TYPE_STRING])
+        drop_target.set_gtypes([Gdk.FileList, str])
         drop_target.connect("enter", self._on_drop_enter)
         drop_target.connect("leave", self._on_drop_leave)
         drop_target.connect("drop", self._on_drop)
@@ -227,7 +227,7 @@ class Playlist(Adw.Dialog):
         row_drag_source.connect("drag-begin", self._on_row_drag_begin)
         row.add_controller(row_drag_source)
 
-        row_drop_target = Gtk.DropTarget.new(GObject.TYPE_INT, Gdk.DragAction.MOVE)
+        row_drop_target = Gtk.DropTarget.new(int, Gdk.DragAction.MOVE)
         row_drop_target.connect("drop", self._on_row_drop, list_item)
         row.add_controller(row_drop_target)
 

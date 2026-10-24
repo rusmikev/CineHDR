@@ -2724,7 +2724,8 @@ class TestStartupFixtureContract(unittest.TestCase):
             app.props = MagicMock()
             app.props.active_window = None
             app.get_windows = MagicMock(return_value=[mock_win])
-            app.find_first_file = MagicMock(return_value=None)
+            app._find_first_file = MagicMock(return_value=None)
+            app._set_size_and_present = MagicMock()
             app.hide_ui_timeout = MagicMock()
 
             gfile = MagicMock()
@@ -2754,7 +2755,8 @@ class TestStartupFixtureContract(unittest.TestCase):
             app.props = MagicMock()
             app.props.active_window = None
             app.get_windows = MagicMock(return_value=[prev_win, active_win])
-            app.find_first_file = MagicMock(return_value=None)
+            app._find_first_file = MagicMock(return_value=None)
+            app._set_size_and_present = MagicMock()
             app.hide_ui_timeout = MagicMock()
 
             gfile = MagicMock()

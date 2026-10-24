@@ -10,11 +10,10 @@ template $CineWindow: Adw.ApplicationWindow {
   height-request: 187;
 
   Adw.Breakpoint breakpoint {
-    condition ("max-width: 550sp")
+    condition ("max-width: 566sp")
 
     setters {
       controls_separator.visible: false;
-      controls_wrap_box.child-spacing: 6;
     }
   }
 
@@ -35,7 +34,7 @@ template $CineWindow: Adw.ApplicationWindow {
 
         [overlay]
         Revealer revealer_icon_indicator {
-          transition-duration: 350;
+          transition-duration: 385;
           transition-type: crossfade;
 
           Image icon_indicator {
@@ -95,14 +94,22 @@ template $CineWindow: Adw.ApplicationWindow {
                 always-show-arrow: true;
 
                 menu-model: menu {
-                  item (_("Open Files"), "win.clear-and-add")
-                  item (_("Open Folder"), "win.open-folder")
-                  item (_("Open URL"), "win.open-url")
-                  item (_("Add Files"), "win.add-playlist-files")
-                  item (_("Add Folder"), "win.add-playlist-folder")
-                  item (_("Add URL"), "win.add-url")
-                  item (_("Add Subtitle Track"), "win.add-sub-tracks")
-                  item (_("Add Audio Track"), "win.add-audio-tracks")
+                  section {
+                    item (_("Open Files"), "win.clear-and-add")
+                    item (_("Open Folder"), "win.open-folder")
+                    item (_("Open URL"), "win.open-url")
+                  }
+
+                  section {
+                    item (_("Add Files"), "win.add-playlist-files")
+                    item (_("Add Folder"), "win.add-playlist-folder")
+                    item (_("Add URL"), "win.add-url")
+                  }
+
+                  section {
+                    item (_("Add Subtitle Track"), "win.add-sub-tracks")
+                    item (_("Add Audio Track"), "win.add-audio-tracks")
+                  }
 
                   section {
                     item (_("Watch History"), "win.open-history")
@@ -220,6 +227,10 @@ template $CineWindow: Adw.ApplicationWindow {
 
                       Scale volume_scale {
                         width-request: 180;
+
+                        styles [
+                          "volume-scale",
+                        ]
 
                         adjustment: Adjustment volume_scale_adj {
                           lower: 0;

@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 gtk = ctypes.CDLL("libgtk-4.so.1")
 display = Gdk.Display.get_default()
 
+DEFAULT_OCCUPY_SCREEN = 0.4
+# Screens with this resolution or smaller are handled as small
+SMALL_SCREEN_AREA = 1280 * 1024
+# For small monitors, occupy 80% of the screen area
+SMALL_OCCUPY_SCREEN = 0.8
 
 try:
     join = os.path.join
@@ -220,6 +225,112 @@ def get_display_param():
     return param
 
 
+def _get_fallback_w_h(width, height):
+    aspect_ratio = width / height
+    base_size = 1120
+
+    if aspect_ratio < 1:
+        new_h = int(base_size / aspect_ratio)
+        new_w = base_size
+    else:
+        new_w = int(base_size * aspect_ratio)
+        new_h = base_size
+
+    max_w, max_h = 1280, 720
+    if new_w > max_w or new_h > max_h:
+        scale = min(max_w / new_w, max_h / new_h)
+        new_w = int(new_w * scale)
+        new_h = int(new_h * scale)
+
+    return new_w, new_h
+
+
+def _get_window_w_h(window, width, height):
+    # Code mostly copied from showtime/loupe:
+    # https://gitlab.gnome.org/GNOME/showtime/-/blob/25066ad0ca1c20bd8b9f6f776f5be75b31277039/showtime/widgets/window.py#L467-500
+    # https://gitlab.gnome.org/GNOME/loupe/-/blob/4ca5f9e03d18667db5d72325597cebc02887777a/src/widgets/image/rendering.rs#L151
+
+    if not (surface := window.get_surface()):
+        logger.error("Could not get GdkSurface to set window size")
+        return _get_fallback_w_h(width, height)
+
+    if not (monitor := window.props.display.get_monitor_at_surface(surface)):
+        logger.error("Could not get GdkMonitor to set window size")
+        return _get_fallback_w_h(width, height)
+
+    hidpi_scale = surface.props.scale_factor
+    monitor_rect = monitor.props.geometry
+    monitor_width = monitor_rect.width
+    monitor_height = monitor_rect.height
+
+    monitor_area = monitor_width * monitor_height
+    logical_monitor_area = monitor_area * pow(hidpi_scale, 2)
+
+    occupy_area_factor = (
+        SMALL_OCCUPY_SCREEN
+        if logical_monitor_area <= SMALL_SCREEN_AREA
+        else DEFAULT_OCCUPY_SCREEN
+    )
+
+    video_area = width * height
+    size_scale = (monitor_area / video_area * occupy_area_factor) ** 0.5
+    target_scale = min(1, size_scale)
+    new_w = width * target_scale
+    new_h = height * target_scale
+
+    max_w = monitor_width - 96
+    if new_w > max_w:
+        new_w = max_w
+        new_h = height * new_w / width
+
+    max_h = monitor_height - 106 * hidpi_scale
+    if new_h > max_h:
+        new_h = max_h
+        new_w = width * new_h / height
+
+    target_aspect = width / height
+    final_h = round(new_h)
+    final_w = round(new_w)
+    tolerance = 0.00001
+
+    # More precise aspect ratio due to how size is handled during mpv ctx render
+    # to prevent a 1px black line along the window border
+    for _ in range(20):
+        current_aspect = final_w / final_h
+
+        if abs(current_aspect - target_aspect) <= tolerance:
+            break
+
+        if current_aspect < target_aspect:
+            final_w += 1
+        else:
+            final_h += 1
+
+    return final_w, final_h
+
+
+def set_window_size(window, width, height):
+    if width <= 0 or height <= 0:
+        return
+
+    scale_tiers = (
+        (144, 1.6666),
+        (240, 1.50),
+        (360, 1.3333),
+        (480, 1.15),
+    )
+
+    # Scale up small videos
+    for threshold, multiplier in scale_tiers:
+        if min(width, height) <= threshold:
+            width *= multiplier
+            height *= multiplier
+            break
+
+    new_w, new_h = _get_window_w_h(window, width, height)
+    window.set_default_size(new_w, new_h)
+
+
 def format_time(seconds):
     if not seconds:
         return "0:00"
@@ -384,4 +495,3 @@ SUB_EXTS: tuple = (
     ".txt",
     ".vtt",
 )
-

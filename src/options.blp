@@ -22,12 +22,10 @@ template $OptionsMenuButton: MenuButton {
         orientation: vertical;
         spacing: 8;
 
-        Box {
-          Button {
-            hexpand: true;
-            label: _("Reset All");
-            clicked => $_on_reset_all_options();
-          }
+        Button {
+          hexpand: true;
+          label: _("Reset All");
+          clicked => $_on_reset_all_options();
         }
 
         // --- ASPECT RATIO ---
