@@ -41,7 +41,7 @@ Phase 0 разблокирована целиком. Порядок первых
 | C15 | `hdr_diagnostics.py`: удалить дубликаты `_positive_float`, `_source_peak_nits`, `_hdr_status_text`, `get_mpv_prop`, `format_dovi_rpu_warnings`, `get_dovi_rpu_warning_state` (импорт из `diagnostics_report`). Fallback-ветки при `_current_snapshot is None` в `_copy_report`, `_update_stream_info`, `_update_performance_info` удалять только после проверки недостижимости по вызывающим местам и жизненному циклу диалога (`realize` → `update_diagnostics` → `_on_copy`); результат проверки — в теле коммита | A | `build_video_output_report(фиксированный снимок)` идентичен до/после; O: диалог открывается, обновляется, Copy работает | IN PROGRESS (UI: PASS 2026-10-18 deec531 [источник не проверен]; остаток: подтверждение UI-smoke владельцем) |
 | P0.3 | Влить upstream `main` (1.8.7); конфликты в пользу upstream вне HDR-пути; версия → `1.8.7.0` (схема `<upstream>.<hdr-rev>`) | A → O (L2) | SDR-файл играет, управление работает | TODO |
 | C11 | CI: убрать aarch64 (по D5); добавить `ruff check`; оставить `meson test` | A | workflow зелёный | TODO |
-| P0.4 | `ruff` конфиг в `pyproject.toml` (`F`, `E9`); ноль F-ошибок без изменения поведения | A | `ruff check` чистый | TODO |
+| P0.4 | `ruff` конфиг в `pyproject.toml` (`F`, `E9`); ноль F-ошибок без изменения поведения | A | `ruff check` чистый | DONE |
 | P0.5 | Базовые Copy Report с каждой машины/DE (SDR-файл, HDR-файл) — исходное состояние | O | отчёты в `validation-reports/` | TODO |
 
 ## 3. Phase 1 — GNOME (AMD-десктоп + HDR-монитор)

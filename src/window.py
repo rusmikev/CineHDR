@@ -18,7 +18,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import bisect
-import ctypes
 import hashlib
 import logging
 import os
@@ -40,7 +39,6 @@ gi.require_version("GObject", "2.0")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
 
 from .diagnostics_report import DiagnosticsExporter
-from .gl_bindings import libgl
 from .hdr_menu import HdrMenuButton
 from .history import HistoryDialog
 from .mpris import MPRIS
@@ -65,9 +63,7 @@ from .utils import (
     PrimaryClick,
     SecondaryClick,
     append_modifiers,
-    display,
     format_time,
-    get_gpu_vendor,
     get_mouse_bindings,
     has_host_permission,
     idle_add_once,

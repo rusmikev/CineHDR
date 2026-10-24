@@ -1,5 +1,4 @@
 import unittest
-from src.hdr_controller import HdrController
 
 # This file acts as a catalog of expected behaviors for real-world media files.
 # In a full CI, it would download these samples from a test asset repository.

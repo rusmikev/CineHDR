@@ -6,7 +6,7 @@
 
 import gi
 import logging
-from typing import cast, Optional, Any
+from typing import cast, Any
 from gettext import gettext as _
 
 logger = logging.getLogger(__name__)

@@ -2238,7 +2238,7 @@ class GpuValidationSession:
             cycle = None
         else:
             expected_index, expected_signal = step.value
-            width = height = None
+            width = None
             cycle = None
 
         if step.action == "settling-endpoint":

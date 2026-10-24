@@ -5,12 +5,11 @@ These tests cover everything that differs from the original Cine codebase.
 Run with: GSETTINGS_SCHEMA_DIR=data/ python3 -m pytest tests/test_hdr.py -v
 """
 
-import json
 import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 import ctypes
 import time
 
@@ -18,7 +17,6 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Make tests hermetic and isolated (F13)
-import tempfile
 import shutil
 import subprocess
 import atexit
@@ -1300,7 +1298,7 @@ class TestAuditFixes(unittest.TestCase):
 
     def test_hdr_enabled_removed_from_gsettings(self):
         """Verify load_hdr_config and save_hdr_config work without hdr-enabled GSettings key."""
-        from src.hdr_controller import load_hdr_config, save_hdr_config
+        from src.hdr_controller import load_hdr_config
         config = load_hdr_config()
         self.assertIn("hdr_mode", config)
         self.assertIn("hdr_enabled", config)
@@ -3661,7 +3659,6 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         it is NEVER published as a texture and NEVER delivered to the oracle."""
         from src.video_widget import MpvVideoWidget
         from src.hdr_controller import CommittedOutputState
-        import ctypes
 
         widget = MpvVideoWidget.__new__(MpvVideoWidget)
         widget.mpv_ctx = MagicMock()

@@ -29,8 +29,6 @@ OpenGL rendering widgets from HDR business logic. It handles:
 
 import logging
 import mpv
-import threading
-import time
 from typing import Any, NamedTuple, Optional
 from gi.repository import GObject, Gio, GLib
 from .utils import idle_add_once
@@ -41,7 +39,6 @@ from .hdr_detection import (
     get_hdr_unsupported_reason,
     get_dovi_info,
     get_monitor_hdr_state,
-    refresh_monitor_hdr_state,
     is_surface_submission_proven,
 )
 

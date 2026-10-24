@@ -15,7 +15,6 @@ import math
 import os
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import time
 from typing import Any, Iterable

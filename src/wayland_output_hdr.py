@@ -213,7 +213,6 @@ class _InterfaceTable:
         self.img = _WlInterface()
         self.info = _WlInterface()
 
-        mgr_p = ctypes.addressof(self.mgr)
         cm_output_p = ctypes.addressof(self.cm_output)
         img_p = ctypes.addressof(self.img)
         info_p = ctypes.addressof(self.info)

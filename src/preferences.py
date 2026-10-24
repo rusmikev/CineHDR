@@ -29,7 +29,7 @@ gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, Gtk
 from .render_backend import RenderSelectionSource
-from .utils import CONFIG_DIR, display, has_host_permission, is_flatpak
+from .utils import CONFIG_DIR, has_host_permission, is_flatpak
 
 logger = logging.getLogger(__name__)
 settings = Gio.Settings.new("io.github.rusmikev.CineHDR")

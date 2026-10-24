@@ -31,7 +31,7 @@ gi.require_version("Gio", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Adw, Gio, GLib, Gtk, Gdk
+from gi.repository import Adw, Gio, GLib, Gtk
 
 from .gtk_cm_policy import (
     OPT_IN_NOT_REQUESTED,

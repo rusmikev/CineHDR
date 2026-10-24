@@ -78,7 +78,6 @@ except Exception:
 
 from src.diagnostics_report import (
     DIAGNOSTICS_EXPORT_DIR_ENV,
-    DIAGNOSTICS_EXPORT_PATH_ENV,
     DIAGNOSTICS_SESSION_ID_ENV,
     EXPECTED_APP_COMMIT_ENV,
     EXPECTED_FLATPAK_INSTANCE_ENV,
@@ -806,7 +805,7 @@ class DiagnosticsExportTests(unittest.TestCase):
         scheduled_idle = []
 
         with patch("src.video_widget.media_frame_evidence", return_value=real_media_frame), \
-             patch("src.video_widget.Gdk.GLTextureBuilder") as mock_builder_cls, \
+             patch("src.video_widget.Gdk.GLTextureBuilder"), \
              patch("src.video_widget.idle_add_once", side_effect=lambda cb, *a: scheduled_idle.append((cb, a))), \
              patch("src.video_widget.glBindFramebuffer"), \
              patch("builtins.open") as mock_open, \

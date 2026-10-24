@@ -25,14 +25,13 @@ Delegates HDR state management and tone mapping rules to HdrController, and
 OpenGL resource lifecycle to GLFramebufferResource.
 """
 
-import ctypes
 import logging
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 
-from gi.repository import Gtk, Gdk, GLib, GObject, Graphene
+from gi.repository import Gtk, Gdk, GLib, Graphene
 import mpv
 from gettext import gettext as _
 from typing import Any, Optional
@@ -58,7 +57,7 @@ from .gl_bindings import (
     get_proc_address,
 )
 
-from .gl_renderer import GLFramebufferPool, FramebufferSlot
+from .gl_renderer import GLFramebufferPool
 from .gpu_validation import read_fbo_patch_samples
 from .hdr_controller import HdrController
 from .hdr_detection import check_hdr_support

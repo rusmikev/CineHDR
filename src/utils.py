@@ -20,7 +20,6 @@
 import ctypes
 import logging
 import os
-import threading
 from urllib.parse import urlparse
 
 import gi
@@ -31,8 +30,8 @@ gi.require_version("GdkX11", "4.0")
 gi.require_version("GdkWayland", "4.0")
 from gi.repository import (
     Gdk,
-    GdkWayland,  # pyright: ignore[reportAttributeAccessIssue]
-    GdkX11,
+    GdkWayland,  # noqa: F401 # pyright: ignore[reportAttributeAccessIssue]
+    GdkX11,  # noqa: F401
     GLib,
 )
 

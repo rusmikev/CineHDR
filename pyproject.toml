@@ -1,3 +1,6 @@
 [tool.pyright]
 typeCheckingMode = "standard"
 reportMissingModuleSource = "none"
+
+[tool.ruff.lint]
+select = ["F", "E9"]
