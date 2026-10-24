@@ -132,14 +132,7 @@ def _hdr_status_text(
 ) -> str:
     """Describe HDR transport separately from optional HDR-to-HDR mapping."""
     if is_active and supported:
-        try:
-            from .hdr_detection import is_surface_submission_proven
-            override = is_surface_submission_proven()
-        except Exception:
-            override = False
         evidence = _("compositor submission unverified")
-        if override:
-            evidence += _("; test override enabled, not proof")
         numeric_target = _positive_float(target_peak)
         if (
             source_peak_nits is not None
@@ -644,8 +637,16 @@ def collect_video_output_facts(
         if target_format and target_depth else _("Unknown / target not rendered")
     )
 
+    try:
+        from .hdr_detection import hdr_output_allowed
+        auto_allowed, auto_reason = hdr_output_allowed(hint, allow_probe=False)
+        auto_gate_str = "allowed" if auto_allowed else f"blocked: {auto_reason}"
+    except Exception as e:
+        auto_gate_str = f"blocked: error ({e})"
+
     output: dict[str, object] = {
         "HDR Status": hdr_status_str,
+        "Auto gate": auto_gate_str,
         "Display HDR Supported": display_hdr_str,
         "Compositor Color Management": compositor_cm_str,
         "Monitor HDR State": monitor_hdr_str,
@@ -799,6 +800,7 @@ def collect_video_output_facts(
         "gpu_next_capability_row": gpu_next_status,
         "dovi_capability_row": dovi_status,
         "status_row": hdr_status_str,
+        "auto_gate_row": auto_gate_str,
         "display_hdr_row": display_hdr_str,
         "compositor_cm_row": compositor_cm_str,
         "monitor_hdr_row": monitor_hdr_str,

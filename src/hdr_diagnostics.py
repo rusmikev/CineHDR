@@ -57,6 +57,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
     copy_btn: Gtk.Button = Gtk.Template.Child()
 
     status_row: Adw.ActionRow = Gtk.Template.Child()
+    auto_gate_row: Adw.ActionRow = Gtk.Template.Child()
     display_hdr_row: Adw.ActionRow = Gtk.Template.Child()
     compositor_cm_row: Adw.ActionRow = Gtk.Template.Child()
     monitor_hdr_row: Adw.ActionRow = Gtk.Template.Child()
@@ -189,6 +190,7 @@ class HdrDiagnosticsDialog(Adw.Dialog):
         output = self._visible_row_values(
             (
                 ("HDR Status", "status_row"),
+                ("Auto gate", "auto_gate_row"),
                 ("Display HDR Supported", "display_hdr_row"),
                 ("Compositor Color Management", "compositor_cm_row"),
                 ("Monitor HDR State", "monitor_hdr_row"),

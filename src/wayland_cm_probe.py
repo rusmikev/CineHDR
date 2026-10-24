@@ -264,16 +264,19 @@ def _enumerate_globals(lib: ctypes.CDLL, display_ptr: int):
     return names
 
 
-def probe_color_management() -> Optional[bool]:
+def probe_color_management(allow_probe: bool = True) -> Optional[bool]:
     """Tri-state check: does the Wayland compositor offer color management?
 
     True / False are definitive answers from the compositor registry;
     None means the probe could not run and callers must not change their
     behaviour based on it. The result is cached; see invalidate().
+    If allow_probe is False, the probe is not executed synchronously if not already cached.
     """
     global _cached_result, _cache_valid
     if _cache_valid:
         return _cached_result
+    if not allow_probe:
+        return None
 
     result: Optional[bool] = None
     try:

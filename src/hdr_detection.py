@@ -118,7 +118,7 @@ def async_refresh_monitor_hdr_state(
         return None
 
 
-def get_compositor_cm_support() -> Optional[bool]:
+def get_compositor_cm_support(allow_probe: bool = True) -> Optional[bool]:
     """Tri-state: does the Wayland compositor advertise color management?
 
     True/False come from enumerating the compositor's registry globals
@@ -126,7 +126,7 @@ def get_compositor_cm_support() -> Optional[bool]:
     not run (e.g. not Wayland, or libwayland-client unavailable) and the
     answer is unknown. Exposed for the diagnostics dialog.
     """
-    return wayland_cm_probe.probe_color_management()
+    return wayland_cm_probe.probe_color_management(allow_probe=allow_probe)
 
 
 def check_hdr_support(allow_probe: bool = True) -> bool:
@@ -206,19 +206,59 @@ def _check_hdr_support_uncached(allow_probe: bool = True) -> bool:
         return False
 
 
-def is_surface_submission_proven() -> bool:
-    """Check whether Wayland surface submission with HDR metadata is verified.
+def hdr_output_allowed(
+    connector: Optional[str] = None,
+    *,
+    allow_probe: bool = False,
+    env: Optional[Any] = None,
+) -> tuple[bool, str]:
+    """Tri-state quality gate for HDR output in Auto mode without blocking the hot path.
 
-    Per ADR-0007, GTK connects to the color manager registry global but does not
-    attach image descriptions to application wl_surfaces without verified toolkit/
-    compositor support. Consequently, Rec.2100 PQ textures prepared by the app
-    are not proven to be passed to the compositor without conversion.
+    Evaluates in sequence:
+    1. Compositor color management protocol global (wp_color_manager_v1).
+    2. GTK color management opt-in (GDK_DEBUG=color-mgmt without CINEHDR_NO_COLOR_MGMT).
+    3. Compositor color management capabilities (parametric, sRGB TF/primaries, Rec.2100 PQ).
+    4. Monitor under window HDR state (tri-state, fail-closed on unknown/SDR).
 
-    Returns False by default until the unblocking criteria defined in ADR-0007
-    are met. Supports CINEHDR_FORCE_SURFACE_SUBMISSION=1 for test validation.
+    Returns:
+        tuple[bool, str]: (True, "allowed") or (False, "<blocked reason>").
     """
     import os
-    return os.environ.get("CINEHDR_FORCE_SURFACE_SUBMISSION") == "1"
+    cm = get_compositor_cm_support(allow_probe=allow_probe)
+    if cm is False:
+        return False, "Wayland compositor does not advertise color management protocol"
+    if cm is None:
+        return False, "Wayland compositor color management support is unknown"
+
+    target_env = os.environ if env is None else env
+    from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
+    if target_env.get("CINEHDR_NO_COLOR_MGMT") == "1":
+        return False, "GTK color management disabled via CINEHDR_NO_COLOR_MGMT"
+    if not gtk_cm_opted_in(target_env):
+        return False, "GTK color management disabled without GDK_DEBUG=color-mgmt"
+
+    caps = wayland_output_hdr.get_cm_caps(allow_probe=allow_probe)
+    if caps is None:
+        return False, "color management capabilities unavailable or unknown"
+
+    ok, reason = gtk_color_managed(caps, env=target_env)
+    if not ok:
+        return False, reason
+
+    if not gtk_can_tag_hdr(caps, TF_PQ):
+        return False, "compositor missing BT.2020 primaries or PQ transfer function"
+
+    mon_hdr = get_monitor_hdr_state(connector, allow_probe=allow_probe)
+    if mon_hdr is False:
+        if connector:
+            return False, f"monitor '{connector}' is in SDR mode"
+        return False, "monitor is in SDR mode"
+    if mon_hdr is None:
+        if connector:
+            return False, f"monitor '{connector}' HDR state is unknown"
+        return False, "monitor HDR state is unknown"
+
+    return True, "allowed"
 
 
 def is_hdr_content(params: dict) -> bool:
@@ -400,7 +440,7 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
         )
     from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
     if not gtk_cm_opted_in():
-        return "GTK: цветоуправление выключено без GDK_DEBUG=color-mgmt"
+        return "GTK: color management disabled without GDK_DEBUG=color-mgmt"
     from . import wayland_output_hdr
     caps = wayland_output_hdr.get_cm_caps(allow_probe=True)
     if caps is None:

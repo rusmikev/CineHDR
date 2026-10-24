@@ -39,7 +39,7 @@ from .hdr_detection import (
     get_hdr_unsupported_reason,
     get_dovi_info,
     get_monitor_hdr_state,
-    is_surface_submission_proven,
+    hdr_output_allowed,
 )
 
 try:
@@ -664,17 +664,13 @@ class HdrController(GObject.Object):
             # mpv's tone mapping for the compositor's simpler conversion, so
             # the user's choice is respected.
             return True
-        # Quality gate for auto mode per ADR-0007:
-        # Since GTK currently does not provide a way to prove Wayland surface
-        # submission of colorimetry, and testing shows it may fail to pass the
-        # surface description even when the compositor supports it, 'auto' mode
-        # conservatively falls back to SDR tone mapping unless surface submission
-        # is proven. 'force-hdr' remains an experimental override.
-        if get_monitor_hdr_state(self._output_hint, allow_probe=False) is not True:
+        # Quality gate for auto mode per ADR-0007 / P1.1:
+        # Evaluates global color management, GTK opt-in, monitor HDR state,
+        # and compositor color capabilities without blocking the hot render path.
+        if not self._is_hdr_content:
             return False
-        if not is_surface_submission_proven():
-            return False
-        return self._is_hdr_content
+        allowed, _ = hdr_output_allowed(self._output_hint, allow_probe=False)
+        return allowed
 
     def check_dovi_warning(self):
         """Log once when HDR is refused because of an unrenderable DoVi profile."""

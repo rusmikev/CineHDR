@@ -181,7 +181,7 @@ class TestApplyHDRSettings(unittest.TestCase):
     """Tests for apply_hdr_settings mpv property mapping and SDR protection."""
 
     def setUp(self):
-        p1 = patch("src.hdr_controller.is_surface_submission_proven", return_value=True)
+        p1 = patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
         p2 = patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
         p1.start()
         p2.start()
@@ -199,10 +199,10 @@ class TestApplyHDRSettings(unittest.TestCase):
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_conservative_auto_mode_keeps_sdr(self, _mock_support):
-        """When surface submission is unproven, auto mode conservatively stays in SDR."""
+        """When Auto gate is blocked, auto mode conservatively stays in SDR."""
         from src.hdr_controller import HdrController
 
-        with patch("src.hdr_controller.is_surface_submission_proven", return_value=False):
+        with patch("src.hdr_controller.hdr_output_allowed", return_value=(False, "monitor is in SDR mode")):
             mock_mpv, props = self._make_mock_mpv()
             controller = HdrController(mock_mpv)
             controller._hdr_mode = "auto"
@@ -1083,20 +1083,8 @@ class TestHdrDiagnostics(unittest.TestCase):
         )
         self.assertIn("PQ target prepared; compositor submission unverified", pq_output)
         self.assertNotIn("Pass-through", pq_output)
-
-        with patch("src.hdr_detection.is_surface_submission_proven", return_value=True):
-            pq_proven = _hdr_status_text(
-                is_active=True,
-                supported=True,
-                mode="auto",
-                is_content=True,
-                source_peak_nits=1000,
-                target_peak=1000,
-            )
-            self.assertIn("Rec.2100 PQ", pq_proven)
-            self.assertIn("unverified", pq_proven)
-            self.assertIn("override", pq_proven)
-            self.assertNotIn("HDR output", pq_proven)
+        self.assertNotIn("override", pq_output)
+        self.assertNotIn("HDR output", pq_output)
 
     def _performance_snapshot(self, props, area=None):
         from types import SimpleNamespace
@@ -1578,38 +1566,34 @@ class TestMonitorHdrGate(unittest.TestCase):
     def test_monitor_hdr_allows_auto(self, _sup):
         from src.hdr_controller import HdrController
         mock_mpv, props = self._make_mock_mpv()
-        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True):
-            with patch("src.hdr_controller.get_monitor_hdr_state", return_value=True):
-                controller = HdrController(mock_mpv)
-                controller._hdr_mode = "auto"
-                controller._is_hdr_content = True
-                self.assertTrue(controller.is_hdr_active)
-                controller.apply_hdr_settings()
-                self.assertEqual(props.get("target-trc"), "pq")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    def test_publication_override_only_removes_surface_proof_gate(self, _sup):
-        from src.hdr_controller import HdrController
-
-        mock_mpv, _ = self._make_mock_mpv()
-        with patch("src.hdr_controller.get_monitor_hdr_state", return_value=True):
+        with patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed")):
             controller = HdrController(mock_mpv)
             controller._hdr_mode = "auto"
             controller._is_hdr_content = True
-            with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "0"}):
+            self.assertTrue(controller.is_hdr_active)
+            controller.apply_hdr_settings()
+            self.assertEqual(props.get("target-trc"), "pq")
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_auto_gate_controls_auto_mode(self, _sup):
+        from src.hdr_controller import HdrController
+
+        mock_mpv, _ = self._make_mock_mpv()
+        controller = HdrController(mock_mpv)
+        controller._hdr_mode = "auto"
+        controller._is_hdr_content = True
+        with patch("src.hdr_controller.hdr_output_allowed", return_value=(False, "monitor is in SDR mode")):
+            self.assertFalse(controller.is_hdr_active)
+        with patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed")):
+            self.assertTrue(controller.is_hdr_active)
+            controller._is_hdr_content = False
+            self.assertFalse(controller.is_hdr_active)
+            controller._is_hdr_content = True
+            controller._dovi_info = {"unsupported": True}
+            self.assertFalse(controller.is_hdr_active)
+            controller._dovi_info = {"unsupported": False}
+            with patch("src.hdr_controller.check_hdr_support", return_value=False):
                 self.assertFalse(controller.is_hdr_active)
-            with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "1"}):
-                self.assertTrue(controller.is_hdr_active)
-                controller._is_hdr_content = False
-                self.assertFalse(controller.is_hdr_active)
-                controller._is_hdr_content = True
-                controller._dovi_info = {"unsupported": True}
-                self.assertFalse(controller.is_hdr_active)
-                controller._dovi_info = {"unsupported": False}
-                with patch("src.hdr_controller.get_monitor_hdr_state", return_value=False):
-                    self.assertFalse(controller.is_hdr_active)
-                with patch("src.hdr_controller.check_hdr_support", return_value=False):
-                    self.assertFalse(controller.is_hdr_active)
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_output_hint_is_forwarded_and_triggers_reapply(self, _sup):
@@ -1617,11 +1601,11 @@ class TestMonitorHdrGate(unittest.TestCase):
         mock_mpv, props = self._make_mock_mpv()
         seen = []
 
-        def fake_state(connector=None, **kwargs):
+        def fake_allowed(connector=None, **kwargs):
             seen.append(connector)
-            return None
+            return False, "blocked"
 
-        with patch("src.hdr_controller.get_monitor_hdr_state", side_effect=fake_state):
+        with patch("src.hdr_controller.hdr_output_allowed", side_effect=fake_allowed):
             controller = HdrController(mock_mpv)
             controller._hdr_mode = "auto"
             controller._is_hdr_content = True
@@ -1762,7 +1746,7 @@ class TestAutoTargetPeak(unittest.TestCase):
         return mock_mpv, props
 
     def setUp(self):
-        patcher = patch("src.hdr_controller.is_surface_submission_proven", return_value=True)
+        patcher = patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -1978,21 +1962,277 @@ class TestHdrDetectionDolbyVision(unittest.TestCase):
             controller.disconnect()
 
 
-class TestSurfaceSubmissionOverride(unittest.TestCase):
-    def test_surface_submission_proven_default_false(self):
-        from src.hdr_detection import is_surface_submission_proven
-        with patch.dict("os.environ", {}, clear=True):
-            self.assertFalse(is_surface_submission_proven())
+class TestHdrOutputAllowed(unittest.TestCase):
+    """Hermetic unit tests for hdr_output_allowed quality gate in Auto mode."""
 
-    def test_surface_submission_force_override_true(self):
-        from src.hdr_detection import is_surface_submission_proven
-        with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "1"}):
-            self.assertTrue(is_surface_submission_proven())
+    def _valid_caps(self):
+        from src.gtk_cm_policy import (
+            CmCaps,
+            INTENT_PERCEPTUAL,
+            FEAT_PARAMETRIC,
+            FEAT_SET_PRIMARIES,
+            TF_SRGB,
+            PRIM_SRGB,
+            PRIM_BT2020,
+            TF_PQ,
+        )
+        return CmCaps(
+            intents=frozenset({INTENT_PERCEPTUAL}),
+            features=frozenset({FEAT_PARAMETRIC, FEAT_SET_PRIMARIES}),
+            tfs=frozenset({TF_SRGB, TF_PQ}),
+            primaries=frozenset({PRIM_SRGB, PRIM_BT2020}),
+        )
 
-    def test_surface_submission_force_override_other(self):
-        from src.hdr_detection import is_surface_submission_proven
-        with patch.dict("os.environ", {"CINEHDR_FORCE_SURFACE_SUBMISSION": "0"}):
-            self.assertFalse(is_surface_submission_proven())
+    def test_allowed_when_all_conditions_met(self):
+        from src.hdr_detection import hdr_output_allowed
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertTrue(allowed)
+            self.assertEqual(reason, "allowed")
+
+    def test_blocked_cm_global_false(self):
+        from src.hdr_detection import hdr_output_allowed
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=False), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "Wayland compositor does not advertise color management protocol")
+
+    def test_blocked_cm_global_unknown(self):
+        from src.hdr_detection import hdr_output_allowed
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=None), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "Wayland compositor color management support is unknown")
+
+    def test_blocked_gtk_opt_out_env(self):
+        from src.hdr_detection import hdr_output_allowed
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed(
+                "DP-1", env={"GDK_DEBUG": "color-mgmt", "CINEHDR_NO_COLOR_MGMT": "1"}
+            )
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "GTK color management disabled via CINEHDR_NO_COLOR_MGMT")
+
+    def test_blocked_gtk_not_opted_in(self):
+        from src.hdr_detection import hdr_output_allowed
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": ""})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "GTK color management disabled without GDK_DEBUG=color-mgmt")
+
+    def test_blocked_caps_unknown_or_none(self):
+        from src.hdr_detection import hdr_output_allowed
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=None), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "color management capabilities unavailable or unknown")
+
+    def test_blocked_caps_missing_perceptual(self):
+        from src.hdr_detection import hdr_output_allowed
+        from src.gtk_cm_policy import CmCaps, FEAT_PARAMETRIC, TF_SRGB, PRIM_SRGB, TF_PQ
+        caps = CmCaps(
+            intents=frozenset(),
+            features=frozenset({FEAT_PARAMETRIC}),
+            tfs=frozenset({TF_SRGB, TF_PQ}),
+            primaries=frozenset({PRIM_SRGB}),
+        )
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "missing perceptual render intent")
+
+    def test_blocked_caps_missing_parametric(self):
+        from src.hdr_detection import hdr_output_allowed
+        from src.gtk_cm_policy import CmCaps, INTENT_PERCEPTUAL, TF_SRGB, PRIM_SRGB, TF_PQ
+        caps = CmCaps(
+            intents=frozenset({INTENT_PERCEPTUAL}),
+            features=frozenset(),
+            tfs=frozenset({TF_SRGB, TF_PQ}),
+            primaries=frozenset({PRIM_SRGB}),
+        )
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "GTK cannot create sRGB image description: missing parametric feature")
+
+    def test_blocked_caps_missing_tf_srgb(self):
+        from src.hdr_detection import hdr_output_allowed
+        from src.gtk_cm_policy import CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, TF_PQ
+        caps = CmCaps(
+            intents=frozenset({INTENT_PERCEPTUAL}),
+            features=frozenset({FEAT_PARAMETRIC}),
+            tfs=frozenset({TF_PQ}),
+            primaries=frozenset({PRIM_SRGB}),
+        )
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "GTK cannot create sRGB image description: missing TF srgb")
+
+    def test_blocked_caps_missing_srgb_primaries(self):
+        from src.hdr_detection import hdr_output_allowed
+        from src.gtk_cm_policy import CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, TF_SRGB, PRIM_BT2020, TF_PQ
+        caps = CmCaps(
+            intents=frozenset({INTENT_PERCEPTUAL}),
+            features=frozenset({FEAT_PARAMETRIC}),
+            tfs=frozenset({TF_SRGB, TF_PQ}),
+            primaries=frozenset({PRIM_BT2020}),
+        )
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "GTK cannot create sRGB image description: missing sRGB primaries")
+
+    def test_blocked_caps_missing_pq_transfer_function(self):
+        from src.hdr_detection import hdr_output_allowed
+        from src.gtk_cm_policy import CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, TF_SRGB, PRIM_SRGB, PRIM_BT2020
+        caps = CmCaps(
+            intents=frozenset({INTENT_PERCEPTUAL}),
+            features=frozenset({FEAT_PARAMETRIC}),
+            tfs=frozenset({TF_SRGB}),
+            primaries=frozenset({PRIM_SRGB, PRIM_BT2020}),
+        )
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+            allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "compositor missing BT.2020 primaries or PQ transfer function")
+
+    def test_blocked_monitor_sdr_with_and_without_connector(self):
+        from src.hdr_detection import hdr_output_allowed
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=False):
+            allowed, reason = hdr_output_allowed("DP-2", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "monitor 'DP-2' is in SDR mode")
+
+            allowed_none, reason_none = hdr_output_allowed(None, env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed_none)
+            self.assertEqual(reason_none, "monitor is in SDR mode")
+
+    def test_blocked_monitor_unknown_with_and_without_connector(self):
+        from src.hdr_detection import hdr_output_allowed
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
+             patch("src.hdr_detection.get_monitor_hdr_state", return_value=None):
+            allowed, reason = hdr_output_allowed("HDMI-A-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "monitor 'HDMI-A-1' HDR state is unknown")
+
+            allowed_none, reason_none = hdr_output_allowed(None, env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed_none)
+            self.assertEqual(reason_none, "monitor HDR state is unknown")
+
+    def test_allow_probe_forwarding_zero_roundtrips(self):
+        from src.hdr_detection import hdr_output_allowed
+        probes_recorded = []
+
+        def mock_cm(allow_probe=True):
+            probes_recorded.append(("cm", allow_probe))
+            return True
+
+        def mock_caps(allow_probe=False):
+            probes_recorded.append(("caps", allow_probe))
+            return self._valid_caps()
+
+        def mock_mon(connector=None, allow_probe=False):
+            probes_recorded.append(("mon", allow_probe))
+            return True
+
+        with patch("src.hdr_detection.get_compositor_cm_support", side_effect=mock_cm), \
+             patch("src.wayland_output_hdr.get_cm_caps", side_effect=mock_caps), \
+             patch("src.hdr_detection.get_monitor_hdr_state", side_effect=mock_mon):
+            allowed, reason = hdr_output_allowed("DP-1", allow_probe=False, env={"GDK_DEBUG": "color-mgmt"})
+            self.assertTrue(allowed)
+            self.assertEqual(probes_recorded, [("cm", False), ("caps", False), ("mon", False)])
+
+    def test_wcg_sdr_remains_sdr_with_allowed_gate(self):
+        """WCG-SDR content (BT.2020 primaries + SDR gamma/trc) remains SDR in Auto mode."""
+        from src.hdr_controller import HdrController
+        from src.hdr_detection import is_hdr_content
+        mock_mpv = MagicMock()
+        props = {}
+        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
+        mock_mpv.__getitem__ = lambda _s, k: props.get(k)
+        observers = {}
+        def mock_observer(name):
+            def decorator(fn):
+                observers[name] = fn
+                return fn
+            return decorator
+        mock_mpv.property_observer = mock_observer
+
+        with patch("src.hdr_controller.check_hdr_support", return_value=True), \
+             patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed")):
+            controller = HdrController(mock_mpv)
+            controller._hdr_mode = "auto"
+            # WCG-SDR: BT.2020 primaries, bt.1886 gamma (not HDR content)
+            wcg_sdr_params = {"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1.0}
+            self.assertFalse(is_hdr_content(wcg_sdr_params))
+            if "video-params" in observers:
+                observers["video-params"]("video-params", wcg_sdr_params)
+            else:
+                controller._is_hdr_content = is_hdr_content(wcg_sdr_params)
+            self.assertFalse(controller.is_hdr_content)
+            self.assertFalse(controller.is_hdr_active)
+
+    def test_diagnostics_report_auto_gate_allowed_and_blocked(self):
+        from src.diagnostics_report import collect_video_output_facts, build_video_output_report
+        from types import SimpleNamespace
+
+        win = SimpleNamespace()
+        mock_controller = SimpleNamespace(
+            output_hint="DP-1",
+            is_hdr_active=True,
+            is_hdr_content=True,
+            hdr_mode="auto",
+            state_gap_reason=None,
+            is_publication_suppressed=False,
+        )
+        gl_area = SimpleNamespace(
+            hdr_controller=mock_controller,
+            render_color_state="rec2100-pq",
+            render_target_format="GL_RGBA16F",
+            render_target_depth=16,
+        )
+
+        with patch("src.hdr_detection.hdr_output_allowed", return_value=(True, "allowed")):
+            snap_allowed = collect_video_output_facts(win, gl_area)
+            self.assertEqual(snap_allowed.output["Auto gate"], "allowed")
+            report_allowed = build_video_output_report(
+                snap_allowed.renderer, snap_allowed.output, snap_allowed.video
+            )
+            self.assertIn("Auto gate: allowed", report_allowed)
+
+        with patch("src.hdr_detection.hdr_output_allowed", return_value=(False, "monitor 'DP-1' is in SDR mode")):
+            snap_blocked = collect_video_output_facts(win, gl_area)
+            self.assertEqual(snap_blocked.output["Auto gate"], "blocked: monitor 'DP-1' is in SDR mode")
+            report_blocked = build_video_output_report(
+                snap_blocked.renderer, snap_blocked.output, snap_blocked.video
+            )
+            self.assertIn("Auto gate: blocked: monitor 'DP-1' is in SDR mode", report_blocked)
 
 
 class TestAsyncMonitorProbeLifecycle(unittest.TestCase):
@@ -2871,7 +3111,7 @@ class TestPausedHdrOutputRepublication(unittest.TestCase):
         mock_mpv.__getitem__ = lambda _s, k: props.get(k)
         mock_mpv.property_observer = lambda name: (lambda fn: fn)
 
-        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+        with patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed")), \
              patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
              patch("src.hdr_controller.check_hdr_support", return_value=True), \
              patch("src.hdr_controller.has_float_format_support", return_value=True):
@@ -2939,7 +3179,7 @@ class TestPausedHdrOutputRepublication(unittest.TestCase):
         mock_mpv.__getitem__ = lambda _s, k: props.get(k)
         mock_mpv.property_observer = lambda name: (lambda fn: fn)
 
-        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+        with patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed")), \
              patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
              patch("src.hdr_controller.check_hdr_support", return_value=True), \
              patch("src.hdr_controller.has_float_format_support", return_value=True):
@@ -2994,7 +3234,7 @@ class TestPausedHdrOutputRepublication(unittest.TestCase):
         mock_mpv.__getitem__ = lambda _s, k: props.get(k)
         mock_mpv.property_observer = lambda name: (lambda fn: fn)
 
-        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+        with patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed")), \
              patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
              patch("src.hdr_controller.check_hdr_support", return_value=True), \
              patch("src.hdr_controller.has_float_format_support", return_value=True):
@@ -3084,7 +3324,7 @@ class TestPausedHdrOutputRepublication(unittest.TestCase):
         mock_mpv.__getitem__ = lambda _s, k: props.get(k)
         mock_mpv.property_observer = lambda name: (lambda fn: fn)
 
-        with patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+        with patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed")), \
              patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
              patch("src.hdr_controller.check_hdr_support", return_value=True):
             controller = HdrController(mock_mpv)
@@ -3490,7 +3730,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
         for stale_first_frame in (False, True):
             with self.subTest(stale_first_frame=stale_first_frame), \
-                 patch("src.hdr_controller.is_surface_submission_proven", return_value=True), \
+                 patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed")), \
                  patch("src.hdr_controller.get_monitor_hdr_state", return_value=True), \
                  patch("src.hdr_controller.check_hdr_support", return_value=True), \
                  patch("src.hdr_controller.has_float_format_support", return_value=True):
