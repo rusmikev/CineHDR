@@ -19,10 +19,14 @@ from parse_wayland_color_trace import (
     MULTIPHASE_SCOPE,
     PRIMARY_COMPOSITE_REVISION,
     PRIMARY_COMPOSITE_SCOPE,
+    TRACE_ONLY_FAIL_SCOPE,
+    TRACE_ONLY_L3P_SCOPE,
     TRACE_REVISION,
     TRACE_SCHEMA,
     TraceValidationError,
     create_evidence_report,
+    create_trace_only_failure_evidence,
+    create_trace_only_report,
     main,
     validate_composite_window_trace,
     validate_multiphase_trace,
@@ -3435,6 +3439,341 @@ class TestGtkCmPolicy(unittest.TestCase):
         evidence4 = validate_multiphase_trace(trace_only_foreign, expected_app_id="mpv")
         self.assertNotEqual(evidence4.get("status"), "PASS")
         self.assertEqual(evidence4.get("status"), "UNKNOWN")
+
+
+SYNTHETIC_MPV_HDR_TRACE = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0101] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0102] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.012]  wp_image_description_v1#31.ready(101)
+[ 1042.013]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.014]  -> wl_surface#61.commit()
+""".strip()
+
+
+class TestTraceOnlyCliValidation(unittest.TestCase):
+    """Hermetic CLI and API tests for autonomous L3p Wayland trace validation (--trace-only).
+
+    Note: These are synthetic unit/CLI tests for parser logic and evidence formatting;
+    they do not constitute real GPU/Wayland hardware verification.
+    """
+
+    def test_create_trace_only_report_and_failure_evidence_api(self):
+        """Hermetic API test: direct calls to create_trace_only_report and create_trace_only_failure_evidence."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv.log"
+            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+
+            # Positive report
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "PASS")
+            self.assertEqual(rep["protocol_evidence_level"], "L3p")
+            self.assertTrue(rep["trace_only"])
+            self.assertEqual(rep["scope"], TRACE_ONLY_L3P_SCOPE)
+
+            # Rejection on invalid oracle
+            with self.assertRaises(TraceValidationError):
+                create_trace_only_report(trace_path, "mpv", oracle="legacy")
+
+            # Rejection on empty app_id
+            with self.assertRaises(TraceValidationError):
+                create_trace_only_report(trace_path, "  ")
+
+            # Failure evidence
+            fail_ev = create_trace_only_failure_evidence(
+                trace_path,
+                "mpv",
+                TraceValidationError("simulated error"),
+            )
+            self.assertEqual(fail_ev["status"], "FAIL")
+            self.assertEqual(fail_ev["protocol_evidence_level"], "L3p")
+            self.assertTrue(fail_ev["trace_only"])
+            self.assertEqual(fail_ev["scope"], TRACE_ONLY_FAIL_SCOPE)
+            self.assertEqual(fail_ev["error"], "simulated error")
+
+    def test_trace_only_synthetic_mpv_positive(self):
+        """Hermetic CLI test: synthetic raw Wayland trace with app_id=mpv succeeds in --trace-only mode."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 0)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "PASS")
+            self.assertTrue(data.get("trace_only"))
+            self.assertEqual(data.get("protocol_evidence_level"), "L3p")
+            self.assertEqual(data["matched"]["surface"]["app_id"], "mpv")
+            self.assertEqual(data["matched"]["surface"]["wl_surface_id"], 61)
+            self.assertEqual(data["matched"]["image_description"]["tf_named"], 11)
+            self.assertEqual(data["matched"]["image_description"]["primaries_named"], 6)
+            self.assertIn("L3p protocol evidence", data["scope"])
+            self.assertNotIn("publication_report", data)
+            self.assertNotIn("backend", data)
+            self.assertEqual(data["trace"]["path"], "mpv-wayland.log")
+            self.assertEqual(
+                data["trace"]["sha256"],
+                hashlib.sha256(SYNTHETIC_MPV_HDR_TRACE.encode("utf-8")).hexdigest(),
+            )
+
+    def test_trace_only_synthetic_foreign_app_id_rejected(self):
+        """Hermetic CLI test: trace with app_id=mpv is rejected when expected_app_id is different."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = main([
+                    "--trace-only",
+                    "--trace", str(trace_path),
+                    "--app-id", "org.videolan.vlc",
+                    "--output", str(out_path),
+                ])
+            self.assertEqual(status, 1)
+            self.assertIn("app_id 'org.videolan.vlc' not found", stderr.getvalue())
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertTrue(data.get("trace_only"))
+            self.assertEqual(data.get("protocol_evidence_level"), "L3p")
+            self.assertEqual(data["app_id"], "org.videolan.vlc")
+            self.assertIn("app_id 'org.videolan.vlc' not found", data["error"])
+            self.assertNotIn("publication_report", data)
+            self.assertNotIn("backend", data)
+
+    def test_trace_only_synthetic_missing_commit_rejected(self):
+        """Hermetic CLI test: trace missing wl_surface.commit after set_image_description fails with status=FAIL."""
+        trace_without_commit = "\n".join(
+            line for line in SYNTHETIC_MPV_HDR_TRACE.splitlines()
+            if "commit()" not in line
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_without_commit, encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = main([
+                    "--trace-only",
+                    "--trace", str(trace_path),
+                    "--app-id", "mpv",
+                    "--output", str(out_path),
+                ])
+            self.assertEqual(status, 1)
+            self.assertIn("no wl_surface.commit observed on window surface", stderr.getvalue())
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertTrue(data.get("trace_only"))
+            self.assertEqual(data.get("protocol_evidence_level"), "L3p")
+            self.assertIn("no wl_surface.commit observed on window surface", data["error"])
+
+    def test_trace_only_synthetic_confirmed_sdr_rejected(self):
+        """Hermetic CLI test: negative control where only SDR transfer (sRGB tf=1) is committed fails with status=FAIL."""
+        sdr_trace = SYNTHETIC_MPV_HDR_TRACE.replace(
+            "set_tf_named(11)", "set_tf_named(1)"
+        ).replace("set_primaries_named(6)", "set_primaries_named(1)")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(sdr_trace, encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = main([
+                    "--trace-only",
+                    "--trace", str(trace_path),
+                    "--app-id", "mpv",
+                    "--output", str(out_path),
+                ])
+            self.assertEqual(status, 1)
+            self.assertIn("only SDR color descriptions were committed", stderr.getvalue())
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertTrue(data.get("trace_only"))
+            self.assertEqual(data.get("protocol_evidence_level"), "L3p")
+            self.assertIn("only SDR color descriptions were committed", data["error"])
+
+    def test_trace_only_synthetic_incomplete_or_ambiguous_returns_unknown(self):
+        """Hermetic CLI test: ambiguous or unverified transfer (ext_linear tf=5 without luminances) returns status=UNKNOWN and non-zero exit."""
+        ambiguous_trace = SYNTHETIC_MPV_HDR_TRACE.replace(
+            "set_tf_named(11)", "set_tf_named(5)"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(ambiguous_trace, encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = main([
+                    "--trace-only",
+                    "--trace", str(trace_path),
+                    "--app-id", "mpv",
+                    "--output", str(out_path),
+                ])
+            self.assertEqual(status, 1)
+            self.assertIn("UNKNOWN", stderr.getvalue())
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertTrue(data.get("trace_only"))
+            self.assertEqual(data.get("protocol_evidence_level"), "L3p")
+            self.assertIn("ext_linear transfer function without luminance parsing is unverified", data["reason"])
+
+    def test_standard_mode_still_requires_real_publication_report(self):
+        """Hermetic CLI test: standard mode requires --publication-report and --backend, verifies report contents, and rejects mixing with --trace-only."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "trace.log"
+            report_path = root / "publication-report.txt"
+            out_path = root / "out.json"
+            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+
+            # 1. Standard mode without --publication-report exits with argparse error
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    main([
+                        "--trace", str(trace_path),
+                        "--backend", "gpu-next",
+                        "--oracle", "composite_window",
+                        "--output", str(out_path),
+                    ])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--publication-report", stderr.getvalue())
+
+            # 2. Standard mode without --backend exits with argparse error
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    main([
+                        "--trace", str(trace_path),
+                        "--publication-report", str(report_path),
+                        "--oracle", "composite_window",
+                        "--output", str(out_path),
+                    ])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--backend", stderr.getvalue())
+
+            # 3. Standard mode with invalid publication report (missing Overall result: PASS) fails
+            report_path.write_text("Overall result: FAIL\nExpected backend: gpu-next\n", encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status_fail_rep = main([
+                    "--trace", str(trace_path),
+                    "--publication-report", str(report_path),
+                    "--backend", "gpu-next",
+                    "--oracle", "composite_window",
+                    "--output", str(out_path),
+                ])
+            self.assertEqual(status_fail_rep, 1)
+            self.assertIn("publication prerequisite report did not PASS", stderr.getvalue())
+
+            # 4. Mixing --trace-only with --publication-report or --backend or --multiphase is rejected
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    main([
+                        "--trace-only",
+                        "--trace", str(trace_path),
+                        "--app-id", "mpv",
+                        "--publication-report", str(report_path),
+                        "--output", str(out_path),
+                    ])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--publication-report cannot be used with --trace-only", stderr.getvalue())
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    main([
+                        "--trace-only",
+                        "--trace", str(trace_path),
+                        "--app-id", "mpv",
+                        "--backend", "legacy",
+                        "--output", str(out_path),
+                    ])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--backend cannot be used with --trace-only", stderr.getvalue())
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    main([
+                        "--trace-only",
+                        "--trace", str(trace_path),
+                        "--app-id", "mpv",
+                        "--multiphase",
+                        "--output", str(out_path),
+                    ])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--multiphase cannot be used with --trace-only", stderr.getvalue())
+
+            # 5. Missing --app-id or invalid oracle in --trace-only mode is rejected
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    main([
+                        "--trace-only",
+                        "--trace", str(trace_path),
+                        "--output", str(out_path),
+                    ])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--trace-only mode requires --app-id", stderr.getvalue())
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    main([
+                        "--trace-only",
+                        "--trace", str(trace_path),
+                        "--app-id", "mpv",
+                        "--oracle", "legacy",
+                        "--output", str(out_path),
+                    ])
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--trace-only mode requires oracle composite_window", stderr.getvalue())
+
+            # 6. Standard mode with valid publication report still succeeds
+            valid_report_path = root / "valid-report.txt"
+            valid_report_path.write_text("Overall result: PASS\nExpected backend: gpu-next\n", encoding="utf-8")
+            status_ok = main([
+                "--trace", str(trace_path),
+                "--publication-report", str(valid_report_path),
+                "--backend", "gpu-next",
+                "--oracle", "composite_window",
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status_ok, 0)
+            data_ok = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data_ok["status"], "PASS")
+            self.assertEqual(data_ok["backend"], "gpu-next")
+            self.assertIn("publication_report", data_ok)
 
 
 if __name__ == "__main__":

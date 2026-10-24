@@ -44,6 +44,17 @@ FAIL_SCOPE = (
     "Wayland color-management submission contract. It is not acceptance "
     "evidence and does not prove compositor or display behavior."
 )
+TRACE_ONLY_L3P_SCOPE = (
+    "L3p protocol evidence: PASS proves a recognized HDR image description was submitted "
+    "and committed on the target application's Wayland window surface without a traced "
+    "protocol rejection. It does not prove compositor transformation, display mode, "
+    "luminance, pixels, or physical HDR display output."
+)
+TRACE_ONLY_FAIL_SCOPE = (
+    "L3p protocol evidence: FAIL records a hash-linked raw client trace that did not "
+    "satisfy the Wayland color-management submission contract. It is not acceptance "
+    "evidence and does not prove compositor or physical display behavior."
+)
 
 
 class TraceValidationError(ValueError):
@@ -2305,14 +2316,83 @@ def create_failure_evidence(
     }
 
 
+def create_trace_only_report(
+    trace_path: Path,
+    expected_app_id: str,
+    *,
+    oracle: str | None = None,
+) -> dict[str, Any]:
+    """Validate a single raw Wayland trace for autonomous L3p evidence without CineHDR publication report."""
+    effective_oracle = "composite_window" if oracle is None else oracle
+    if effective_oracle not in ("composite_window", "primary_composite"):
+        raise TraceValidationError(
+            f"trace-only mode requires oracle composite_window ({effective_oracle!r} specified)"
+        )
+    if expected_app_id is None or not isinstance(expected_app_id, str) or not expected_app_id.strip():
+        raise TraceValidationError("trace-only mode requires a non-empty app_id")
+    target_app_id = expected_app_id.strip()
+
+    trace_text = trace_path.read_text(encoding="utf-8", errors="replace")
+    evidence = validate_composite_window_trace(trace_text, expected_app_id=target_app_id)
+    evidence.update(
+        {
+            "trace_only": True,
+            "protocol_evidence_level": "L3p",
+            "trace": _input_reference(trace_path),
+        }
+    )
+    if evidence.get("status") == "PASS":
+        evidence["scope"] = TRACE_ONLY_L3P_SCOPE
+    return evidence
+
+
+def create_trace_only_failure_evidence(
+    trace_path: Path,
+    expected_app_id: str,
+    error: TraceValidationError,
+    *,
+    oracle: str | None = None,
+) -> dict[str, Any]:
+    """Build hash-linked failure evidence for autonomous L3p trace validation."""
+    effective_oracle = oracle if oracle else "composite_window"
+    return {
+        "schema": TRACE_SCHEMA,
+        "revision": PRIMARY_COMPOSITE_REVISION,
+        "status": "FAIL",
+        "oracle": effective_oracle,
+        "app_id": expected_app_id,
+        "trace_only": True,
+        "protocol_evidence_level": "L3p",
+        "scope": TRACE_ONLY_FAIL_SCOPE,
+        "error": _safe_failure_reason(error),
+        "trace": _input_reference(trace_path),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Validate passive WAYLAND_DEBUG color-management evidence"
     )
-    parser.add_argument("--trace", type=Path, required=True)
-    parser.add_argument("--publication-report", type=Path, required=True)
-    parser.add_argument("--backend", choices=("legacy", "gpu-next"), required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--trace-only",
+        action="store_true",
+        default=False,
+        help="Autonomous L3p validation of a single raw Wayland trace without publication report",
+    )
+    parser.add_argument("--trace", type=Path, required=True, help="Path to raw Wayland client log")
+    parser.add_argument(
+        "--publication-report",
+        type=Path,
+        default=None,
+        help="CineHDR publication report (required in standard mode, forbidden with --trace-only)",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("legacy", "gpu-next"),
+        default=None,
+        help="CineHDR render backend (required in standard mode, forbidden with --trace-only)",
+    )
+    parser.add_argument("--output", type=Path, required=True, help="Output JSON evidence path")
     parser.add_argument(
         "--oracle",
         choices=("composite_window", "primary_composite", "strict_multiphase", "legacy"),
@@ -2322,7 +2402,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--app-id",
         default=None,
-        help="Expected Wayland app_id for surface attribution (default: io.github.rusmikev.CineHDR)",
+        help="Expected Wayland app_id for surface attribution (default: io.github.rusmikev.CineHDR; required with --trace-only)",
     )
     parser.add_argument(
         "--multiphase",
@@ -2331,6 +2411,64 @@ def main(argv: list[str] | None = None) -> int:
         help="Validate 4-step publication phase sequence (SDR->HDR->SDR->HDR) and video surface attribution (alias for --oracle strict_multiphase)",
     )
     args = parser.parse_args(argv)
+
+    if args.trace_only:
+        if args.publication_report is not None:
+            parser.error("--publication-report cannot be used with --trace-only")
+        if args.backend is not None:
+            parser.error("--backend cannot be used with --trace-only")
+        if args.multiphase:
+            parser.error("--multiphase cannot be used with --trace-only")
+        if not args.app_id or not args.app_id.strip():
+            parser.error("--trace-only mode requires --app-id")
+        effective_oracle = "composite_window" if args.oracle is None else args.oracle
+        if effective_oracle not in ("composite_window", "primary_composite"):
+            parser.error(f"--trace-only mode requires oracle composite_window (got {args.oracle!r})")
+
+        try:
+            evidence = create_trace_only_report(
+                args.trace,
+                args.app_id,
+                oracle=effective_oracle,
+            )
+            args.output.write_text(
+                json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            if evidence.get("status") != "PASS":
+                status = evidence.get("status")
+                reason = evidence.get("reason", "unverified")
+                print(
+                    f"Wayland color-management trace non-PASS status: {status} ({reason})",
+                    file=sys.stderr,
+                )
+                return 1
+        except TraceValidationError as error:
+            print(f"Wayland color-management trace rejected: {error}", file=sys.stderr)
+            try:
+                failure_evidence = create_trace_only_failure_evidence(
+                    args.trace,
+                    args.app_id,
+                    error,
+                    oracle=effective_oracle,
+                )
+                args.output.write_text(
+                    json.dumps(failure_evidence, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+            except (OSError, UnicodeError):
+                pass
+            return 1
+        except (OSError, UnicodeError) as error:
+            print(f"Wayland color-management trace rejected: {error}", file=sys.stderr)
+            return 1
+        return 0
+
+    if args.publication_report is None:
+        parser.error("the following arguments are required: --publication-report")
+    if args.backend is None:
+        parser.error("the following arguments are required: --backend")
+
     effective_oracle = "strict_multiphase" if args.multiphase else args.oracle
     try:
         evidence = create_evidence_report(
