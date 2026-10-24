@@ -55,7 +55,7 @@ Phase 0 разблокирована целиком. Порядок первых
 | P1.5 | Сценарии жизненного цикла на GNOME-AMD: ресайз и fullscreen в проигрывании; перенос окна HDR↔SDR панель; переключение HDR в настройках GNOME во время проигрывания; `auto/force-hdr/force-sdr` на лету; плейлист HDR→SDR→HDR; выход во время проигрывания; отключение монитора | O, баги → A | все ячейки GNOME-AMD PASS | TODO |
 | P1.6 | Peak: проверить `target-peak` auto (подстановка пика монитора при < 90% пика потока) на мониторе; при сомнениях упростить до «auto = pass-through, пресеты = явные» | O → A | решение в ADR-0007 | TODO |
 | P1.7 | README: убрать `experimental-features`; переключатель HDR в настройках GNOME ≥ 48; таблица поддержки | A | README актуален | TODO |
-| P1.8 | gpu-next: за настройкой с пометкой «Experimental», fallback на legacy при неудаче создания контекста; DoVi P5 → SDR с причиной в диагностике; из релизных критериев исключён | A | тесты render_backend | TODO |
+| P1.8 | gpu-next: за настройкой с пометкой «Experimental», fallback на legacy при неудаче создания контекста; DoVi P5 → SDR с причиной в диагностике; из релизных критериев исключён | A | тесты render_backend | DONE (legacy по умолчанию в gschema/select_process_backend; gpu-next помечен «Experimental» в preferences.blp/hdr_menu.blp; сохранённый выбор действует со следующего запуска, горячего переключения нет; fallback на legacy разрешён только при создании контекста; явный env-запрос строгий; DoVi P5 остаётся SDR даже при force-hdr с объяснением причины в диагностике; защищено тестами TestP18Compliance в test_render_backend.py) |
 
 ## 4. Phase 2 — KDE Plasma (AMD, затем NVIDIA)
 
