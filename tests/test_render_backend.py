@@ -3,10 +3,13 @@
 import ast
 import ctypes
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -304,12 +307,113 @@ class TestRendererSettingIntegration(unittest.TestCase):
 
     def test_gpu_next_launcher_respects_ui_and_external_override(self):
         launcher_path = os.path.join(
+            os.path.dirname(__file__), "..", "tools", "run_gpu_next.sh"
+        )
+        old_path = os.path.join(
             os.path.dirname(__file__), "..", "run_gpu_next.sh"
         )
+        self.assertFalse(os.path.exists(old_path))
+        self.assertTrue(os.path.isfile(launcher_path))
+        self.assertTrue(os.access(launcher_path, os.X_OK))
         with open(launcher_path, encoding="utf-8") as launcher_file:
             launcher = launcher_file.read()
         self.assertIn("LD_LIBRARY_PATH", launcher)
         self.assertNotIn("export CINEHDR_RENDER_BACKEND=", launcher)
+
+    def test_gpu_next_launcher_path_resolution_and_execution_environment(self):
+        launcher_source = os.path.join(
+            os.path.dirname(__file__), "..", "tools", "run_gpu_next.sh"
+        )
+        with tempfile.TemporaryDirectory(dir="/tmp", prefix="cinehdr-launcher-test-") as tmpdir:
+            work_root = os.path.realpath(tmpdir)
+            repo_root = os.path.join(work_root, "repo")
+            tools_dir = os.path.join(repo_root, "tools")
+            os.makedirs(tools_dir, exist_ok=True)
+
+            prefix_dir = os.path.join(work_root, "mpv-gpu-next-prefix", "lib64")
+            os.makedirs(prefix_dir, exist_ok=True)
+            marker_lib = os.path.join(prefix_dir, "libmpv.so.2")
+            with open(marker_lib, "w", encoding="utf-8") as f:
+                f.write("")
+
+            launcher_path = os.path.join(tools_dir, "run_gpu_next.sh")
+            shutil.copy2(launcher_source, launcher_path)
+            os.chmod(launcher_path, 0o755)
+
+            bin_dir = os.path.join(work_root, "bin")
+            os.makedirs(bin_dir, exist_ok=True)
+            fake_python = os.path.join(bin_dir, "python3")
+            capture_dir = os.path.join(work_root, "capture")
+            os.makedirs(capture_dir, exist_ok=True)
+
+            with open(fake_python, "w", encoding="utf-8") as f:
+                f.write(
+                    "#!/usr/bin/env bash\n"
+                    "set -eu\n"
+                    "echo \"$PWD\" > \"$CAPTURE_DIR/cwd.txt\"\n"
+                    "echo \"${LD_LIBRARY_PATH:-}\" > \"$CAPTURE_DIR/ld_lib_path.txt\"\n"
+                    "echo \"${GDK_BACKEND:-}\" > \"$CAPTURE_DIR/gdk_backend.txt\"\n"
+                    "printf '%s\\n' \"$@\" > \"$CAPTURE_DIR/args.txt\"\n"
+                )
+            os.chmod(fake_python, 0o755)
+
+            external_cwd = os.path.join(work_root, "external_cwd")
+            os.makedirs(external_cwd, exist_ok=True)
+
+            # Test 1: with existing LD_LIBRARY_PATH and argument with spaces
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+            env["WAYLAND_DISPLAY"] = "wayland-mock-0"
+            env["LD_LIBRARY_PATH"] = "/existing/custom/lib"
+            env["CAPTURE_DIR"] = capture_dir
+
+            test_args = ["video with spaces.mp4", "second arg"]
+            proc = subprocess.run(
+                [launcher_path, *test_args],
+                cwd=external_cwd,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, f"Launcher failed: {proc.stderr}")
+
+            with open(os.path.join(capture_dir, "cwd.txt"), encoding="utf-8") as f:
+                captured_cwd = f.read().strip()
+            with open(os.path.join(capture_dir, "ld_lib_path.txt"), encoding="utf-8") as f:
+                captured_ld = f.read().strip()
+            with open(os.path.join(capture_dir, "gdk_backend.txt"), encoding="utf-8") as f:
+                captured_gdk = f.read().strip()
+            with open(os.path.join(capture_dir, "args.txt"), encoding="utf-8") as f:
+                captured_args = f.read().splitlines()
+
+            self.assertEqual(captured_cwd, repo_root)
+            self.assertEqual(captured_ld, f"{prefix_dir}:/existing/custom/lib")
+            self.assertEqual(captured_gdk, "wayland")
+            self.assertEqual(captured_args[0], "-c")
+            self.assertIn("run_dev.py", captured_args[1])
+            self.assertEqual(captured_args[2:], test_args)
+
+            # Test 2: without existing LD_LIBRARY_PATH (must not have trailing colon)
+            env2 = os.environ.copy()
+            env2["PATH"] = f"{bin_dir}:{env2.get('PATH', '')}"
+            env2["WAYLAND_DISPLAY"] = "wayland-mock-0"
+            env2.pop("LD_LIBRARY_PATH", None)
+            env2["CAPTURE_DIR"] = capture_dir
+
+            proc2 = subprocess.run(
+                [launcher_path],
+                cwd=external_cwd,
+                env=env2,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc2.returncode, 0, f"Launcher failed: {proc2.stderr}")
+
+            with open(os.path.join(capture_dir, "ld_lib_path.txt"), encoding="utf-8") as f:
+                captured_ld2 = f.read().strip()
+            self.assertEqual(captured_ld2, prefix_dir)
 
     def test_development_build_tracks_each_generated_blueprint(self):
         meson_path = os.path.join(
