@@ -19,11 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.gtk_cm_policy import (  # noqa: E402
+    COLOR_MGMT_OPT_OUT_ENV,
     OPT_IN_ALREADY_ENABLED,
     OPT_IN_APPLIED,
     OPT_IN_NOT_REQUESTED,
     OPT_IN_TOO_LATE,
     apply_color_mgmt_opt_in,
+    color_mgmt_opt_out_requested,
+    gdk_debug_excludes_color_mgmt,
     gdk_debug_enables_color_mgmt,
     gtk_cm_opted_in,
     with_color_mgmt,
@@ -193,6 +196,171 @@ class TestOptInOrdering(unittest.TestCase):
         keyword = {kw.arg: kw.value for kw in calls[0].keywords}.get("gtk_initialized")
         self.assertIsNotNone(keyword)
         self.assertEqual(ast.unparse(keyword), "Gtk.is_initialized()")
+
+
+class TestFlatpakDefaultBehavior(unittest.TestCase):
+    """Behavioral tests for Flatpak default color management, opt-out, and flag preservation."""
+
+    def test_opt_out_helper(self):
+        self.assertEqual(COLOR_MGMT_OPT_OUT_ENV, "CINEHDR_NO_COLOR_MGMT")
+        self.assertTrue(color_mgmt_opt_out_requested({"CINEHDR_NO_COLOR_MGMT": "1"}))
+        self.assertFalse(color_mgmt_opt_out_requested({"CINEHDR_NO_COLOR_MGMT": "0"}))
+        self.assertFalse(color_mgmt_opt_out_requested({}))
+
+    def test_gdk_debug_excludes_color_mgmt(self):
+        self.assertTrue(gdk_debug_excludes_color_mgmt("all:color-mgmt"))
+        self.assertTrue(gdk_debug_excludes_color_mgmt("ALL:COLOR-MGMT"))
+        self.assertTrue(gdk_debug_excludes_color_mgmt("all:misc:color-mgmt"))
+        self.assertFalse(gdk_debug_excludes_color_mgmt("all"))
+        self.assertFalse(gdk_debug_excludes_color_mgmt("color-mgmt"))
+        self.assertFalse(gdk_debug_excludes_color_mgmt("misc"))
+        self.assertFalse(gdk_debug_excludes_color_mgmt(""))
+
+    def test_default_launch_enables_color_mgmt(self):
+        env = {}
+        res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+        self.assertEqual(res, OPT_IN_APPLIED)
+        self.assertEqual(env.get("GDK_DEBUG"), "color-mgmt")
+        self.assertTrue(gtk_cm_opted_in(env))
+
+    def test_default_launch_preserves_existing_flags(self):
+        cases = [
+            ("misc", "misc:color-mgmt"),
+            ("misc,opengl", "misc:opengl:color-mgmt"),
+            ("misc;opengl", "misc:opengl:color-mgmt"),
+        ]
+        for initial, expected in cases:
+            with self.subTest(initial=initial):
+                env = {"GDK_DEBUG": initial}
+                res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+                self.assertEqual(res, OPT_IN_APPLIED)
+                self.assertEqual(env.get("GDK_DEBUG"), expected)
+                self.assertTrue(gtk_cm_opted_in(env))
+
+    def test_default_launch_already_enabled_leaves_env_alone(self):
+        for val in ("color-mgmt", "all", "misc:color-mgmt", "ALL"):
+            with self.subTest(gdk_debug=val):
+                env = {"GDK_DEBUG": val}
+                res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+                self.assertEqual(res, OPT_IN_ALREADY_ENABLED)
+                self.assertEqual(env.get("GDK_DEBUG"), val)
+                self.assertTrue(gtk_cm_opted_in(env))
+
+    def test_default_launch_preserves_all_minus_color_mgmt_semantics(self):
+        for val in ("all:color-mgmt", "ALL:COLOR-MGMT", "all:misc:color-mgmt"):
+            with self.subTest(gdk_debug=val):
+                env = {"GDK_DEBUG": val}
+                res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+                self.assertEqual(res, OPT_IN_NOT_REQUESTED)
+                self.assertEqual(env.get("GDK_DEBUG"), val)
+                self.assertFalse(gtk_cm_opted_in(env))
+
+    def test_opt_out_disables_automatic_color_mgmt(self):
+        env = {"CINEHDR_NO_COLOR_MGMT": "1"}
+        res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+        self.assertEqual(res, OPT_IN_NOT_REQUESTED)
+        self.assertNotIn("GDK_DEBUG", env)
+        self.assertFalse(gtk_cm_opted_in(env))
+
+    def test_opt_out_preserves_existing_user_gdk_debug(self):
+        env = {"CINEHDR_NO_COLOR_MGMT": "1", "GDK_DEBUG": "misc"}
+        res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+        self.assertEqual(res, OPT_IN_NOT_REQUESTED)
+        self.assertEqual(env.get("GDK_DEBUG"), "misc")
+        self.assertFalse(gtk_cm_opted_in(env))
+
+    def test_opt_out_does_not_override_explicit_color_mgmt_in_gdk_debug(self):
+        env = {"CINEHDR_NO_COLOR_MGMT": "1", "GDK_DEBUG": "color-mgmt"}
+        res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+        self.assertEqual(res, OPT_IN_ALREADY_ENABLED)
+        self.assertEqual(env.get("GDK_DEBUG"), "color-mgmt")
+        self.assertTrue(gtk_cm_opted_in(env))
+
+    def test_opt_out_env_other_than_1_is_ignored(self):
+        env = {"CINEHDR_NO_COLOR_MGMT": "0"}
+        res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+        self.assertEqual(res, OPT_IN_APPLIED)
+        self.assertEqual(env.get("GDK_DEBUG"), "color-mgmt")
+        self.assertTrue(gtk_cm_opted_in(env))
+
+    def test_explicit_opt_in_still_works_even_with_opt_out_env(self):
+        env = {"CINEHDR_NO_COLOR_MGMT": "1"}
+        argv = ["cinehdr", "--experimental-color-mgmt"]
+        res = apply_color_mgmt_opt_in(env, argv, gtk_initialized=False, default_enabled=True)
+        self.assertEqual(res, OPT_IN_APPLIED)
+        self.assertEqual(env.get("GDK_DEBUG"), "color-mgmt")
+        self.assertTrue(gtk_cm_opted_in(env))
+
+    def test_dev_launcher_defaults_to_opt_in_only(self):
+        env = {}
+        res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=False)
+        self.assertEqual(res, OPT_IN_NOT_REQUESTED)
+        self.assertNotIn("GDK_DEBUG", env)
+        self.assertFalse(gtk_cm_opted_in(env))
+
+    def test_installed_launcher_passes_default_enabled(self):
+        tree = _parse(ROOT / "src" / "cinehdr.in")
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", getattr(node.func, "attr", None)) == "apply_color_mgmt_opt_in"
+        ]
+        self.assertEqual(len(calls), 1)
+        keyword = {kw.arg: kw.value for kw in calls[0].keywords}.get("default_enabled")
+        self.assertIsNotNone(keyword, "cinehdr.in must pass default_enabled=True")
+        self.assertIsInstance(keyword, ast.Constant)
+        self.assertIs(keyword.value, True)
+
+    def test_dev_launcher_does_not_pass_default_enabled(self):
+        tree = _parse(ROOT / "run_dev.py")
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", getattr(node.func, "attr", None)) == "apply_color_mgmt_opt_in"
+        ]
+        self.assertEqual(len(calls), 1)
+        keyword = {kw.arg: kw.value for kw in calls[0].keywords}.get("default_enabled")
+        if keyword is not None:
+            self.assertIsInstance(keyword, ast.Constant)
+            self.assertFalse(keyword.value)
+
+    def test_subprocess_launcher_behavior(self):
+        import os
+        import subprocess
+        cases = [
+            ({}, "color-mgmt", "True"),
+            ({"GDK_DEBUG": "misc"}, "misc:color-mgmt", "True"),
+            ({"GDK_DEBUG": "all:color-mgmt"}, "all:color-mgmt", "False"),
+            ({"CINEHDR_NO_COLOR_MGMT": "1"}, "", "False"),
+            ({"CINEHDR_NO_COLOR_MGMT": "1", "GDK_DEBUG": "misc"}, "misc", "False"),
+            ({"CINEHDR_NO_COLOR_MGMT": "1", "GDK_DEBUG": "color-mgmt"}, "color-mgmt", "True"),
+        ]
+        cmd = [
+            sys.executable,
+            "-c",
+            "import os, sys; from src.gtk_cm_policy import apply_color_mgmt_opt_in, gtk_cm_opted_in; "
+            "apply_color_mgmt_opt_in(os.environ, sys.argv, False, default_enabled=True); "
+            "print(os.environ.get('GDK_DEBUG', '') + '|' + str(gtk_cm_opted_in()))",
+        ]
+        for extra_env, expected_debug, expected_opted in cases:
+            with self.subTest(env=extra_env):
+                test_env = os.environ.copy()
+                test_env.pop("GDK_DEBUG", None)
+                test_env.pop("CINEHDR_NO_COLOR_MGMT", None)
+                test_env.pop("CINEHDR_EXPERIMENTAL_COLOR_MGMT", None)
+                test_env.update(extra_env)
+                res = subprocess.run(
+                    cmd,
+                    cwd=str(ROOT),
+                    env=test_env,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                output = res.stdout.strip()
+                debug_val, opted_val = output.split("|", 1)
+                self.assertEqual(debug_val, expected_debug)
+                self.assertEqual(opted_val, expected_opted)
 
 
 if __name__ == "__main__":

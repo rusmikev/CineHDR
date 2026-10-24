@@ -48,7 +48,8 @@ if __name__ == '__main__':
     # import and GDK reads GDK_DEBUG exactly once (see gtk_cm_policy).
     from cinehdr.gtk_cm_policy import apply_color_mgmt_opt_in, apply_gsk_renderer_policy
     apply_color_mgmt_opt_in(os.environ, sys.argv,
-                            gtk_initialized='gi.repository.Gtk' in sys.modules)
+                            gtk_initialized='gi.repository.Gtk' in sys.modules,
+                            default_enabled=True)
     apply_gsk_renderer_policy(os.environ)
 
     import gi
