@@ -283,13 +283,15 @@ class TestFlatpakDefaultBehavior(unittest.TestCase):
         self.assertEqual(env.get("GDK_DEBUG"), "color-mgmt")
         self.assertTrue(gtk_cm_opted_in(env))
 
-    def test_explicit_opt_in_still_works_even_with_opt_out_env(self):
-        env = {"CINEHDR_NO_COLOR_MGMT": "1"}
-        argv = ["cinehdr", "--experimental-color-mgmt"]
-        res = apply_color_mgmt_opt_in(env, argv, gtk_initialized=False, default_enabled=True)
-        self.assertEqual(res, OPT_IN_APPLIED)
-        self.assertEqual(env.get("GDK_DEBUG"), "color-mgmt")
-        self.assertTrue(gtk_cm_opted_in(env))
+    def test_opt_out_overrides_stale_experimental_env(self):
+        env = {
+            "CINEHDR_NO_COLOR_MGMT": "1",
+            "CINEHDR_EXPERIMENTAL_COLOR_MGMT": "1",
+        }
+        res = apply_color_mgmt_opt_in(env, ["cinehdr"], gtk_initialized=False, default_enabled=True)
+        self.assertEqual(res, OPT_IN_NOT_REQUESTED)
+        self.assertNotIn("GDK_DEBUG", env)
+        self.assertFalse(gtk_cm_opted_in(env))
 
     def test_dev_launcher_defaults_to_opt_in_only(self):
         env = {}

@@ -105,10 +105,11 @@ def apply_color_mgmt_opt_in(
     if gdk_debug_enables_color_mgmt(current):
         return OPT_IN_ALREADY_ENABLED
 
-    explicit = color_mgmt_opt_in_requested(env, argv)
-    opt_out = color_mgmt_opt_out_requested(env)
+    if color_mgmt_opt_out_requested(env):
+        return OPT_IN_NOT_REQUESTED
 
-    if not explicit and (not default_enabled or opt_out):
+    explicit = color_mgmt_opt_in_requested(env, argv)
+    if not explicit and not default_enabled:
         return OPT_IN_NOT_REQUESTED
 
     if not explicit and gdk_debug_excludes_color_mgmt(current):
