@@ -44,11 +44,25 @@ FAIL_SCOPE = (
     "Wayland color-management submission contract. It is not acceptance "
     "evidence and does not prove compositor or display behavior."
 )
+UNKNOWN_SCOPE = (
+    "UNKNOWN records that client-side Wayland color-management trace evidence "
+    "was incomplete, ambiguous, or unverified. It is not acceptance evidence "
+    "and does not prove compositor or physical display behavior."
+)
 TRACE_ONLY_L3P_SCOPE = (
     "L3p protocol evidence: PASS proves a recognized HDR image description was submitted "
-    "and committed on the target application's Wayland window surface without a traced "
-    "protocol rejection. It does not prove compositor transformation, display mode, "
-    "luminance, pixels, or physical HDR display output."
+    "and committed on the target application's Wayland window surface with a verified non-zero "
+    "buffer attach and no subsurface offload ambiguity, without a traced protocol rejection. "
+    "Attribution by app_id proves window ownership by the application but does not alone prove "
+    "that the window carries video without a verified buffer attach. Launch parameters (e.g. mpv "
+    "command-line flags) require independent confirmation from the runtime log (vo=v). "
+    "PASS does not prove compositor transformation, display mode, luminance, pixels, or physical HDR display output."
+)
+TRACE_ONLY_UNKNOWN_SCOPE = (
+    "L3p protocol evidence: UNKNOWN records that client-side Wayland color-management "
+    "trace evidence was incomplete, ambiguous, or could not establish an unambiguous "
+    "video surface. It is not acceptance evidence and does not prove compositor or "
+    "physical display behavior."
 )
 TRACE_ONLY_FAIL_SCOPE = (
     "L3p protocol evidence: FAIL records a hash-linked raw client trace that did not "
@@ -1822,7 +1836,7 @@ def validate_composite_window_trace(
                             "revision": PRIMARY_COMPOSITE_REVISION,
                             "status": "UNKNOWN",
                             "oracle": "primary_composite_window",
-                            "scope": PRIMARY_COMPOSITE_SCOPE,
+                            "scope": UNKNOWN_SCOPE,
                             "reason": color_eval.get("reason")
                             or "image description color semantics are unverified for composite_window",
                             "matched": base_matched,
@@ -2334,15 +2348,64 @@ def create_trace_only_report(
 
     trace_text = trace_path.read_text(encoding="utf-8", errors="replace")
     evidence = validate_composite_window_trace(trace_text, expected_app_id=target_app_id)
+
+    # Fail-closed autonomous video surface proof (L3p):
+    # PASS requires a verified non-zero wl_surface.attach on the target window surface
+    # and absence of subsurface offload ambiguity.
+    calls = _calls(trace_text)
+    toplevel_surfaces, subsurfaces, surface_attaches, _ = _surface_roles_and_attaches(calls)
+    matched_surface = evidence.get("matched", {}).get("surface", {})
+    target_surf = matched_surface.get("wl_surface_id")
+    if target_surf is None:
+        raise TraceValidationError("target window surface could not be identified from trace evidence")
+
+    target_buffers = [b for b in surface_attaches.get(target_surf, []) if b != 0]
+    if not target_buffers:
+        other_attaches = {
+            s: [b for b in bufs if b != 0]
+            for s, bufs in surface_attaches.items()
+            if s != target_surf and any(b != 0 for b in bufs)
+        }
+        if other_attaches:
+            other_names = ", ".join(f"wl_surface#{s}" for s in sorted(other_attaches))
+            raise TraceValidationError(
+                f"no non-zero wl_surface.attach observed on target window surface (wl_surface#{target_surf}); "
+                f"attach observed only on other surface(s) ({other_names})"
+            )
+        raise TraceValidationError(
+            f"no non-zero wl_surface.attach observed on target window surface (wl_surface#{target_surf})"
+        )
+
+    # Check for subsurfaces belonging to target window
+    app_subsurfaces = [
+        child for child in subsurfaces
+        if _find_toplevel_ancestor(child, subsurfaces, toplevel_surfaces)[0] == target_surf
+    ]
+
     evidence.update(
         {
             "trace_only": True,
             "protocol_evidence_level": "L3p",
+            "expected_app_id": target_app_id,
+            "observed_app_id": target_app_id,
             "trace": _input_reference(trace_path),
         }
     )
-    if evidence.get("status") == "PASS":
+    evidence.setdefault("matched", {}).setdefault("surface", {})["attached_buffers"] = target_buffers
+
+    if app_subsurfaces:
+        subsurface_names = ", ".join(f"wl_surface#{s}" for s in sorted(app_subsurfaces))
+        evidence["status"] = "UNKNOWN"
+        evidence["reason"] = (
+            f"subsurface detected for target window ({subsurface_names}); "
+            "video surface origin cannot be unambiguously proven on toplevel window"
+        )
+        evidence["scope"] = TRACE_ONLY_UNKNOWN_SCOPE
+    elif evidence.get("status") == "PASS":
         evidence["scope"] = TRACE_ONLY_L3P_SCOPE
+    else:
+        evidence["scope"] = TRACE_ONLY_UNKNOWN_SCOPE
+
     return evidence
 
 
@@ -2355,11 +2418,24 @@ def create_trace_only_failure_evidence(
 ) -> dict[str, Any]:
     """Build hash-linked failure evidence for autonomous L3p trace validation."""
     effective_oracle = oracle if oracle else "composite_window"
+    try:
+        trace_text = trace_path.read_text(encoding="utf-8", errors="replace")
+        calls = _calls(trace_text)
+        toplevel_surfaces, _, _, _ = _surface_roles_and_attaches(calls)
+        observed_app_ids = sorted(set(toplevel_surfaces.values()))
+    except (OSError, UnicodeError):
+        observed_app_ids = []
+
+    observed_app_id = observed_app_ids[0] if len(observed_app_ids) == 1 else None
+
     return {
         "schema": TRACE_SCHEMA,
         "revision": PRIMARY_COMPOSITE_REVISION,
         "status": "FAIL",
         "oracle": effective_oracle,
+        "expected_app_id": expected_app_id,
+        "observed_app_id": observed_app_id,
+        "observed_app_ids": observed_app_ids,
         "app_id": expected_app_id,
         "trace_only": True,
         "protocol_evidence_level": "L3p",
