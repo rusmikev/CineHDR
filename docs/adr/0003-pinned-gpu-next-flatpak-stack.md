@@ -3,8 +3,7 @@
 - **Status:** Accepted for experimental packaging
 - **Date:** 2026-08-22
 - **Scope:** Local GPU Next candidate builds; no public release
-- **Builds on:** [ADR-0001](0001-gpu-next-render-api.md) and
-  [ADR-0002](0002-user-facing-gpu-next-selection.md)
+- **Builds on:** [ADR-0001](0001-gpu-next-render-api.md) (historically also ADR-0002, read via `git show 7165ae2:docs/adr/0002-user-facing-gpu-next-selection.md`)
 
 ## Context
 

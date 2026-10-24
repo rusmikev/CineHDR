@@ -38,7 +38,14 @@ Play your videos with HDR support
   * **KDE Plasma (KWin)**: KWin advertises HDR capabilities (PQ, compound power 2.4) but intentionally does not advertise the `sRGB` transfer function (TF 9). GTK 4 strictly requires `sRGB` to establish its baseline color space. CineHDR models GTK's policy (`gtk_cm_policy`) and automatically detects this condition, falling back cleanly to `mpv`'s tone mapping to avoid washed-out colors.
   * **GNOME (Mutter)**: Mutter supports client color management for `wp_color_manager_v1` including `sRGB`. Native HDR output requires both enabling experimental HDR in Mutter (`gsettings set org.gnome.mutter experimental-features "['experimental-hdr']"`, toggling HDR in GNOME Display Settings) and color management enabled in GTK (enabled by default in Flatpak).
 * **Verified GNOME scope**: Candidate v14 passed a bounded client-side SDR/HDR publication and Wayland composite-window submission test on GNOME Shell 50.5 for both render backends. This does not measure physical HDR output, direct scanout, or each frame presented by the compositor. Gate 2 and Dolby Vision validation remain open.
-* **Renderer Selection**: CineHDR uses GTK's modern renderers (`ngl`/`vulkan`). On the Niri compositor (`NIRI_SOCKET` detected), `GSK_RENDERER=gl` is pinned automatically to preserve upstream frame-drop workarounds; CineHDR detects this legacy renderer and falls back to safe SDR tone mapping.
+* **libmpv Render Backend Selection (`render-backend`)**: CineHDR distinguishes its internal video rendering backend in `libmpv` from GTK's scene-graph renderer (`GSK_RENDERER`):
+  * **Default**: `legacy` (`opengl` API) is the stable default backend.
+  * **Experimental `gpu-next`**: Available via persistent preference in **Preferences → Video** and **HDR & Video Output** menu (`render-backend: gpu-next`). Changing this setting saves the choice for the next normal launch and requires an application restart; live renderer swapping in a running process is not supported. If `opengl-next` context creation fails at startup, CineHDR falls back safely to `legacy` while preserving the saved preference for subsequent runs.
+  * **Developer Environment Override (`CINEHDR_RENDER_BACKEND`)**: Takes precedence over GSettings for testing:
+    * `CINEHDR_RENDER_BACKEND=gpu-next`: Strict mode; fails visibly if the experimental renderer cannot be created (no creation fallback).
+    * `CINEHDR_RENDER_BACKEND=auto`: Development mode with automatic fallback to `opengl` during context creation.
+    * `CINEHDR_RENDER_BACKEND=legacy`: Explicit legacy OpenGL.
+* **GTK Renderer Selection (`GSK_RENDERER`)**: CineHDR requires GTK's modern scene renderers (`ngl`/`vulkan`) for 16-bit float textures and color management. On the Niri compositor (`NIRI_SOCKET` detected), `GSK_RENDERER=gl` is pinned automatically to preserve upstream frame-drop workarounds; CineHDR detects this legacy GTK renderer and falls back to safe SDR tone mapping.
 * Check **HDR Diagnostics** in the playback menu for the live pipeline state, active renderer backend, compositor capabilities, and specific fallback reasons.
 
 ---
