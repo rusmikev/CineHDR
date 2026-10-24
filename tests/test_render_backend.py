@@ -295,15 +295,23 @@ class TestRendererSettingIntegration(unittest.TestCase):
     def test_process_selection_is_passed_to_video_widget(self):
         paths = {
             name: os.path.join(os.path.dirname(__file__), "..", "src", name)
-            for name in ("main.py", "window.py", "mpv_gl_area.py")
+            for name in ("main.py", "window.py", "video_widget.py")
         }
         sources = {}
         for name, path in paths.items():
             with open(path, encoding="utf-8") as source_file:
                 sources[name] = source_file.read()
         self.assertIn("select_process_backend", sources["main.py"])
+        self.assertIn("self._video_area = MpvVideoWidget(", sources["window.py"])
         self.assertIn("render_backend_selection=self.app.render_backend_selection", sources["window.py"])
-        self.assertIn("super().__init__(mpv_instance, render_backend_selection)", sources["mpv_gl_area.py"])
+        self.assertIn(
+            "render_backend_selection: Optional[ProcessRenderSelection] = None",
+            sources["video_widget.py"],
+        )
+        self.assertIn(
+            "self.render_backend_selection = render_backend_selection",
+            sources["video_widget.py"],
+        )
 
     def test_gpu_next_launcher_respects_ui_and_external_override(self):
         launcher_path = os.path.join(

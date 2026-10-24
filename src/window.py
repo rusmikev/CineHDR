@@ -42,7 +42,7 @@ from .diagnostics_report import DiagnosticsExporter
 from .hdr_menu import HdrMenuButton
 from .history import HistoryDialog
 from .mpris import MPRIS
-from .mpv_gl_area import ThumbPreviewGLArea, VideoGLArea
+from .mpv_gl_area import ThumbPreviewGLArea
 from .options import OptionsMenuButton
 from .playlist import Playlist, PlaylistItemObj
 from .preferences import settings, sync_mpv_with_settings
@@ -72,6 +72,7 @@ from .utils import (
     timeout_add_once,
     timeout_add_seconds_once,
 )
+from .video_widget import MpvVideoWidget
 logger = logging.getLogger(__name__)
 gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
 
@@ -283,7 +284,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.mpv._dovi_rpu_warning_count = self.dovi_rpu_warning_count
         self.mpv._dovi_rpu_warning_text = self.dovi_rpu_warning_text
 
-        self._video_area = VideoGLArea(
+        self._video_area = MpvVideoWidget(
             self.mpv,
             render_backend_selection=self.app.render_backend_selection,  # type: ignore
         )

@@ -204,12 +204,11 @@ class ThumbPreviewGLArea(BaseGLArea):
             logger.exception("ThumbPreviewGLArea stop failed")
 
 
-from .video_widget import MpvVideoWidget
-
-
-class VideoGLArea(MpvVideoWidget):
-    """HDR-capable GTK4 video widget replacing upstream's VideoGLArea."""
-
+class VideoGLArea(BaseGLArea):
     def __init__(self, mpv_instance: mpv.MPV, **kwargs):
-        render_backend_selection = kwargs.pop("render_backend_selection", None)
-        super().__init__(mpv_instance, render_backend_selection)
+        super().__init__(**kwargs)
+        self._mpv = mpv_instance
+
+    def _on_realize(self, _area):
+        self.make_current()
+        self._ctx = self._setup_mpv_context(self._mpv)
