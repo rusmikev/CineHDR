@@ -16,43 +16,24 @@ jobs:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
 
-    strategy:
-      matrix:
-        arch: [x86_64, aarch64]
-      fail-fast: false
-
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - name: Install deps
-        if: ${{ matrix.arch != 'x86_64' }}
-        run: |
-          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
-          tar xzvf docker.tgz
-          mv docker/* /usr/bin
-
-      - name: Set up QEMU
-        if: ${{ matrix.arch != 'x86_64' }}
-        id: qemu
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
-
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: CineHDR-${{ matrix.arch }}.flatpak
+          bundle: CineHDR-x86_64.flatpak
           manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
           cache-key: flatpak-builder-release-${{ github.sha }}
-          run-tests: ${{ matrix.arch == 'x86_64' }}
-          arch: ${{ matrix.arch }}
+          run-tests: true
+          arch: x86_64
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CineHDR-${{ matrix.arch }}
-          path: CineHDR-${{ matrix.arch }}.flatpak
+          name: CineHDR-x86_64
+          path: CineHDR-x86_64.flatpak
           if-no-files-found: error
 
   publish-release:

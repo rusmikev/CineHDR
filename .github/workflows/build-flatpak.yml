@@ -9,6 +9,14 @@ on:
       - "**"
 
 jobs:
+  lint:
+    name: "Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run ruff check
+        run: pipx run ruff check src tests tools
+
   flatpak:
     name: "Flatpak"
     runs-on: ubuntu-latest
@@ -16,34 +24,14 @@ jobs:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
 
-    strategy:
-      matrix:
-        # Building for both standard x86_64 and ARM64 (aarch64 via QEMU emulation).
-        arch: [x86_64, aarch64]
-      fail-fast: false
-
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      # Docker is required by the docker/setup-qemu-action which enables emulation
-      - name: Install deps
-        if: ${{ matrix.arch != 'x86_64' }}
-        run: |
-          # Use the static binaries because it's unable to use a package manager 
-          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
-          tar xzvf docker.tgz
-          mv docker/* /usr/bin
-      - name: Set up QEMU
-        if: ${{ matrix.arch != 'x86_64' }}
-        id: qemu
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: CineHDR.flatpak
           manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
           cache-key: flatpak-builder-${{ github.sha }}
-          run-tests: ${{ matrix.arch == 'x86_64' }}
-          arch: ${{ matrix.arch }}
+          run-tests: true
+          arch: x86_64
