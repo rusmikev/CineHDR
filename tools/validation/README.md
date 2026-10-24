@@ -309,6 +309,14 @@
      Внутри Flatpak-контейнера `libmpv` загружается из `/app/lib/libmpv.so.2.5.0`, что первоначально отклонялось проверкой хостового префикса `mpv-gpu-next-prefix/lib64`. В `is_verified_flatpak_container()` и `publication_runtime_errors()` введена строгая проверка `/.flatpak-info`, read-only монтирования `/app` в `/proc/self/mountinfo` и канонического пути `/app/lib/libmpv.so.2.5.0` с отбраковкой любых внешних путей (`/usr/lib`, `/tmp`, симлинков наружу).
   6. **Дефект 3F (перезапись `cleanup_status.json` в `EXIT`-ловушке и ложный возврат `0` при пропаже `.flatpak/<id>/info` в `run_wayland_publication_validation.sh`, `2026-10-04`)**:
      При штатном завершении `evaluate_session_results` записывал `cleanup_status.json`, но срабатывавший при выходе из скрипта `trap cleanup_handler EXIT` перезаписывал его; кроме того, если файл `$XDG_RUNTIME_DIR/.flatpak/<id>/info` исчезал раньше, чем процесс пропадал из `flatpak ps`, `cleanup_instance` обязан проверять `flatpak ps --columns=instance` и завершаться ошибкой (fail-closed), если экземпляр всё ещё числится запущенным или вызов `flatpak ps` не удался.
+  7. **Дефект 3G (потеря статуса `UNKNOWN` и превращение в `FAIL` в `evaluate_session_results` и агрегаторе, `2026-10-24`)**:
+     Если парсер трассы возвращал `UNKNOWN` (неопределённое или неполное протокольное доказательство), `evaluate_session_results` немедленно завершался с `sys.exit("FAIL: protocol evidence status is not PASS: UNKNOWN...")`. В результате `session_facts.json` не создавался, а `write_gate2w_summary` не вызывался вовсе (из-за `set -e`). Кроме того, агрегатор `write_gate2w_summary` безусловно превращал любой non-PASS факт в `FAIL`.
+     Исправлено:
+     - при `status == "UNKNOWN"` в протоколе и соблюдении всех остальных обязательных инвариантов (FBO-пиксели, publication report, хеши, завершение контейнера) создаётся `session_facts.json` со статусами `protocol_status=UNKNOWN`, `backend_result=UNKNOWN`, сохранением точной причины `reason`, сброшенным флагом `composite_window_surface_proven=False` и сохранённым `container_session_correlated=True`;
+     - в `write_gate2w_summary` сохраняется статус `UNKNOWN` для соответствующего бэкенда, `gate2w_status=OPEN`, `gate2w_closed=false`;
+     - при `--backend all` статус `UNKNOWN` одного бэкенда не блокирует запуск второго, а `PASS` второго не скрывает `UNKNOWN`;
+     - итоговый запуск скрипта завершается ненулевым кодом (код 1) с явным выводом `UNKNOWN` без заявления об успешном завершении;
+     - `UNKNOWN` протокола не отменяет проверку FBO: повреждённый или отсутствующий FBO-артефакт при `UNKNOWN` остаётся строгим отказом `FAIL`.
 
 #### 3.2. Проверяемые источники
 - Коммит `51890eb60ec5646d090f65e067b81e47a2ec629c` (`gpu-next: bound validation and harden vendor smoke`).
@@ -372,6 +380,12 @@
   - `WaylandPublicationScenarioTests.test_cleanup_handler_does_not_overwrite_existing_cleanup_status` (`tests/test_wayland_publication_scenario.py`)
   - `WaylandPublicationScenarioTests.test_eval_fails_when_fbo_pixel_artifact_is_missing` (`tests/test_wayland_publication_scenario.py`)
   - `WaylandPublicationScenarioTests.test_eval_fails_when_fbo_pixel_artifact_hash_mismatched` (`tests/test_wayland_publication_scenario.py`)
+- **Дефект 3G (сохранение статуса `UNKNOWN` протокола, `session_facts.json`, агрегация матриц и ненулевой exit code)**:
+  - `WaylandPublicationScenarioTests.test_unknown_protocol_evidence_generates_unknown_session_facts` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_unknown_protocol_with_damaged_fbo_artifact_fails` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_gate2w_summary_aggregation_matrix` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_gate2w_summary_single_backend_unknown` (`tests/test_wayland_publication_scenario.py`)
+  - `WaylandPublicationScenarioTests.test_shell_control_path_with_unknown_protocol_writes_summary_and_exits_nonzero` (`tests/test_wayland_publication_scenario.py`)
 
 #### 3.5. Команда воспроизведения и предусловия
 - **Предусловия для модульных/сценарных тестов (без GPU и без живой сессии)**: Python 3, `bash`, стандартные утилиты (`sha256sum`, `python3`), установленные модули проекта.

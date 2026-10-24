@@ -18,7 +18,7 @@ umask 077
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd -P)"
-report_root="${repo_root}/validation-reports"
+report_root="${CINEHDR_REPORT_ROOT:-${repo_root}/validation-reports}"
 run_stamp="$(date +%Y%m%d-%H%M%S)"
 run_dir="${report_root}/wayland-publication-${run_stamp}-$$"
 
@@ -434,10 +434,11 @@ except TraceValidationError as e:
 except Exception as e:
     sys.exit(f"FAIL: unexpected error parsing trace: {e}")
 
-if evidence.get("status") != "PASS":
-    sys.exit(f"FAIL: protocol evidence status is not PASS: {evidence.get('status')} ({evidence.get('reason', '')})")
+protocol_status = evidence.get("status")
+if protocol_status not in ("PASS", "UNKNOWN"):
+    sys.exit(f"FAIL: protocol evidence status is not PASS or UNKNOWN: {protocol_status} ({evidence.get('reason', '')})")
 
-# 5. Check mandatory FBO pixel measurements artifact (MANDATORY for Gate 2W PASS)
+# 5. Check mandatory FBO pixel measurements artifact (MANDATORY for Gate 2W PASS and UNKNOWN)
 pixel_artifacts = list(b_dir.glob(f"gate2-wayland-fbo-pixels-{backend}-*.json"))
 if len(pixel_artifacts) != 1:
     sys.exit(f"FAIL: expected exactly 1 FBO pixel measurements artifact for {backend}, found {len(pixel_artifacts)}")
@@ -462,6 +463,10 @@ if "FBO pixel artifact verified: True" not in report_lines:
     sys.exit(f"FAIL: publication report does not certify FBO pixel artifact verification")
 
 # 6. Generate machine-readable session_facts.json
+protocol_reason = evidence.get("reason", "") if protocol_status == "UNKNOWN" else None
+backend_result = "PASS" if protocol_status == "PASS" else "UNKNOWN"
+matched_surface = (evidence.get("matched") or {}).get("surface", {})
+
 facts = {
     "schema": "cinehdr.gate2w.session-facts.v1",
     "backend": backend,
@@ -494,11 +499,11 @@ facts = {
         "sha256": trace_sha,
         "protocol_report_path": protocol_json_path.name,
         "protocol_report_sha256": protocol_sha,
-        "protocol_status": "PASS",
+        "protocol_status": protocol_status,
         "oracle": "primary_composite_window",
-        "composite_window_surface_proven": True,
-        "toplevel_wl_surface_id": evidence.get("matched", {}).get("surface", {}).get("wl_surface_id"),
-        "color_management_surface_id": evidence.get("matched", {}).get("surface", {}).get("color_management_surface_id"),
+        "composite_window_surface_proven": True if protocol_status == "PASS" else False,
+        "toplevel_wl_surface_id": matched_surface.get("wl_surface_id"),
+        "color_management_surface_id": matched_surface.get("color_management_surface_id"),
     },
     "container_session_correlated": True,
     "same_process_wire_correlated": False,
@@ -519,11 +524,20 @@ facts = {
         "display_photometry_certified": False,
         "clarification": "Correlation proves identical session, container instance, and runner stream redirection. Wayland wire protocol itself does not contain an in-protocol process PID or nonce; wire-level same-process correlation is not claimed and remains unproven.",
     },
-    "backend_result": "PASS",
+    "backend_result": backend_result,
     "gate2w_overall_closed": False,
 }
+if protocol_reason:
+    facts["reason"] = protocol_reason
+    facts["wayland_trace"]["reason"] = protocol_reason
+
 (b_dir / "session_facts.json").write_text(json.dumps(facts, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-print(f"PASS ({backend}): publication matrix and protocol submission verified in session {session_id}")
+if backend_result == "PASS":
+    print(f"PASS ({backend}): publication matrix and protocol submission verified in session {session_id}")
+    sys.exit(0)
+else:
+    print(f"UNKNOWN ({backend}): protocol submission unverified in session {session_id}: {protocol_reason}")
+    sys.exit(1)
 PY_EVAL_EOF
 }
 
@@ -749,7 +763,16 @@ run_backend() {
 EOF
     fi
 
-    evaluate_session_results "${backend_dir}" "${backend}" "${session_id}" "${test_instance_id}" "${prot_trace}"
+    local eval_rc=0
+    evaluate_session_results "${backend_dir}" "${backend}" "${session_id}" "${test_instance_id}" "${prot_trace}" || eval_rc=$?
+    if [[ ${eval_rc} -ne 0 ]]; then
+        local facts_file="${backend_dir}/session_facts.json"
+        if [[ -f "${facts_file}" ]] && grep -q '"backend_result"[[:space:]]*:[[:space:]]*"UNKNOWN"' "${facts_file}"; then
+            return 0
+        fi
+        echo "FAIL (${backend}): evaluation failed with exit code ${eval_rc}" >&2
+        exit "${eval_rc}"
+    fi
 }
 
 write_gate2w_summary() {
@@ -781,25 +804,49 @@ if (gpu_next_dir / "session_facts.json").exists():
     except Exception:
         pass
 
-legacy_passed = legacy_facts is not None and legacy_facts.get("backend_result") == "PASS"
-gpu_next_passed = gpu_next_facts is not None and gpu_next_facts.get("backend_result") == "PASS"
+def get_backend_status(facts):
+    if facts is None:
+        return "NOT_RUN"
+    res = facts.get("backend_result")
+    if res == "PASS":
+        return "PASS"
+    elif res == "UNKNOWN":
+        return "UNKNOWN"
+    return "FAIL"
+
+legacy_status = get_backend_status(legacy_facts)
+gpu_next_status = get_backend_status(gpu_next_facts)
+
+legacy_passed = legacy_status == "PASS"
+gpu_next_passed = gpu_next_status == "PASS"
 
 backends_summary = {
     "legacy": {
-        "status": "PASS" if legacy_passed else ("FAIL" if legacy_facts else "NOT_RUN"),
+        "status": legacy_status,
         "session_facts_present": legacy_facts is not None,
     },
     "gpu-next": {
-        "status": "PASS" if gpu_next_passed else ("FAIL" if gpu_next_facts else "NOT_RUN"),
+        "status": gpu_next_status,
         "session_facts_present": gpu_next_facts is not None,
     },
 }
+if legacy_facts and legacy_facts.get("reason"):
+    backends_summary["legacy"]["reason"] = legacy_facts.get("reason")
+if gpu_next_facts and gpu_next_facts.get("reason"):
+    backends_summary["gpu-next"]["reason"] = gpu_next_facts.get("reason")
 
 # Gate 2W aggregate evaluation
 if target_backend in ("legacy", "gpu-next"):
     gate2w_status = "OPEN"
     gate2w_closed = False
-    reason = f"PARTIAL_NOT_CLOSED: only single backend '{target_backend}' was evaluated. Gate 2W requires full matrix across both legacy and gpu-next."
+    chosen_status = backends_summary[target_backend]["status"]
+    if chosen_status == "PASS":
+        reason = f"PARTIAL_NOT_CLOSED: only single backend '{target_backend}' was evaluated. Gate 2W requires full matrix across both legacy and gpu-next."
+    elif chosen_status == "UNKNOWN":
+        chosen_reason = backends_summary[target_backend].get("reason", "unverified")
+        reason = f"PARTIAL_NOT_CLOSED: single backend '{target_backend}' evaluated with UNKNOWN protocol status ({chosen_reason}). Gate 2W requires full matrix across both legacy and gpu-next."
+    else:
+        reason = f"PARTIAL_NOT_CLOSED: single backend '{target_backend}' did not pass (status: {chosen_status}). Gate 2W requires full matrix across both legacy and gpu-next."
 elif target_backend == "all":
     if legacy_passed and gpu_next_passed:
         gate2w_status = "GATE2W_EVIDENCE_GATHERED"
@@ -808,8 +855,8 @@ elif target_backend == "all":
     else:
         gate2w_status = "OPEN"
         gate2w_closed = False
-        failed = [b for b, s in backends_summary.items() if s["status"] != "PASS"]
-        reason = f"One or more backends failed or were not run: {', '.join(failed)}"
+        failed = [f"{b} ({s['status']})" for b, s in backends_summary.items() if s["status"] != "PASS"]
+        reason = f"One or more backends unverified (UNKNOWN), failed, or not run: {', '.join(failed)}"
 else:
     gate2w_status = "OPEN"
     gate2w_closed = False
@@ -947,8 +994,48 @@ main() {
 
     write_gate2w_summary "${backend_choice}"
 
-    echo "Gate 2W publication validation sequence completed successfully."
-    echo "Reports preserved in: ${run_dir}"
+    local summary_file="${run_dir}/gate2w_summary.json"
+    local run_status
+    run_status="$(python3 - "${summary_file}" "${backend_choice}" << 'PY_STATUS_EOF'
+import json
+import sys
+
+summary_path = sys.argv[1]
+target = sys.argv[2]
+try:
+    with open(summary_path, encoding="utf-8") as f:
+        s = json.load(f)
+    backends = s.get("backends", {})
+    if target in ("legacy", "gpu-next"):
+        target_backends = [target]
+    else:
+        target_backends = ["legacy", "gpu-next"]
+
+    statuses = [backends.get(b, {}).get("status") for b in target_backends]
+    if all(st == "PASS" for st in statuses):
+        print("PASS")
+    elif any(st == "UNKNOWN" for st in statuses) and all(st in ("PASS", "UNKNOWN") for st in statuses):
+        print("UNKNOWN")
+    else:
+        print("FAIL")
+except Exception:
+    print("FAIL")
+PY_STATUS_EOF
+)"
+
+    if [[ "${run_status}" == "PASS" ]]; then
+        echo "Gate 2W publication validation sequence completed successfully."
+        echo "Reports preserved in: ${run_dir}"
+        exit 0
+    elif [[ "${run_status}" == "UNKNOWN" ]]; then
+        echo "Gate 2W publication validation sequence finished with UNKNOWN protocol evidence."
+        echo "Reports preserved in: ${run_dir}"
+        exit 1
+    else
+        echo "Gate 2W publication validation sequence failed."
+        echo "Reports preserved in: ${run_dir}"
+        exit 1
+    fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

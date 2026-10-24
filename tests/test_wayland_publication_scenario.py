@@ -891,6 +891,72 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         self.assertEqual(facts["fbo_pixel_measurements"]["phases_captured"], ["initial_sdr", "hdr", "return_sdr"])
         self.assertEqual(facts["fbo_pixel_measurements"]["tolerance_status"], "preliminary")
 
+    def test_unknown_protocol_evidence_generates_unknown_session_facts(self):
+        """When protocol is UNKNOWN and all other invariants pass, write UNKNOWN session_facts and exit non-zero."""
+        pix_path, pix_sha, pix_data = self._write_valid_fbo_pixel_artifact(backend="legacy")
+        rep = make_publication_report(
+            result="PASS",
+            expected_backend="legacy",
+            active_api="opengl",
+            fbo_pixel_artifact=pix_path.name,
+            fbo_pixel_sha=pix_sha,
+            fbo_pixel_verified=True,
+        )
+        (self.backend_dir / "gate2-wayland-publication-legacy-20260926.txt").write_text(rep, encoding="utf-8")
+        unknown_trace = VALID_TRACE_SNIPPET.replace("set_tf_named(11)", "set_tf_named(5)")
+        (self.backend_dir / "wayland-client.raw.log").write_text(unknown_trace, encoding="utf-8")
+        self._write_instance_info()
+
+        res = self._run_eval(backend="legacy")
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("UNKNOWN (legacy)", res.stdout)
+        self.assertEqual(res.stderr, "")
+
+        proto_file = self.backend_dir / "gate2-wayland-color-management-legacy.json"
+        self.assertTrue(proto_file.exists())
+        proto_data = json.loads(proto_file.read_text(encoding="utf-8"))
+        self.assertEqual(proto_data["status"], "UNKNOWN")
+        self.assertIn("ext_linear transfer function", proto_data["reason"])
+
+        facts_file = self.backend_dir / "session_facts.json"
+        self.assertTrue(facts_file.exists())
+        facts = json.loads(facts_file.read_text(encoding="utf-8"))
+        self.assertEqual(facts["backend_result"], "UNKNOWN")
+        self.assertEqual(facts["backend"], "legacy")
+        self.assertEqual(facts["session_id"], self.session_id)
+        self.assertEqual(facts["reason"], proto_data["reason"])
+        self.assertEqual(facts["wayland_trace"]["protocol_status"], "UNKNOWN")
+        self.assertEqual(facts["wayland_trace"]["reason"], proto_data["reason"])
+        self.assertFalse(facts["wayland_trace"]["composite_window_surface_proven"])
+        self.assertTrue(facts["container_session_correlated"])
+        self.assertEqual(facts["fbo_pixel_measurements"]["status"], "PASS")
+        self.assertEqual(facts["publication_report"]["result"], "PASS")
+        self.assertFalse(facts["gate2w_overall_closed"])
+
+    def test_unknown_protocol_with_damaged_fbo_artifact_fails(self):
+        """UNKNOWN protocol combined with damaged mandatory FBO artifact fails closed without session_facts."""
+        pix_path, pix_sha, pix_data = self._write_valid_fbo_pixel_artifact(
+            backend="legacy",
+            modify_fn=lambda d: d["phases"].pop("hdr"),
+        )
+        rep = make_publication_report(
+            result="PASS",
+            expected_backend="legacy",
+            active_api="opengl",
+            fbo_pixel_artifact=pix_path.name,
+            fbo_pixel_sha=pix_sha,
+            fbo_pixel_verified=True,
+        )
+        (self.backend_dir / "gate2-wayland-publication-legacy-20260926.txt").write_text(rep, encoding="utf-8")
+        unknown_trace = VALID_TRACE_SNIPPET.replace("set_tf_named(11)", "set_tf_named(5)")
+        (self.backend_dir / "wayland-client.raw.log").write_text(unknown_trace, encoding="utf-8")
+        self._write_instance_info()
+
+        res = self._run_eval(backend="legacy")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("FAIL: mandatory FBO pixel measurements artifact is incomplete or invalid", res.stderr)
+        self.assertFalse((self.backend_dir / "session_facts.json").exists())
+
     def test_eval_fails_when_fbo_pixel_artifact_is_missing(self):
         """Evaluation strictly rejects session when mandatory FBO pixel artifact is missing."""
         rep = make_publication_report(
@@ -1091,6 +1157,225 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         self.assertFalse(summary["claim_boundaries"]["same_process_wire_correlated"])
         self.assertFalse(summary["claim_boundaries"]["per_frame_presentation_correlated"])
         self.assertFalse(summary["claim_boundaries"]["compositor_scanout_certified"])
+
+    def test_gate2w_summary_aggregation_matrix(self):
+        """Matrix aggregation properly preserves UNKNOWN for legacy/gpu-next and keeps Gate 2W OPEN."""
+        # 1. UNKNOWN + PASS
+        run_dir_1 = Path(self.test_dir) / "run_summary_unknown_pass"
+        leg_dir_1 = run_dir_1 / "legacy"
+        leg_dir_1.mkdir(parents=True)
+        gpu_dir_1 = run_dir_1 / "gpu-next"
+        gpu_dir_1.mkdir(parents=True)
+
+        facts_leg_unknown = {
+            "backend": "legacy",
+            "backend_result": "UNKNOWN",
+            "reason": "unverified ext_linear transfer",
+            "container_session_correlated": True,
+        }
+        (leg_dir_1 / "session_facts.json").write_text(json.dumps(facts_leg_unknown), encoding="utf-8")
+        (gpu_dir_1 / "session_facts.json").write_text(json.dumps({"backend": "gpu-next", "backend_result": "PASS"}), encoding="utf-8")
+
+        cmd = [
+            "bash",
+            "-c",
+            f'source "{SCRIPT_PATH}"\n'
+            f'run_dir="{run_dir_1}"\n'
+            'write_gate2w_summary "all"',
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        s1 = json.loads((run_dir_1 / "gate2w_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(s1["gate2w_status"], "OPEN")
+        self.assertFalse(s1["gate2w_closed"])
+        self.assertEqual(s1["backends"]["legacy"]["status"], "UNKNOWN")
+        self.assertEqual(s1["backends"]["legacy"]["reason"], "unverified ext_linear transfer")
+        self.assertEqual(s1["backends"]["gpu-next"]["status"], "PASS")
+        self.assertIn("One or more backends unverified (UNKNOWN)", s1["reason"])
+        self.assertTrue(s1["claim_boundaries"]["container_session_correlated"])
+
+        # 2. PASS + UNKNOWN
+        run_dir_2 = Path(self.test_dir) / "run_summary_pass_unknown"
+        leg_dir_2 = run_dir_2 / "legacy"
+        leg_dir_2.mkdir(parents=True)
+        gpu_dir_2 = run_dir_2 / "gpu-next"
+        gpu_dir_2.mkdir(parents=True)
+
+        (leg_dir_2 / "session_facts.json").write_text(json.dumps({"backend": "legacy", "backend_result": "PASS"}), encoding="utf-8")
+        facts_gpu_unknown = {
+            "backend": "gpu-next",
+            "backend_result": "UNKNOWN",
+            "reason": "missing surface color management",
+            "container_session_correlated": True,
+        }
+        (gpu_dir_2 / "session_facts.json").write_text(json.dumps(facts_gpu_unknown), encoding="utf-8")
+
+        cmd = [
+            "bash",
+            "-c",
+            f'source "{SCRIPT_PATH}"\n'
+            f'run_dir="{run_dir_2}"\n'
+            'write_gate2w_summary "all"',
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        s2 = json.loads((run_dir_2 / "gate2w_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(s2["gate2w_status"], "OPEN")
+        self.assertFalse(s2["gate2w_closed"])
+        self.assertEqual(s2["backends"]["legacy"]["status"], "PASS")
+        self.assertEqual(s2["backends"]["gpu-next"]["status"], "UNKNOWN")
+        self.assertEqual(s2["backends"]["gpu-next"]["reason"], "missing surface color management")
+        self.assertIn("gpu-next (UNKNOWN)", s2["reason"])
+        self.assertTrue(s2["claim_boundaries"]["container_session_correlated"])
+
+        # 3. UNKNOWN + UNKNOWN
+        run_dir_3 = Path(self.test_dir) / "run_summary_unknown_unknown"
+        leg_dir_3 = run_dir_3 / "legacy"
+        leg_dir_3.mkdir(parents=True)
+        gpu_dir_3 = run_dir_3 / "gpu-next"
+        gpu_dir_3.mkdir(parents=True)
+
+        (leg_dir_3 / "session_facts.json").write_text(json.dumps(facts_leg_unknown), encoding="utf-8")
+        (gpu_dir_3 / "session_facts.json").write_text(json.dumps(facts_gpu_unknown), encoding="utf-8")
+
+        cmd = [
+            "bash",
+            "-c",
+            f'source "{SCRIPT_PATH}"\n'
+            f'run_dir="{run_dir_3}"\n'
+            'write_gate2w_summary "all"',
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        s3 = json.loads((run_dir_3 / "gate2w_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(s3["gate2w_status"], "OPEN")
+        self.assertFalse(s3["gate2w_closed"])
+        self.assertEqual(s3["backends"]["legacy"]["status"], "UNKNOWN")
+        self.assertEqual(s3["backends"]["gpu-next"]["status"], "UNKNOWN")
+        self.assertFalse(s3["claim_boundaries"]["container_session_correlated"])
+
+    def test_gate2w_summary_single_backend_unknown(self):
+        """Single backend UNKNOWN records UNKNOWN in backends and keeps Gate 2W OPEN."""
+        run_dir = Path(self.test_dir) / "run_summary_single_unknown"
+        legacy_dir = run_dir / "legacy"
+        legacy_dir.mkdir(parents=True)
+        facts = {
+            "backend": "legacy",
+            "backend_result": "UNKNOWN",
+            "reason": "unverified ext_linear transfer",
+            "container_session_correlated": True,
+        }
+        (legacy_dir / "session_facts.json").write_text(json.dumps(facts), encoding="utf-8")
+
+        cmd = [
+            "bash",
+            "-c",
+            f'source "{SCRIPT_PATH}"\n'
+            f'run_dir="{run_dir}"\n'
+            'write_gate2w_summary "legacy"',
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        summary_file = run_dir / "gate2w_summary.json"
+        self.assertTrue(summary_file.exists())
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        self.assertEqual(summary["gate2w_status"], "OPEN")
+        self.assertFalse(summary["gate2w_closed"])
+        self.assertIn("PARTIAL_NOT_CLOSED", summary["reason"])
+        self.assertIn("UNKNOWN protocol status", summary["reason"])
+        self.assertEqual(summary["backends"]["legacy"]["status"], "UNKNOWN")
+        self.assertEqual(summary["backends"]["legacy"]["reason"], "unverified ext_linear transfer")
+        self.assertEqual(summary["backends"]["gpu-next"]["status"], "NOT_RUN")
+        self.assertFalse(summary["claim_boundaries"]["container_session_correlated"])
+
+    def test_shell_control_path_with_unknown_protocol_writes_summary_and_exits_nonzero(self):
+        """The shell control path allows UNKNOWN to reach summary generation and exits with non-zero code."""
+        run_dir = Path(self.test_dir) / "shell_path_run"
+        legacy_dir = run_dir / "legacy"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "process_exit_code.txt").write_text("0\n", encoding="utf-8")
+        (legacy_dir / "cleanup_status.json").write_text(
+            json.dumps({"status": "CLEAN", "instance_terminated": True}),
+            encoding="utf-8",
+        )
+        cp = configparser.ConfigParser()
+        cp["Application"] = {"name": EXP_APP_ID}
+        cp["Instance"] = {
+            "instance-id": "55512",
+            "app-commit": EXP_APP_COMMIT,
+            "runtime-commit": EXP_RT_COMMIT,
+        }
+        with open(legacy_dir / "instance_info", "w", encoding="utf-8") as f:
+            cp.write(f)
+
+        orig_backend_dir = self.backend_dir
+        self.backend_dir = legacy_dir
+        try:
+            pix_path, pix_sha, pix_data = self._write_valid_fbo_pixel_artifact(backend="legacy")
+            rep = make_publication_report(
+                result="PASS",
+                expected_backend="legacy",
+                active_api="opengl",
+                fbo_pixel_artifact=pix_path.name,
+                fbo_pixel_sha=pix_sha,
+                fbo_pixel_verified=True,
+                session_id=self.session_id,
+                instance_id="55512",
+            )
+            (legacy_dir / "gate2-wayland-publication-legacy-1.txt").write_text(rep, encoding="utf-8")
+
+            unknown_trace = VALID_TRACE_SNIPPET.replace("set_tf_named(11)", "set_tf_named(5)")
+            (legacy_dir / "wayland-client.raw.log").write_text(unknown_trace, encoding="utf-8")
+
+            cmd = [
+                "bash",
+                "-c",
+                f'source "{SCRIPT_PATH}"\n'
+                f'expected_app_commit="{EXP_APP_COMMIT}"\n'
+                f'expected_runtime_commit="{EXP_RT_COMMIT}"\n'
+                f'run_dir="{run_dir}"\n'
+                'eval_rc=0\n'
+                f'evaluate_session_results "{legacy_dir}" "legacy" "{self.session_id}" "55512" "true" || eval_rc=$?\n'
+                'if [[ ${eval_rc} -ne 0 ]]; then\n'
+                f'    facts_file="{legacy_dir}/session_facts.json"\n'
+                '    if [[ -f "${facts_file}" ]] && grep -q \'"backend_result"[[:space:]]*:[[:space:]]*"UNKNOWN"\' "${facts_file}"; then\n'
+                '        : # controlled UNKNOWN\n'
+                '    else\n'
+                '        exit "${eval_rc}"\n'
+                '    fi\n'
+                'fi\n'
+                'write_gate2w_summary "legacy"\n'
+                'summary_file="${run_dir}/gate2w_summary.json"\n'
+                'run_status="$(python3 - "${summary_file}" "legacy" << \'PY_STATUS_EOF\'\n'
+                'import json, sys\n'
+                'with open(sys.argv[1], encoding="utf-8") as f:\n'
+                '    s = json.load(f)\n'
+                'st = s.get("backends", {}).get("legacy", {}).get("status")\n'
+                'print(st if st in ("PASS", "UNKNOWN") else "FAIL")\n'
+                'PY_STATUS_EOF\n'
+                ')"\n'
+                'if [[ "${run_status}" == "PASS" ]]; then\n'
+                '    echo "Gate 2W publication validation sequence completed successfully."\n'
+                '    exit 0\n'
+                'elif [[ "${run_status}" == "UNKNOWN" ]]; then\n'
+                '    echo "Gate 2W publication validation sequence finished with UNKNOWN protocol evidence."\n'
+                '    exit 1\n'
+                'else\n'
+                '    echo "Gate 2W publication validation sequence failed."\n'
+                '    exit 1\n'
+                'fi\n',
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
+            self.assertEqual(res.returncode, 1)
+            self.assertIn("Gate 2W publication validation sequence finished with UNKNOWN protocol evidence.", res.stdout)
+            self.assertNotIn("completed successfully", res.stdout)
+            summary_file = run_dir / "gate2w_summary.json"
+            self.assertTrue(summary_file.exists())
+            summary_data = json.loads(summary_file.read_text(encoding="utf-8"))
+            self.assertEqual(summary_data["gate2w_status"], "OPEN")
+            self.assertEqual(summary_data["backends"]["legacy"]["status"], "UNKNOWN")
+        finally:
+            self.backend_dir = orig_backend_dir
 
     def test_cleanup_handler_writes_cleanup_status(self):
         """cleanup_handler records status and signal in cleanup_status.json."""
