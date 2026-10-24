@@ -45,7 +45,7 @@ Play your videos with HDR support
     * `CINEHDR_RENDER_BACKEND=gpu-next`: Strict mode; fails visibly if the experimental renderer cannot be created (no creation fallback).
     * `CINEHDR_RENDER_BACKEND=auto`: Development mode with automatic fallback to `opengl` during context creation.
     * `CINEHDR_RENDER_BACKEND=legacy`: Explicit legacy OpenGL.
-* **GTK Renderer Selection (`GSK_RENDERER`)**: CineHDR requires GTK's modern scene renderers (`ngl`/`vulkan`) for 16-bit float textures and color management. On the Niri compositor (`NIRI_SOCKET` detected), `GSK_RENDERER=gl` is pinned automatically to preserve upstream frame-drop workarounds; CineHDR detects this legacy GTK renderer and falls back to safe SDR tone mapping.
+* **GTK Renderer Selection (`GSK_RENDERER`)**: Configures GTK's scene-graph renderer independently of the `libmpv` video backend (`legacy`/`gpu-next`). When `GSK_RENDERER` is not explicitly set by the user, CineHDR's policy (`gtk_cm_policy.apply_gsk_renderer_policy`) selects `gl` on GTK ≥ 4.18 and `ngl` on earlier GTK versions (< 4.18); under the Niri compositor (`NIRI_SOCKET` detected), it also defaults to `gl`. Any explicit user `GSK_RENDERER` environment variable is preserved as-is.
 * Check **HDR Diagnostics** in the playback menu for the live pipeline state, active renderer backend, compositor capabilities, and specific fallback reasons.
 
 ---
