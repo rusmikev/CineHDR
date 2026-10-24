@@ -23,9 +23,9 @@ except ImportError:
     Image = None
     HAS_PILLOW = False
 
-_TESTS_DIR = Path(__file__).resolve().parent
-_PROJECT_ROOT = _TESTS_DIR.parent
-for _path in (str(_TESTS_DIR), str(_PROJECT_ROOT)):
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_TESTS_DIR = _PROJECT_ROOT / "tests"
+for _path in (str(_PROJECT_ROOT), str(_TESTS_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
@@ -814,7 +814,7 @@ class TestProbeContract(unittest.TestCase):
         self.assertIn("capability evidence failed", report["error"])
 
     def test_compile_contract_names_sibling_headers_prefix_and_both_api_constants(self) -> None:
-        source = Path(__file__).resolve().parent / "pixel_validator_egl.c"
+        source = _TESTS_DIR / "pixel_validator_egl.c"
         body = source.read_text(encoding="utf-8")
         self.assertIn("MPV_RENDER_API_TYPE_OPENGL", body)
         self.assertIn("MPV_RENDER_API_TYPE_OPENGL_NEXT", body)

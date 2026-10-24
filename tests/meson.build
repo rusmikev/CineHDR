@@ -65,7 +65,7 @@ test('pixel_pipeline_tests', python3,
   # CPU-heavy pixel calculations exceed 30 seconds in ARM64/QEMU CI.
   timeout: 120,
   args: [
-    meson.current_source_dir() / 'test_pixel_pipeline.py'
+    meson.project_source_root() / 'tools/validation/test_pixel_pipeline.py'
   ],
   env: [
     'PYTHONPATH=' + meson.project_source_root()
