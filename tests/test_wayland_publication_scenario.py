@@ -1364,14 +1364,7 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         self.assertEqual(summary["backends"]["gpu-next"]["status"], "NOT_RUN")
         self.assertFalse(summary["claim_boundaries"]["container_session_correlated"])
 
-    def _run_real_runner(
-        self,
-        backend_arg: str,
-        legacy_mode: str = "PASS",
-        gpu_next_mode: str = "PASS",
-        target_script: Path | None = None,
-    ) -> tuple[subprocess.CompletedProcess, Path]:
-        runner_script = target_script if target_script is not None else SCRIPT_PATH
+    def _create_mock_runner_env(self) -> tuple[Path, Path, Path, Path, Path]:
         env_dir = Path(tempfile.mkdtemp(prefix="runner_env_"))
         self.addCleanup(lambda: shutil.rmtree(env_dir, ignore_errors=True))
 
@@ -1401,7 +1394,8 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
             '        exit 0\n'
             '    fi\n'
             'done\n'
-            'exec /usr/bin/sha256sum "$@"\n'
+            'echo "mock sha256sum: unknown argument \'$*\'" >&2\n'
+            'exit 1\n'
         )
         sha_script.chmod(sha_script.stat().st_mode | stat.S_IEXEC)
 
@@ -1410,6 +1404,9 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
         gen_script.write_text(f"""import json, hashlib, sys, time, os
 from pathlib import Path
 b_name, b_dir_s, s_id, inst, mode = sys.argv[1:6]
+if mode == "ERROR":
+    sys.exit(42)
+
 b_dir = Path(b_dir_s)
 b_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1452,59 +1449,89 @@ else: # FAIL
 (b_dir / "wayland-client.raw.log").write_text(trace_text, encoding="utf-8")
 """)
 
-        # Mock flatpak command handling preflight, ps, kill, info, and run
+        # Mock flatpak command handling preflight, ps, kill, info, and run autonomously
         mock_flatpak = mock_bin / "flatpak"
         mock_flatpak.write_text(f"""#!/usr/bin/env bash
-cmd="$1"
+set -u
+cmd="${{1:-}}"
+if [[ -z "${{cmd}}" ]]; then
+    echo "mock flatpak: missing command" >&2
+    exit 1
+fi
 shift
-if [[ "${{cmd}}" == "ps" ]]; then
-    if [[ -f "{mock_state}/active_instance" ]]; then
-        cat "{mock_state}/active_instance"
-    fi
-    exit 0
-fi
-if [[ "${{cmd}}" == "kill" ]]; then
-    inst="$1"
-    rm -f "{mock_state}/active_instance"
-    rm -rf "{fake_runtime}/.flatpak/${{inst}}"
-    exit 0
-fi
-if [[ "${{cmd}}" == "info" ]]; then
-    if [[ "$1" == "--show-commit" ]]; then
-        ref="$2"
-        if [[ "${{ref}}" =~ io\\.github\\.rusmikev\\.CineHDR ]]; then
-            echo "{EXP_APP_COMMIT}"
-        else
-            echo "{EXP_RT_COMMIT}"
+
+case "${{cmd}}" in
+    ps)
+        col="${{1:-}}"
+        if [[ "${{col}}" == "--columns=instance" || "${{col}}" == "--columns=instance,application" ]]; then
+            if [[ -f "{mock_state}/active_instance" ]]; then
+                cat "{mock_state}/active_instance"
+            fi
+            exit 0
         fi
+        echo "mock flatpak ps: unsupported argument '${{col}}'" >&2
+        exit 1
+        ;;
+    kill)
+        inst="${{1:-}}"
+        if [[ -z "${{inst}}" || ! "${{inst}}" =~ ^[0-9]+$ ]]; then
+            echo "mock flatpak kill: invalid instance id '${{inst}}'" >&2
+            exit 1
+        fi
+        rm -f "{mock_state}/active_instance"
+        rm -rf "{fake_runtime}/.flatpak/${{inst}}"
         exit 0
-    elif [[ "$1" == "--show-runtime" ]]; then
-        echo "runtime/org.gnome.Platform/x86_64/46"
-        exit 0
-    else
-        exit 0
-    fi
-fi
-if [[ "${{cmd}}" == "run" ]]; then
-    b_name=""
-    b_dir=""
-    s_id=""
-    app_c=""
-    rt_c=""
-    for a in "$@"; do
-        case "$a" in
-            --env=CINEHDR_RENDER_BACKEND=*) b_name="${{a#*CINEHDR_RENDER_BACKEND=}}" ;;
-            --env=CINEHDR_GPU_VALIDATION_REPORT_DIR=*) b_dir="${{a#*CINEHDR_GPU_VALIDATION_REPORT_DIR=}}" ;;
-            --env=CINEHDR_DIAGNOSTICS_SESSION_ID=*) s_id="${{a#*CINEHDR_DIAGNOSTICS_SESSION_ID=}}" ;;
-            --env=CINEHDR_EXPECTED_APP_COMMIT=*) app_c="${{a#*CINEHDR_EXPECTED_APP_COMMIT=}}" ;;
-            --env=CINEHDR_EXPECTED_RUNTIME_COMMIT=*) rt_c="${{a#*CINEHDR_EXPECTED_RUNTIME_COMMIT=}}" ;;
-        esac
-    done
-    inst="12345"
-    echo "${{inst}}" >&3
-    echo "${{inst}} io.github.rusmikev.CineHDR" > "{mock_state}/active_instance"
-    mkdir -p "{fake_runtime}/.flatpak/${{inst}}"
-    cat > "{fake_runtime}/.flatpak/${{inst}}/info" << INI
+        ;;
+    info)
+        flag="${{1:-}}"
+        if [[ "${{flag}}" == "{EXP_APP_ID}" ]]; then
+            exit 0
+        elif [[ "${{flag}}" == "--show-commit" ]]; then
+            ref="${{2:-}}"
+            if [[ "${{ref}}" =~ io\\.github\\.rusmikev\\.CineHDR ]]; then
+                echo "{EXP_APP_COMMIT}"
+                exit 0
+            elif [[ "${{ref}}" =~ org\\.gnome\\.Platform ]]; then
+                echo "{EXP_RT_COMMIT}"
+                exit 0
+            else
+                echo "mock flatpak info --show-commit: unknown ref '${{ref}}'" >&2
+                exit 1
+            fi
+        elif [[ "${{flag}}" == "--show-runtime" ]]; then
+            ref="${{2:-}}"
+            if [[ "${{ref}}" =~ io\\.github\\.rusmikev\\.CineHDR ]]; then
+                echo "runtime/org.gnome.Platform/x86_64/46"
+                exit 0
+            else
+                echo "mock flatpak info --show-runtime: unknown ref '${{ref}}'" >&2
+                exit 1
+            fi
+        else
+            echo "mock flatpak info: unsupported argument '${{flag}}'" >&2
+            exit 1
+        fi
+        ;;
+    run)
+        b_name=""
+        b_dir=""
+        s_id=""
+        app_c=""
+        rt_c=""
+        for a in "$@"; do
+            case "$a" in
+                --env=CINEHDR_RENDER_BACKEND=*) b_name="${{a#*CINEHDR_RENDER_BACKEND=}}" ;;
+                --env=CINEHDR_GPU_VALIDATION_REPORT_DIR=*) b_dir="${{a#*CINEHDR_GPU_VALIDATION_REPORT_DIR=}}" ;;
+                --env=CINEHDR_DIAGNOSTICS_SESSION_ID=*) s_id="${{a#*CINEHDR_DIAGNOSTICS_SESSION_ID=}}" ;;
+                --env=CINEHDR_EXPECTED_APP_COMMIT=*) app_c="${{a#*CINEHDR_EXPECTED_APP_COMMIT=}}" ;;
+                --env=CINEHDR_EXPECTED_RUNTIME_COMMIT=*) rt_c="${{a#*CINEHDR_EXPECTED_RUNTIME_COMMIT=}}" ;;
+            esac
+        done
+        inst="12345"
+        echo "${{inst}}" >&3
+        echo "${{inst}} io.github.rusmikev.CineHDR" > "{mock_state}/active_instance"
+        mkdir -p "{fake_runtime}/.flatpak/${{inst}}"
+        cat > "{fake_runtime}/.flatpak/${{inst}}/info" << INI
 [Application]
 name={EXP_APP_ID}
 
@@ -1513,18 +1540,32 @@ instance-id=${{inst}}
 app-commit=${{app_c}}
 runtime-commit=${{rt_c}}
 INI
-    mode="PASS"
-    if [[ "${{b_name}}" == "legacy" ]]; then
-        mode="${{TEST_MOCK_LEGACY:-PASS}}"
-    elif [[ "${{b_name}}" == "gpu-next" ]]; then
-        mode="${{TEST_MOCK_GPU_NEXT:-PASS}}"
-    fi
-    python3 "{gen_script}" "${{b_name}}" "${{b_dir}}" "${{s_id}}" "${{inst}}" "${{mode}}"
-    exit 0
-fi
-exec /usr/bin/flatpak "${{cmd}}" "$@"
+        mode="PASS"
+        if [[ "${{b_name}}" == "legacy" ]]; then
+            mode="${{TEST_MOCK_LEGACY:-PASS}}"
+        elif [[ "${{b_name}}" == "gpu-next" ]]; then
+            mode="${{TEST_MOCK_GPU_NEXT:-PASS}}"
+        fi
+        exec python3 "{gen_script}" "${{b_name}}" "${{b_dir}}" "${{s_id}}" "${{inst}}" "${{mode}}"
+        ;;
+    *)
+        echo "mock flatpak: unknown or unsupported command '${{cmd}}'" >&2
+        exit 1
+        ;;
+esac
 """)
         mock_flatpak.chmod(mock_flatpak.stat().st_mode | stat.S_IEXEC)
+        return env_dir, mock_bin, mock_state, fake_runtime, test_reports
+
+    def _run_real_runner(
+        self,
+        backend_arg: str,
+        legacy_mode: str = "PASS",
+        gpu_next_mode: str = "PASS",
+        target_script: Path | None = None,
+    ) -> tuple[subprocess.CompletedProcess, Path]:
+        runner_script = target_script if target_script is not None else SCRIPT_PATH
+        env_dir, mock_bin, _, fake_runtime, test_reports = self._create_mock_runner_env()
 
         run_dir = env_dir / f"run_{backend_arg}_{legacy_mode}_{gpu_next_mode}"
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -1641,6 +1682,48 @@ main "$@"
         )
         self.assertEqual(res2.returncode, 2, "Mutation 2 should have aborted with exit code 2")
         self.assertFalse((run_dir2 / "gpu-next").exists(), "gpu-next should not have been reached under mutation 2")
+
+    def test_mock_flatpak_unsupported_command_is_rejected(self):
+        """Mock Flatpak is fully autonomous, does not call system Flatpak, and rejects unknown commands/arguments."""
+        _, mock_bin, _, _, _ = self._create_mock_runner_env()
+        flatpak_bin = mock_bin / "flatpak"
+
+        # 1. Missing command
+        res = subprocess.run([str(flatpak_bin)], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("mock flatpak: missing command", res.stderr)
+
+        # 2. Unsupported command
+        res = subprocess.run([str(flatpak_bin), "remote-add"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("mock flatpak: unknown or unsupported command 'remote-add'", res.stderr)
+
+        # 3. Unsupported info argument
+        res = subprocess.run([str(flatpak_bin), "info", "--unsupported-flag"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("mock flatpak info: unsupported argument '--unsupported-flag'", res.stderr)
+
+        # 4. Unsupported ps argument
+        res = subprocess.run([str(flatpak_bin), "ps", "--unknown-col"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("mock flatpak ps: unsupported argument '--unknown-col'", res.stderr)
+
+        # 5. Invalid kill ID
+        res = subprocess.run([str(flatpak_bin), "kill", "not-a-number"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("mock flatpak kill: invalid instance id 'not-a-number'", res.stderr)
+
+    def test_mock_flatpak_generator_error_propagates_nonzero(self):
+        """Mock Flatpak run strictly propagates generator exit code to the caller instead of returning 0."""
+        _, mock_bin, _, _, _ = self._create_mock_runner_env()
+        flatpak_bin = mock_bin / "flatpak"
+
+        env = os.environ.copy()
+        env["TEST_MOCK_LEGACY"] = "ERROR"
+        # Run flatpak run with fd 3 redirected and mode=ERROR
+        cmd = f'"{flatpak_bin}" run --env=CINEHDR_RENDER_BACKEND=legacy 3>/dev/null'
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, env=env)
+        self.assertEqual(res.returncode, 42, f"Expected generator exit code 42, got {res.returncode}")
 
     def test_cleanup_handler_writes_cleanup_status(self):
         """cleanup_handler records status and signal in cleanup_status.json."""
