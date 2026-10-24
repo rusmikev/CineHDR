@@ -44,7 +44,6 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
-import sys
 import tempfile
 import unittest
 
@@ -1104,7 +1103,7 @@ class WaylandPublicationScenarioTests(unittest.TestCase):
             f'current_backend_dir="{target_dir}"\n'
             'cleanup_handler "TERM"',
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
+        subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_DIR)
         status_file = target_dir / "cleanup_status.json"
         self.assertTrue(status_file.exists())
         status_data = json.loads(status_file.read_text(encoding="utf-8"))
