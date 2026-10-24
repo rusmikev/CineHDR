@@ -1983,11 +1983,15 @@ class TestHdrOutputAllowed(unittest.TestCase):
             primaries=frozenset({PRIM_SRGB, PRIM_BT2020}),
         )
 
+    def _default_states(self, connector="DP-1", hdr=True):
+        from src.wayland_output_hdr import OutputHdrInfo
+        return {connector: OutputHdrInfo(connector=connector, hdr=hdr)}
+
     def test_allowed_when_all_conditions_met(self):
         from src.hdr_detection import hdr_output_allowed
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertTrue(allowed)
             self.assertEqual(reason, "allowed")
@@ -1996,7 +2000,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         from src.hdr_detection import hdr_output_allowed
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=False), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "Wayland compositor does not advertise color management protocol")
@@ -2005,7 +2009,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         from src.hdr_detection import hdr_output_allowed
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=None), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "Wayland compositor color management support is unknown")
@@ -2014,7 +2018,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         from src.hdr_detection import hdr_output_allowed
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed(
                 "DP-1", env={"GDK_DEBUG": "color-mgmt", "CINEHDR_NO_COLOR_MGMT": "1"}
             )
@@ -2025,7 +2029,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         from src.hdr_detection import hdr_output_allowed
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": ""})
             self.assertFalse(allowed)
             self.assertEqual(reason, "GTK color management disabled without GDK_DEBUG=color-mgmt")
@@ -2034,7 +2038,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         from src.hdr_detection import hdr_output_allowed
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=None), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "color management capabilities unavailable or unknown")
@@ -2050,7 +2054,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         )
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "missing perceptual render intent")
@@ -2066,7 +2070,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         )
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "GTK cannot create sRGB image description: missing parametric feature")
@@ -2082,7 +2086,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         )
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "GTK cannot create sRGB image description: missing TF srgb")
@@ -2098,7 +2102,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
         )
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "GTK cannot create sRGB image description: missing sRGB primaries")
@@ -2114,29 +2118,30 @@ class TestHdrOutputAllowed(unittest.TestCase):
         )
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=caps), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=True):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "compositor missing BT.2020 primaries or PQ transfer function")
 
     def test_blocked_monitor_sdr_with_and_without_connector(self):
         from src.hdr_detection import hdr_output_allowed
+        sdr_states = self._default_states("DP-2", hdr=False)
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=False):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=sdr_states):
             allowed, reason = hdr_output_allowed("DP-2", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "monitor 'DP-2' is in SDR mode")
 
             allowed_none, reason_none = hdr_output_allowed(None, env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed_none)
-            self.assertEqual(reason_none, "monitor is in SDR mode")
+            self.assertEqual(reason_none, "monitor 'DP-2' is in SDR mode")
 
     def test_blocked_monitor_unknown_with_and_without_connector(self):
         from src.hdr_detection import hdr_output_allowed
         with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
-             patch("src.hdr_detection.get_monitor_hdr_state", return_value=None):
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=None):
             allowed, reason = hdr_output_allowed("HDMI-A-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
             self.assertEqual(reason, "monitor 'HDMI-A-1' HDR state is unknown")
@@ -2157,16 +2162,108 @@ class TestHdrOutputAllowed(unittest.TestCase):
             probes_recorded.append(("caps", allow_probe))
             return self._valid_caps()
 
-        def mock_mon(connector=None, allow_probe=False):
-            probes_recorded.append(("mon", allow_probe))
-            return True
+        def mock_states(allow_probe=False):
+            probes_recorded.append(("states", allow_probe))
+            return self._default_states()
 
         with patch("src.hdr_detection.get_compositor_cm_support", side_effect=mock_cm), \
              patch("src.wayland_output_hdr.get_cm_caps", side_effect=mock_caps), \
-             patch("src.hdr_detection.get_monitor_hdr_state", side_effect=mock_mon):
+             patch("src.wayland_output_hdr.get_output_hdr_states", side_effect=mock_states):
             allowed, reason = hdr_output_allowed("DP-1", allow_probe=False, env={"GDK_DEBUG": "color-mgmt"})
             self.assertTrue(allowed)
-            self.assertEqual(probes_recorded, [("cm", False), ("caps", False), ("mon", False)])
+            self.assertEqual(probes_recorded, [("cm", False), ("caps", False), ("states", False)])
+
+    def test_mixed_hdr_sdr_outputs_strict_monitor_gate(self):
+        """Mixed HDR+SDR map: real get_monitor_hdr_state remains lenient,
+        while hdr_output_allowed strictly verifies the window's monitor."""
+        from src.hdr_detection import hdr_output_allowed
+        from src.wayland_output_hdr import OutputHdrInfo, get_monitor_hdr_state
+
+        mixed_states = {
+            "DP-1": OutputHdrInfo(connector="DP-1", hdr=True),
+            "HDMI-A-1": OutputHdrInfo(connector="HDMI-A-1", hdr=False),
+        }
+
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()), \
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=mixed_states):
+            # 1. Verify real get_monitor_hdr_state behavior (preserves aggregate semantics)
+            self.assertTrue(get_monitor_hdr_state("DP-1"))
+            self.assertFalse(get_monitor_hdr_state("HDMI-A-1"))
+            self.assertTrue(get_monitor_hdr_state(None))       # any output is HDR -> True
+            self.assertTrue(get_monitor_hdr_state("VGA-1"))    # unmapped connector -> fallback any -> True
+
+            # 2. Verify strict hdr_output_allowed behavior
+            # Known HDR connector -> allowed
+            allowed_dp1, reason_dp1 = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertTrue(allowed_dp1)
+            self.assertEqual(reason_dp1, "allowed")
+
+            # Known SDR connector -> blocked
+            allowed_hdmi, reason_hdmi = hdr_output_allowed("HDMI-A-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed_hdmi)
+            self.assertEqual(reason_hdmi, "monitor 'HDMI-A-1' is in SDR mode")
+
+            # Missing connector (None) with multiple outputs -> blocked fail-closed
+            allowed_none, reason_none = hdr_output_allowed(None, env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed_none)
+            self.assertEqual(reason_none, "multiple outputs detected, window monitor is unknown")
+
+            # Non-existent connector with multiple outputs -> blocked fail-closed
+            allowed_vga, reason_vga = hdr_output_allowed("VGA-1", env={"GDK_DEBUG": "color-mgmt"})
+            self.assertFalse(allowed_vga)
+            self.assertEqual(reason_vga, "monitor 'VGA-1' not found among multiple outputs")
+
+    def test_single_output_unambiguous_gate(self):
+        """Single active output is unambiguous: None matches the single monitor,
+        while a non-existent connector name is rejected."""
+        from src.hdr_detection import hdr_output_allowed
+        from src.wayland_output_hdr import OutputHdrInfo, get_monitor_hdr_state
+
+        single_hdr = {"DP-1": OutputHdrInfo(connector="DP-1", hdr=True)}
+        single_sdr = {"HDMI-A-1": OutputHdrInfo(connector="HDMI-A-1", hdr=False)}
+
+        with patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=self._valid_caps()):
+            # Single HDR output
+            with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=single_hdr):
+                self.assertTrue(get_monitor_hdr_state("DP-1"))
+                self.assertTrue(get_monitor_hdr_state(None))
+
+                # Known matching connector -> allowed
+                allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
+                self.assertTrue(allowed)
+                self.assertEqual(reason, "allowed")
+
+                # Connector is None on single display -> unambiguous, allowed
+                allowed_none, reason_none = hdr_output_allowed(None, env={"GDK_DEBUG": "color-mgmt"})
+                self.assertTrue(allowed_none)
+                self.assertEqual(reason_none, "allowed")
+
+                # Non-existent connector name on single display -> rejected
+                allowed_other, reason_other = hdr_output_allowed("DP-2", env={"GDK_DEBUG": "color-mgmt"})
+                self.assertFalse(allowed_other)
+                self.assertEqual(reason_other, "monitor 'DP-2' not found in active outputs")
+
+            # Single SDR output
+            with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=single_sdr):
+                self.assertFalse(get_monitor_hdr_state("HDMI-A-1"))
+                self.assertFalse(get_monitor_hdr_state(None))
+
+                # Known matching SDR connector -> blocked
+                allowed_sdr, reason_sdr = hdr_output_allowed("HDMI-A-1", env={"GDK_DEBUG": "color-mgmt"})
+                self.assertFalse(allowed_sdr)
+                self.assertEqual(reason_sdr, "monitor 'HDMI-A-1' is in SDR mode")
+
+                # Connector is None on single SDR display -> blocked with specific monitor name
+                allowed_sdr_none, reason_sdr_none = hdr_output_allowed(None, env={"GDK_DEBUG": "color-mgmt"})
+                self.assertFalse(allowed_sdr_none)
+                self.assertEqual(reason_sdr_none, "monitor 'HDMI-A-1' is in SDR mode")
+
+                # Non-existent connector name on single display -> rejected
+                allowed_sdr_other, reason_sdr_other = hdr_output_allowed("HDMI-A-2", env={"GDK_DEBUG": "color-mgmt"})
+                self.assertFalse(allowed_sdr_other)
+                self.assertEqual(reason_sdr_other, "monitor 'HDMI-A-2' not found in active outputs")
 
     def test_wcg_sdr_remains_sdr_with_allowed_gate(self):
         """WCG-SDR content (BT.2020 primaries + SDR gamma/trc) remains SDR in Auto mode."""

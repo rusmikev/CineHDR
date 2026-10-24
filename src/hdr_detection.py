@@ -26,14 +26,16 @@ This module isolates the logic required to determine whether:
    support high dynamic range (HDR) color signaling and 16-bit floating point buffers.
 """
 
+import os
+from typing import Optional, Any
 import gi
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gtk
-from typing import Optional, Any
 
 from . import wayland_cm_probe
 from . import wayland_output_hdr
+from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
 
 
 _cached_support = None
@@ -134,7 +136,6 @@ def check_hdr_support(allow_probe: bool = True) -> bool:
     if _cached_support is not None:
         return _cached_support
     res = _check_hdr_support_uncached(allow_probe=allow_probe)
-    from . import wayland_output_hdr
     caps = wayland_output_hdr.get_cm_caps(allow_probe=False)
     if allow_probe or caps is not None:
         _cached_support = res
@@ -146,7 +147,6 @@ def _check_hdr_support_uncached(allow_probe: bool = True) -> bool:
     Check if the current desktop session and GTK runtime support HDR rendering.
     """
     try:
-        import os
         if os.environ.get("GSK_RENDERER", "").lower() == "gl":
             if (Gtk.get_major_version(), Gtk.get_minor_version()) < (4, 18):
                 return False
@@ -189,11 +189,9 @@ def _check_hdr_support_uncached(allow_probe: bool = True) -> bool:
         # Apply GTK 4's strict color management policy:
         # 1. GDK_DEBUG=color-mgmt is required for GTK to use wp_color_manager_v1.
         # 2. Compositor must advertise required caps (perceptual, parametric, sRGB TF).
-        from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
         if not gtk_cm_opted_in():
             return False
 
-        from . import wayland_output_hdr
         caps = wayland_output_hdr.get_cm_caps(allow_probe=allow_probe)
         if caps is None:
             return False
@@ -218,12 +216,13 @@ def hdr_output_allowed(
     1. Compositor color management protocol global (wp_color_manager_v1).
     2. GTK color management opt-in (GDK_DEBUG=color-mgmt without CINEHDR_NO_COLOR_MGMT).
     3. Compositor color management capabilities (parametric, sRGB TF/primaries, Rec.2100 PQ).
-    4. Monitor under window HDR state (tri-state, fail-closed on unknown/SDR).
+    4. Target monitor under window HDR state (strict check: known connector verified exactly,
+       missing or non-existent connector among multiple outputs blocks Auto fail-closed,
+       unambiguous single output evaluated directly).
 
     Returns:
         tuple[bool, str]: (True, "allowed") or (False, "<blocked reason>").
     """
-    import os
     cm = get_compositor_cm_support(allow_probe=allow_probe)
     if cm is False:
         return False, "Wayland compositor does not advertise color management protocol"
@@ -231,7 +230,6 @@ def hdr_output_allowed(
         return False, "Wayland compositor color management support is unknown"
 
     target_env = os.environ if env is None else env
-    from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
     if target_env.get("CINEHDR_NO_COLOR_MGMT") == "1":
         return False, "GTK color management disabled via CINEHDR_NO_COLOR_MGMT"
     if not gtk_cm_opted_in(target_env):
@@ -248,15 +246,35 @@ def hdr_output_allowed(
     if not gtk_can_tag_hdr(caps, TF_PQ):
         return False, "compositor missing BT.2020 primaries or PQ transfer function"
 
-    mon_hdr = get_monitor_hdr_state(connector, allow_probe=allow_probe)
-    if mon_hdr is False:
-        if connector:
-            return False, f"monitor '{connector}' is in SDR mode"
-        return False, "monitor is in SDR mode"
-    if mon_hdr is None:
+    states = wayland_output_hdr.get_output_hdr_states(allow_probe=allow_probe)
+    if states is None:
         if connector:
             return False, f"monitor '{connector}' HDR state is unknown"
         return False, "monitor HDR state is unknown"
+    if not states:
+        if connector:
+            return False, f"monitor '{connector}' HDR state is unknown"
+        return False, "monitor HDR state is unknown"
+
+    if connector:
+        if connector in states:
+            info = states[connector]
+            if not getattr(info, "hdr", False):
+                return False, f"monitor '{connector}' is in SDR mode"
+        else:
+            if len(states) > 1:
+                return False, f"monitor '{connector}' not found among multiple outputs"
+            return False, f"monitor '{connector}' not found in active outputs"
+    else:
+        # connector is None or empty
+        if len(states) > 1:
+            return False, "multiple outputs detected, window monitor is unknown"
+        info = next(iter(states.values()))
+        if not getattr(info, "hdr", False):
+            conn_name = getattr(info, "connector", None)
+            if conn_name:
+                return False, f"monitor '{conn_name}' is in SDR mode"
+            return False, "monitor is in SDR mode"
 
     return True, "allowed"
 
@@ -419,7 +437,6 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
     Returns:
         str: Human-readable explanation of missing HDR requirements.
     """
-    import os
     if os.environ.get("GSK_RENDERER", "").lower() == "gl":
         if (Gtk.get_major_version(), Gtk.get_minor_version()) < (4, 18):
             return "GSK_RENDERER=gl forces legacy 8-bit OpenGL rendering without HDR support (GTK < 4.18)"
@@ -438,10 +455,8 @@ def get_hdr_unsupported_reason(display: Gdk.Display = None) -> str:
             "Wayland compositor does not advertise a color management protocol "
             "(wp_color_manager_v1) — HDR pass-through is impossible, using mpv tone mapping"
         )
-    from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
     if not gtk_cm_opted_in():
         return "GTK: color management disabled without GDK_DEBUG=color-mgmt"
-    from . import wayland_output_hdr
     caps = wayland_output_hdr.get_cm_caps(allow_probe=True)
     if caps is None:
         return (
