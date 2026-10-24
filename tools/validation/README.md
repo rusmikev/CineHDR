@@ -45,7 +45,7 @@
 - Коммит `91403edde152320fac42ce7a9dfe20c0b40e62db` (`docs(validation): publish bounded GNOME Run 7 adjudication`).
 - Коммит `feb0d405297f031d4a49db6f7ddf5cd5e7c612d1` (`fix(hdr): remove async property readback and preserve first published sample`).
 - Коммит `556da105a142ba8f014c961caeca011dd64fe5bf` (`docs: refine ADR-0007 synchronization details and packaged inspection findings`).
-- Сохраняемые ADR: `docs/adr/0007-paused-hdr-output-republication.md` (разделы `Context`, `Accepted decision (2026-10-17 amendment)`, `Alternatives, falsifier, and rollback`, `Subsequent bounded validation`), `docs/adr/0004-gate2-fbo-pixel-validation.md`.
+- Сохраняемые ADR: `docs/adr/0007-paused-hdr-output-republication.md`, `docs/adr/0004-gate2-fbo-pixel-validation.md`.
 - Источники, удаляемые в `C1` (доступны в коммите `45fb026e891a21ceb3150808b140085b10138988`):
   - `45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md`, разделы `### Gate 2W Run 6 result — GNOME / Candidate v7 (2026-10-10)` и `### Gate 2W Run 7 final GNOME adjudication (2026-10-11)`.
   - `45fb026e891a21ceb3150808b140085b10138988:docs/MODEL_USAGE_LOG.md`, строка таблицы `2026-10-11 | Gate 2W Run 7 Candidate v14 final adjudication` и раздел `### 2026-10-17 First-frame republication simplification and multi-backend validation`.

@@ -1,72 +1,43 @@
-# ADR-0007: Republish the render target after a paused HDR output change
+# ADR-0007: Перепубликация рендер-таргета при смене режима HDR на паузе
 
-- **Status:** Accepted; bounded GNOME client publication validated in Run 7
-  on Candidate v14. Physical display output remains unverified.
-- **Date:** 2026-10-10
-- **Scope:** CineHDR's libmpv Render API FBO and GDK texture on a paused SDR/HDR switch
-- **Builds on:** [ADR-0001](0001-gpu-next-render-api.md), [ADR-0004](0004-gate2-fbo-pixel-validation.md), and [AGENTS.md §8](../../AGENTS.md) / [TESTING.md](../TESTING.md) (historically ADR-0006, read via `git show 45fb026e891a21ceb3150808b140085b10138988:docs/adr/0006-bounded-validation-governance.md`)
+- **Original title:** Republish the render target after a paused HDR output change
+- **Status:** Accepted (актуализирован по C12 / ADR-0008; исходный вариант: 2026-10-10)
+- **Date:** 2026-10-10 (редакция 2026-10-24)
+- **Scope:** Согласованность FBO и текстуры GDK при переключении SDR ↔ HDR на паузе
+- **Builds on:** [ADR-0001](0001-gpu-next-render-api.md), [ADR-0004](0004-gate2-fbo-pixel-validation.md), [ADR-0008](0008-release-scope-and-evidence.md)
+- **Полная историческая версия:** `git show bb41c60:docs/adr/0007-paused-hdr-output-republication.md`
 
-## Context
+## Контекст
 
-The single authorized GNOME Run 6 on Candidate v7 passed initial SDR and
-SDR→HDR publication, then failed HDR→SDR. At the failed sample, the controller
-reported an SDR source and inactive HDR output, but the FBO target and actual
-`GdkGLTexture` still had 16-bit Rec.2100 PQ state. A frame had been published
-after the playlist switch, so merely waiting for *a* new frame is insufficient.
-The raw report and trace retain exact provenance in `docs/GPU_NEXT_DEVELOPMENT.md` (read via `git show 45fb026e891a21ceb3150808b140085b10138988:docs/GPU_NEXT_DEVELOPMENT.md`; see [tools/validation/README.md §1.2](../../tools/validation/README.md)).
+При переключении между SDR и HDR на паузе (например, переход по плейлисту SDR → HDR или HDR → SDR) libmpv не генерирует новых кадров видеопотока (`update_cb` не взводится). В ранних версиях это приводило к дефекту: контроллер фиксировал изменение формата контента, но виджет лишь запрашивал перекомпоновку уже существующей текстуры в GTK. В результате в текстуре оставались устаревшие пиксели предыдущего режима (например, 16-битные Rec.2100 PQ пиксели в SDR-режиме или наоборот).
 
-The publication fixture is paused. The libmpv update callback can schedule a
-render before the `video-params` observer has applied the new output decision.
-`HdrController.apply_hdr_settings()` then notifies the video widget, whose
-`_on_hdr_controller_change()` only queues GTK compositing of the existing
-texture. It does not force another FBO render. This is a source-supported
-ordering hypothesis, **not yet a confirmed live root cause**. The mpv
-`end-file` error label appeared adjacent to window teardown after the report
-was written; its causal role is unverified.
+Простое ожидание «какого-либо следующего кадра» недостаточно: для корректного переключения требуется принудительный рендеринг того же кадра с новыми параметрами FBO и согласованным цветовым тегом GDK.
 
-## Accepted decision (2026-10-17 amendment)
+## Решение
 
-On the GTK main context, mark the configured-output epoch pending before
-setting `target-trc`, `target-prim`, and `target-peak`. After all synchronous
-setters succeed, commit one immutable target/FBO/GDK tuple only if that epoch
-remains current and the controller has not stopped. A committed tuple records
-accepted configuration, not measured pixels. A setter failure or shutdown
-suppresses new publication and reports the reason while retaining the previous
-texture and its original label. Property readback, its private mpv API, timers,
-and mock-specific branch are removed; CineHDR owns target options during
-playback.
+1. **Неизменяемый `CommittedOutputState` и эпохи (`epoch`)**:
+   - `HdrController` формирует атомарный кортеж `CommittedOutputState` (`epoch`, `target_trc`, `target_prim`, `target_peak`, `fbo_format`, `gdk_color_state`, `is_float`, `is_hdr`).
+   - Перед изменением свойств mpv (`target-*`) выставляется `_pending_epoch`.
+   - Новый `CommittedOutputState` фиксируется только после успешного применения всех синхронных свойств mpv при условии актуальности эпохи.
+2. **Запрет публикации при pending и suppression**:
+   - Если смена состояния находится в процессе (`is_publication_pending`) или произошёл сбой установки свойств / завершение работы (`is_publication_suppressed`), рендеринг и публикация новых текстур блокируются. Виджет удерживает последнюю известную текстуру.
+   - Если во время рендера эпоха сменилась (устарела до сборки `GdkGLTextureBuilder`), отрендеренный буфер сбрасывается без публикации.
+3. **Согласованность выходного конвейера**:
+   - Свойства mpv `target-*`, формат FBO (`GL_RGBA16F`/`GL_RGBA8`), `Gdk.MemoryFormat` (`R16G16B16A16_FLOAT`/`R8G8B8A8`) и тег `Gdk.ColorState` (`Rec.2100 PQ`/`sRGB`) вычисляются строго из одного и того же зафиксированного `CommittedOutputState`.
+4. **Принудительный рендер на паузе**:
+   - При несовпадении эпохи последнего отрендеренного кадра с актуальной эпохой `CommittedOutputState.epoch` виджет инициирует принудительный рендер (`force_redraw=True`) даже при нулевых флагах обновления от mpv.
+5. **Валидация первого опубликованного кадра и отрицательный контроль**:
+   - Оракул `PausedTransitionPixelOracle` в `tools/validation/` проверяет именно первый опубликованный кадр после смены эпохи.
+   - Отрицательный контроль проверяет отсутствие остаточных HDR-пикселей в SDR-буфере (дефект регрессии на паузе).
 
-The widget does not render a candidate while pending or suppressed. It selects
-FBO format and GDK label from the same committed snapshot and drops a render
-superseded before texture construction. Only assignment of a new texture
-advances the published generation. A new committed epoch forces a coalesced
-redraw, including paused playback with zero mpv update flags. There is no
-arbitrary delay or wait for another decoded media frame.
+## Границы доказательства и отношение к плану релиза
 
-## Alternatives, falsifier, and rollback
+- **Разделение с задачей P1.1 (авто-гейт)**: Данное решение описывает исключительно согласованность связки FBO/GDK внутри процесса CineHDR. Runtime-гейт режима `auto` (CM-global ∧ GTK opt-in ∧ HDR-монитор под окном ∧ caps) относится к задаче **P1.1** и находится в статусе `TODO`. Критерии авто-гейта регламентированы **ADR-0008**; гейт не объявляется реализованным или закрытым в рамках настоящего документа.
+- **Статус исторического Run 7**: Успешное прохождение сценария публикации в изолированном прогоне Run 7 относилось к тогдашнему кандидату v14 на тестовом стенде. Все рабочие аппаратные ячейки в `docs/TESTING.md` остаются в статусе `NOT_RUN`.
+- **Граница вывода на дисплей**: Корректная публикация текстуры с тегом `Rec.2100 PQ` и форматом `GL_RGBA16F` подтверждает состояние клиентского объекта GDK, но **не доказывает** фактический физический вывод HDR на дисплее и применение цветовых метаданных композитором. Для релизной приёмки HDR требуются независимые оракулы L3p (протокольная трасса Wayland) и L4 (визуальная оценка тестового паттерна) по ADR-0008.
 
-A property readback only checks configuration; it cannot establish FBO pixels.
-Waiting for a new decoded frame could stall paused transitions. The accepted
-source path allows a repeated decoded frame to be rendered with newly accepted
-target options, but does not certify the result.
+## Последствия
 
-The falsifier is the first new texture published after the requested fixture is
-selected and its expected output signal committed, when its captured FBO pixels,
-epoch, format, or actual GDK texture tag disagree with the transition contract.
-The opt-in oracle records that first publication and preserves mismatches even
-if a later frame recovers. Missing capture or provenance remains `UNVERIFIED`;
-client publication does not prove display scanout or photometry. A bounded live
-run on this changed candidate is still pending. If falsified, revert the
-coherent simplification and retain the negative-control and raw failure report.
-Restored readback, if temporarily needed for rollback, is configuration
-evidence only.
-
-## Subsequent bounded validation (2026-10-11)
-
-A single GNOME Wayland Candidate v14 launcher session passed the declared
-four-state publication and three-phase FBO pixel checks for both legacy and
-gpu-next. The sanitized decision and raw artifact hashes are recorded in
-`validation-reports/gate2w-run7-adjudication-reconciled-mesa-20261011.json`.
-This supersedes the pre-run `HOLD` for the GNOME client publication row only;
-Gate 2 and Gate 3 remain `OPEN`, and compositor scanout, per-frame presentation
-and display photometry remain unverified.
+- Исключён дефект устаревших HDR/SDR-пикселей при переключениях на паузе без ожидания смены файла или возобновления воспроизведения.
+- Логика синхронизации рендерера полностью отвязана от приватных API mpv и таймеров.
+- Точки подключения измерений первого кадра сохранены в продуктовом коде как пассивные callbacks по умолчанию (D7).
