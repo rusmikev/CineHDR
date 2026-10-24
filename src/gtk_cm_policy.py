@@ -8,6 +8,7 @@ FEAT_PARAMETRIC = 1
 FEAT_SET_PRIMARIES = 2
 PRIM_SRGB = 1
 PRIM_BT2020 = 6
+TF_GAMMA22 = 2
 TF_EXT_LINEAR = 5
 TF_SRGB = 9
 TF_PQ = 11
@@ -153,16 +154,16 @@ def apply_gsk_renderer_policy(env: MutableMapping[str, str]) -> Optional[str]:
     return renderer
 
 def gtk_color_managed(caps: Optional[CmCaps], env=os.environ) -> Tuple[bool, str]:
-    """(bool, причина): будет ли GTK вообще управлять цветом."""
+    """(bool, reason): whether GTK will manage colors."""
     if not gtk_cm_opted_in(env):
-        return False, "GTK: цветоуправление выключено без GDK_DEBUG=color-mgmt"
+        return False, "GTK: color management disabled without GDK_DEBUG=color-mgmt"
     if caps is None:
-        return False, "композитор не объявил wp_color_manager_v1"
+        return False, "compositor did not announce wp_color_manager_v1"
     if INTENT_PERCEPTUAL not in caps.intents:
-        return False, "нет perceptual intent"
+        return False, "missing perceptual render intent"
     if (FEAT_PARAMETRIC not in caps.features or TF_SRGB not in caps.tfs
             or not (PRIM_SRGB in caps.primaries or FEAT_SET_PRIMARIES in caps.features)):
-        return False, "GTK не может создать sRGB-описание (KWin не объявляет TF srgb)"
+        return False, "GTK cannot create sRGB image description (missing TF srgb)"
     return True, "ok"
 
 def gtk_can_tag_hdr(caps: Optional[CmCaps], tf: int = TF_PQ) -> bool:

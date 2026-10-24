@@ -20,15 +20,28 @@ sys.path.insert(0, str(ROOT))
 
 from src.gtk_cm_policy import (  # noqa: E402
     COLOR_MGMT_OPT_OUT_ENV,
+    FEAT_PARAMETRIC,
+    FEAT_SET_PRIMARIES,
+    INTENT_PERCEPTUAL,
     OPT_IN_ALREADY_ENABLED,
     OPT_IN_APPLIED,
     OPT_IN_NOT_REQUESTED,
     OPT_IN_TOO_LATE,
+    PRIM_BT2020,
+    PRIM_SRGB,
+    TF_COMPOUND_POWER_2_4,
+    TF_EXT_LINEAR,
+    TF_GAMMA22,
+    TF_PQ,
+    TF_SRGB,
+    CmCaps,
     apply_color_mgmt_opt_in,
     color_mgmt_opt_out_requested,
     gdk_debug_excludes_color_mgmt,
     gdk_debug_enables_color_mgmt,
+    gtk_can_tag_hdr,
     gtk_cm_opted_in,
+    gtk_color_managed,
     with_color_mgmt,
 )
 
@@ -363,6 +376,127 @@ class TestFlatpakDefaultBehavior(unittest.TestCase):
                 debug_val, opted_val = output.split("|", 1)
                 self.assertEqual(debug_val, expected_debug)
                 self.assertEqual(opted_val, expected_opted)
+
+
+class TestGtkColorManagedCaps(unittest.TestCase):
+    """Hermetic tests for gtk_color_managed() and gtk_can_tag_hdr()."""
+
+    def setUp(self):
+        self.mutter_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_SRGB, TF_PQ, TF_EXT_LINEAR]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        self.kwin_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_GAMMA22, TF_PQ, TF_COMPOUND_POWER_2_4]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+
+    def test_mutter_gnome_caps_success(self):
+        ok, reason = gtk_color_managed(self.mutter_caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertTrue(ok)
+        self.assertEqual(reason, "ok")
+        self.assertTrue(gtk_can_tag_hdr(self.mutter_caps, TF_PQ))
+        self.assertTrue(gtk_can_tag_hdr(self.mutter_caps, TF_EXT_LINEAR))
+
+    def test_kwin_caps_missing_srgb_fails_closed(self):
+        ok, reason = gtk_color_managed(self.kwin_caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertFalse(ok)
+        self.assertIn("missing TF srgb", reason)
+
+    def test_missing_caps_fails_closed(self):
+        ok, reason = gtk_color_managed(None, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertFalse(ok)
+        self.assertIn("wp_color_manager_v1", reason)
+        self.assertFalse(gtk_can_tag_hdr(None))
+
+    def test_opt_in_missing_or_opt_out_rejected(self):
+        ok, reason = gtk_color_managed(self.mutter_caps, env={})
+        self.assertFalse(ok)
+        self.assertIn("GDK_DEBUG=color-mgmt", reason)
+
+        ok, reason = gtk_color_managed(self.mutter_caps, env={"CINEHDR_NO_COLOR_MGMT": "1"})
+        self.assertFalse(ok)
+        self.assertIn("GDK_DEBUG=color-mgmt", reason)
+
+    def test_missing_perceptual_intent_fails_closed(self):
+        caps = CmCaps(
+            intents=frozenset([1]),  # relative only, missing perceptual
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        ok, reason = gtk_color_managed(caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertFalse(ok)
+        self.assertIn("perceptual", reason)
+
+    def test_missing_parametric_feature_fails_closed(self):
+        caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_SET_PRIMARIES]),  # missing FEAT_PARAMETRIC
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        ok, reason = gtk_color_managed(caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertFalse(ok)
+        self.assertIn("missing TF srgb", reason)
+
+    def test_missing_srgb_primaries_and_set_primaries_fails_closed(self):
+        caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC]),  # missing FEAT_SET_PRIMARIES
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_BT2020]),  # missing PRIM_SRGB
+        )
+        ok, reason = gtk_color_managed(caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertFalse(ok)
+        self.assertIn("missing TF srgb", reason)
+
+    def test_set_primaries_allows_custom_primaries_for_srgb_and_hdr(self):
+        caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset(),  # no named primaries, but FEAT_SET_PRIMARIES present
+        )
+        ok, reason = gtk_color_managed(caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertTrue(ok)
+        self.assertTrue(gtk_can_tag_hdr(caps, TF_PQ))
+
+    def test_hdr_tf_variations(self):
+        # Only PQ
+        pq_only = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        self.assertTrue(gtk_can_tag_hdr(pq_only, TF_PQ))
+        self.assertFalse(gtk_can_tag_hdr(pq_only, TF_EXT_LINEAR))
+
+        # Only ext_linear
+        linear_only = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC, FEAT_SET_PRIMARIES]),
+            tfs=frozenset([TF_SRGB, TF_EXT_LINEAR]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        self.assertFalse(gtk_can_tag_hdr(linear_only, TF_PQ))
+        self.assertTrue(gtk_can_tag_hdr(linear_only, TF_EXT_LINEAR))
+
+    def test_empty_or_unknown_caps_fails_closed(self):
+        empty_caps = CmCaps(
+            intents=frozenset(),
+            features=frozenset(),
+            tfs=frozenset(),
+            primaries=frozenset(),
+        )
+        ok, reason = gtk_color_managed(empty_caps, env={"GDK_DEBUG": "color-mgmt"})
+        self.assertFalse(ok)
+        self.assertFalse(gtk_can_tag_hdr(empty_caps))
 
 
 if __name__ == "__main__":
