@@ -49,7 +49,7 @@ import tempfile
 import unittest
 
 REPO_DIR = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_DIR / "run_wayland_publication_validation.sh"
+SCRIPT_PATH = REPO_DIR / "tools" / "validation" / "run_wayland_publication_validation.sh"
 
 EXP_APP_ID = "io.github.rusmikev.CineHDR"
 CANDIDATE_V4_COMMIT = "8ed86c0b54694b75d1aaa9be75956d1d3a9d075901d90695e4e0d3d144970813"

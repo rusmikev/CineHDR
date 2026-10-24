@@ -12,7 +12,7 @@
 |---|---|---|
 | Пиксельный оракул FBO и отрицательные контроли (`PausedTransitionPixelOracle`, `FboPixelCapture`, `read_fbo_patch_samples`, `compute_patch_centers`, `compute_samples_hash`, `serialize_fbo_pixel_measurements`, `verify_fbo_pixel_measurements_artifact`) | `src/gpu_validation.py` (тесты: `tests/test_hdr.py`, `tests/test_gpu_validation.py`) | `tools/validation/gpu_validation.py` (`C4a`; опциональная установка в `cinehdr/validation/` при `-Dvalidation=true` по `C4d`) |
 | Парсер трассы протокола Wayland и его тесты (`validate_trace`, `validate_composite_window_trace`, `validate_multiphase_trace`, `create_evidence_report`) | `tools/validation/parse_wayland_color_trace.py`, `tools/validation/test_wayland_color_trace.py` (до `C2a`: `tests/...`) | `tools/validation/parse_wayland_color_trace.py`, `tools/validation/test_wayland_color_trace.py` (`C2a`, остаются в `meson test`) |
-| Паузовый автосценарий `SDR → HDR → SDR`, проверка первого опубликованного кадра и чистое завершение (`GpuValidationSession` в режиме `publication`, `validation_steps("publication")`, `publication_texture_evidence`, `evaluate_publication_validation`, лаунчер) | `src/gpu_validation.py`, `run_wayland_publication_validation.sh` (тесты: `tests/test_gpu_validation.py`, `tests/test_wayland_publication_scenario.py`, `tests/test_hdr.py`) | `tools/validation/gpu_validation.py` (`C4a`) и `tools/validation/run_wayland_publication_validation.sh` (`C3`) |
+| Паузовый автосценарий `SDR → HDR → SDR`, проверка первого опубликованного кадра и чистое завершение (`GpuValidationSession` в режиме `publication`, `validation_steps("publication")`, `publication_texture_evidence`, `evaluate_publication_validation`, лаунчер) | `src/gpu_validation.py`, `tools/validation/run_wayland_publication_validation.sh` (до `C3`: в корне; тесты: `tests/test_gpu_validation.py`, `tests/test_wayland_publication_scenario.py`, `tests/test_hdr.py`) | `tools/validation/gpu_validation.py` (`C4a`) и `tools/validation/run_wayland_publication_validation.sh` (`C3`) |
 | Автоматический экспорт диагностического снимка первого опубликованного медиа-кадра (`DiagnosticsExporter`) | `src/diagnostics_report.py` (тесты: `tests/test_diagnostics_export.py`, `tests/test_attempt3_regressions.py`) | `tools/validation/diagnostics_export.py` (`C4b`); функции `collect_video_output_facts` и `build_video_output_report` остаются в `src/diagnostics_report.py` |
 
 ---
@@ -331,7 +331,7 @@
   - `publication_runtime_errors`, `is_verified_flatpak_container`
   - `GpuValidationSession` (`start`, `_wait_until_ready`, `_apply_step`, `_verify_step`, `_finish`, `_write_publication_report`)
   - `evaluate_publication_validation`.
-- `run_wayland_publication_validation.sh` *(целевой путь в `C3`: `tools/validation/run_wayland_publication_validation.sh`)*:
+- `tools/validation/run_wayland_publication_validation.sh` *(перенесён из корня по `C3`)*:
   - `check_flatpak_preflight`, `cleanup_instance`, `cleanup_handler`, `evaluate_session_results`, `run_backend`, `write_gate2w_summary`, `main`.
 - `src/main.py`: `_uses_publication_fixture_contract`, `CineApplication.__init__` (`Gio.ApplicationFlags.NON_UNIQUE` при `CINEHDR_GPU_VALIDATION`), `CineApplication.do_open` (вызов `prepare_validation_player`, сохранение `pause=True`, запуск `GpuValidationSession`).
 - `src/window.py`: `CineWindow.__init__` (`self._is_gpu_validation`), `CineWindow.do_close_request` (отключение `quit_watch_later` при валидации, вызов `self._video_area.shutdown_render_context()` до `self.mpv.quit()` и `self.mpv.wait_for_shutdown()`).
@@ -381,10 +381,10 @@
     tests.test_gpu_validation \
     tests.test_wayland_publication_scenario -v
   ```
-- **Фактический интерфейс и предусловия скрипта `run_wayland_publication_validation.sh`**:
+- **Фактический интерфейс и предусловия скрипта `tools/validation/run_wayland_publication_validation.sh`**:
   - Синтаксис CLI:
     ```bash
-    bash run_wayland_publication_validation.sh \
+    bash tools/validation/run_wayland_publication_validation.sh \
       [--protocol-trace|--no-protocol-trace] \
       [--backend legacy|gpu-next|all] \
       [--dry-run] [-h|--help]
@@ -400,14 +400,13 @@
   - Пример dry-run проверки префлайта без запуска контейнера и GPU:
     ```bash
     EXPECTED_APP_COMMIT='REPLACE_WITH_64_HEX_APP_COMMIT' \
-      bash run_wayland_publication_validation.sh --dry-run --protocol-trace --backend all
+      bash tools/validation/run_wayland_publication_validation.sh --dry-run --protocol-trace --backend all
     ```
-    *(после `C3`: `bash tools/validation/run_wayland_publication_validation.sh ...`)*.
 
 #### 3.6. Что результат доказывает и чего НЕ доказывает
 - **Что доказывают модульные и сценарные тесты (`tests/test_gpu_validation.py`, `tests/test_wayland_publication_scenario.py`)**:
   - На моках и изолированных bash-функциях: соблюдение паузового контракта `do_open`, изоляцию настроек плеера, формулу дробного масштабирования `expected_scaled_texture_dimensions()`, отбраковку неверного префикса `libmpv`, защиту пользовательских экземпляров Flatpak в `cleanup_instance`, сохранность `cleanup_status.json` при срабатывании `EXIT` trap и проверку целостности `fbo_pixel_measurements.json`.
-- **Что доказывает живой запуск `run_wayland_publication_validation.sh` (на реальном GPU и Wayland-сессии)**:
+- **Что доказывает живой запуск `tools/validation/run_wayland_publication_validation.sh` (на реальном GPU и Wayland-сессии)**:
   - При успешном запуске `--backend all --protocol-trace` в отдельных процессах `legacy` (`opengl`) и `gpu-next` (`opengl-next`) установленного Flatpak-пакета обе фикстуры (`SDR` и `HDR`) проходят паузовый цикл `SDR → HDR → SDR → HDR` с новым кадром на каждом шаге, валидными `Gdk.GLTexture`, прошедшим `PausedTransitionPixelOracle`, протокольной цепочкой `primary_composite` в границах §2.6 и чистым завершением (`CLEAN`). Выбор одного бэкенда или `--no-protocol-trace` соответственно сужает результат.
 - **Чего НЕ доказывает**:
   - Отсутствие пропусков кадров при длительном воспроизведении (60 fps soak) или поведение в нормальном режиме `auto` без тестового `CINEHDR_FORCE_SURFACE_SUBMISSION=1`.

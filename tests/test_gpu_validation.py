@@ -1637,7 +1637,9 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertIn("f\"gate2-resource-settling-{self.config.expected_backend}-{stamp}.json\"", source)
 
     def test_wayland_publication_launcher_is_strict_and_runs_two_processes(self):
-        launcher_path = ROOT / "run_wayland_publication_validation.sh"
+        launcher_path = ROOT / "tools" / "validation" / "run_wayland_publication_validation.sh"
+        self.assertFalse((ROOT / "run_wayland_publication_validation.sh").exists())
+        self.assertTrue(launcher_path.is_file())
         launcher = launcher_path.read_text(encoding="utf-8")
         self.assertTrue(launcher_path.stat().st_mode & 0o111)
         self.assertIn("set -euo pipefail", launcher)

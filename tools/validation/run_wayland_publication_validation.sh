@@ -17,7 +17,8 @@ set -euo pipefail
 umask 077
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-report_root="${script_dir}/validation-reports"
+repo_root="$(cd -- "${script_dir}/../.." && pwd -P)"
+report_root="${repo_root}/validation-reports"
 run_stamp="$(date +%Y%m%d-%H%M%S)"
 run_dir="${report_root}/wayland-publication-${run_stamp}-$$"
 
@@ -257,7 +258,7 @@ evaluate_session_results() {
     local check_trace="${5:-true}"
 
     python3 - "${b_dir}" "${backend}" "${session_id}" "${instance_id}" "${check_trace}" \
-        "${expected_app_commit}" "${expected_runtime_commit}" "${app_id}" "${script_dir}" << 'PY_EVAL_EOF'
+        "${expected_app_commit}" "${expected_runtime_commit}" "${app_id}" "${repo_root}" << 'PY_EVAL_EOF'
 import configparser
 import hashlib
 import json
@@ -272,7 +273,7 @@ check_trace = sys.argv[5].lower() == "true" if len(sys.argv) > 5 else True
 expected_app = sys.argv[6] if len(sys.argv) > 6 else ""
 expected_rt = sys.argv[7] if len(sys.argv) > 7 else ""
 expected_app_id = sys.argv[8] if len(sys.argv) > 8 else "io.github.rusmikev.CineHDR"
-script_dir = Path(sys.argv[9]).resolve() if len(sys.argv) > 9 else Path.cwd()
+repo_root = Path(sys.argv[9]).resolve() if len(sys.argv) > 9 else Path.cwd()
 
 # 1. Check process exit code
 exit_code_path = b_dir / "process_exit_code.txt"
@@ -421,7 +422,7 @@ if not trace_path.exists():
     sys.exit(f"FAIL: wayland trace log missing: {trace_path}")
 trace_sha = hashlib.sha256(trace_path.read_bytes()).hexdigest()
 
-sys.path.insert(0, str(script_dir))
+sys.path.insert(0, str(repo_root))
 from tools.validation.parse_wayland_color_trace import create_evidence_report, TraceValidationError
 
 try:
@@ -872,7 +873,7 @@ main() {
     check_flatpak_preflight
 
     # Resolve fixtures paths and status
-    local known_hdr="${script_dir}/validation-reports/gate2-w4-hardware-20260926-095640/fixture/cinehdr-gate2-hevc-main10-yuv420p10-lossless-hdr.mp4"
+    local known_hdr="${repo_root}/validation-reports/gate2-w4-hardware-20260926-095640/fixture/cinehdr-gate2-hevc-main10-yuv420p10-lossless-hdr.mp4"
     local fixture_dir="${report_root}/fixtures"
     mkdir -p -- "${fixture_dir}"
     local sdr_file="${fixture_dir}/cinehdr-gate2-hevc-main10-yuv420p10-lossless-sdr.mp4"
