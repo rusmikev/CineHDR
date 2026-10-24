@@ -1588,7 +1588,9 @@ class PublicationEvidenceTests(unittest.TestCase):
 
 class ValidationIntegrationTests(unittest.TestCase):
     def test_resource_settling_launcher_is_isolated_and_accepts_pass_or_warn(self):
-        launcher_path = ROOT / "run_gate2_resource_settling.sh"
+        launcher_path = ROOT / "tools" / "validation" / "run_gate2_resource_settling.sh"
+        self.assertFalse((ROOT / "run_gate2_resource_settling.sh").exists())
+        self.assertTrue(launcher_path.is_file())
         launcher = launcher_path.read_text(encoding="utf-8")
         self.assertTrue(launcher_path.stat().st_mode & 0o111)
         self.assertIn("set -euo pipefail", launcher)
@@ -1608,7 +1610,7 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertIn('"CINEHDR_PUBLICATION_FIXTURE_REVISION=${fixture_revision}"', launcher)
         self.assertIn('"CINEHDR_PUBLICATION_HDR_SHA256=${hdr_sha256}"', launcher)
         self.assertIn('"CINEHDR_PUBLICATION_SDR_SHA256=${sdr_sha256}"', launcher)
-        self.assertIn('python3 "${script_dir}/run_dev.py" "${sdr_media}" "${hdr_media}"', launcher)
+        self.assertIn('python3 "${repo_root}/run_dev.py" "${sdr_media}" "${hdr_media}"', launcher)
         self.assertLess(launcher.index("run_backend legacy"), launcher.index("run_backend gpu-next"))
         self.assertIn('tee "${log_path}"', launcher)
         self.assertIn('application_status="${PIPESTATUS[0]}"', launcher)

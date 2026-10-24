@@ -7,11 +7,12 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd -- "${script_dir}/../.." && pwd -P)"
 fixture_cache="$(mktemp -d /tmp/cinehdr-resource-settling-fixtures.XXXXXX)"
-report_root="${script_dir}/validation-reports"
+report_root="${repo_root}/validation-reports"
 run_stamp="$(date +%Y%m%d-%H%M%S)"
 run_dir="${report_root}/resource-settling-${run_stamp}-$$"
-mpv_prefix="${CINEHDR_MPV_PREFIX:-${script_dir}/../mpv-gpu-next-prefix}"
+mpv_prefix="${CINEHDR_MPV_PREFIX:-${repo_root}/../mpv-gpu-next-prefix}"
 gpu_next_lib_dir="${mpv_prefix}/lib64"
 gpu_next_lib="${gpu_next_lib_dir}/libmpv.so.2"
 
@@ -39,7 +40,7 @@ fixture_manifest="${run_dir}/fixtures.json"
 export LD_LIBRARY_PATH="${gpu_next_lib_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export GDK_BACKEND="wayland"
 
-python3 "${script_dir}/tests/generate_patterns.py" \
+python3 "${repo_root}/tests/generate_patterns.py" \
     --cache-dir "${fixture_cache}" \
     --fixture-profile "${fixture_profile}" \
     --mode all > "${fixture_manifest}"
@@ -127,9 +128,9 @@ run_backend() {
     )
     set +e
     (
-        cd -- "${script_dir}"
+        cd -- "${repo_root}"
         env "${process_env[@]}" \
-            python3 "${script_dir}/run_dev.py" "${sdr_media}" "${hdr_media}"
+            python3 "${repo_root}/run_dev.py" "${sdr_media}" "${hdr_media}"
     ) 2>&1 | tee "${log_path}"
     application_status="${PIPESTATUS[0]}"
     set -e

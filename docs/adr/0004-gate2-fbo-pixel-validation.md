@@ -417,7 +417,7 @@ retaining all prior Gate 1, embedded-FBO, GDK-publication, and protocol-failure
 evidence. It cannot change the legacy default, enable runtime renderer hot-swap,
 alter normal HDR policy, or broaden Dolby Vision claims.
 
-The bounded implementation is `run_gate2_resource_settling.sh` plus the
+The bounded implementation is `tools/validation/run_gate2_resource_settling.sh` plus the
 opt-in `settling` mode in `src/gpu_validation.py`. The launcher accepts no
 arguments, generates the accepted fixtures in an isolated temporary cache,
 and runs legacy followed by GPU Next as separate processes. It does not choose
