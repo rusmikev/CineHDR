@@ -3735,13 +3735,14 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
 
     def test_trace_only_synthetic_subsurface_detected_returns_unknown(self):
-        """Hermetic CLI test: when subsurfaces are present for the window, video surface origin is ambiguous -> status=UNKNOWN."""
+        """Hermetic CLI test: when an active subsurface with a buffer is present for the window, video surface origin is ambiguous -> status=UNKNOWN."""
         lines = []
         for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
             lines.append(line)
             if "set_app_id" in line:
                 lines.append('[ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
                 lines.append('[ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
+                lines.append('[ 1042.0083] -> wl_surface#62.attach(wl_buffer#88, 0, 0)')
         trace_subsurface = "\n".join(lines)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3758,11 +3759,208 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
                     "--output", str(out_path),
                 ])
             self.assertEqual(status, 1)
-            self.assertIn("subsurface detected for target window", stderr.getvalue())
+            self.assertIn("active buffer detected on subsurface", stderr.getvalue())
             data = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertEqual(data["status"], "UNKNOWN")
             self.assertEqual(data["scope"], TRACE_ONLY_UNKNOWN_SCOPE)
-            self.assertIn("subsurface detected for target window", data["reason"])
+            self.assertIn("active buffer detected on subsurface", data["reason"])
+
+    def test_trace_only_synthetic_declared_unused_subsurface_passes(self):
+        """Hermetic CLI test: declared subsurface with no buffer does not block PASS when toplevel has confirmed buffer."""
+        lines = []
+        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+            lines.append(line)
+            if "set_app_id" in line:
+                lines.append('[ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
+                lines.append('[ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
+        trace_subsurface = "\n".join(lines)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_subsurface, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 0)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "PASS")
+            self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
+
+    def test_trace_only_synthetic_reused_manager_id_and_multiple_registries_passes(self):
+        """Hermetic CLI test: disjoint manager generations across multiple registries on the same display connection succeed."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0008] -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0009] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0010] wp_color_manager_v1#3.done()
+[ 1042.0011] -> wp_color_manager_v1#3.destroy()
+[ 1042.0012] wl_display#1.delete_id(3)
+[ 1042.0013] -> wl_display#1.get_registry(new id wl_registry#52)
+[ 1042.0014] wl_registry#52.global(4, "wp_color_manager_v1", 2)
+[ 1042.0015] -> wl_registry#52.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 0)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "PASS")
+            self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
+            self.assertEqual(data["matched"]["manager"]["id"], 3)
+            self.assertEqual(data["matched"]["registry_global"]["registry_id"], 52)
+
+    def test_trace_only_synthetic_concurrent_manager_id_collision_rejected(self):
+        """Hermetic CLI test: concurrent active lifetime collision on manager ID without intervening destroy/delete fails with status=FAIL."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0008] -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0009] -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+
+    def test_trace_only_synthetic_concurrent_surface_id_collision_rejected(self):
+        """Hermetic CLI test: concurrent active lifetime collision on wl_surface ID without destroy fails with status=FAIL."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.00041] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0008] -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertIn("concurrent active lifetime collision", data["error"])
+
+    def test_trace_only_synthetic_foreign_registry_unlinked_rejected(self):
+        """Hermetic CLI test: manager bound on foreign registry not linked to wl_display fails with status=FAIL."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0014] wl_registry#99.global(4, "wp_color_manager_v1", 2)
+[ 1042.0015] -> wl_registry#99.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertIn("foreign registry", data["error"])
 
     def test_trace_only_synthetic_missing_commit_rejected(self):
         """Hermetic CLI test: trace missing wl_surface.commit after set_image_description fails with status=FAIL."""

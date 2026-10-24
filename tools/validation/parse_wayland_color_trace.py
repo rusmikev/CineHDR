@@ -292,6 +292,191 @@ def _same_surface_commit_after(
     )
 
 
+def _is_valid_manager_generation(
+    bindings: list[tuple[TraceCall, TraceCall, int, int, int, int]],
+    bind: TraceCall,
+    manager_id: int,
+    calls: list[TraceCall],
+) -> tuple[bool, int]:
+    """Verify that this binding represents an isolated, non-overlapping generation of manager_id.
+
+    Returns (is_valid, mgr_end_index).
+    If an earlier generation of manager_id was not destroyed or deleted before bind.index,
+    or if a subsequent generation starts before this generation terminates, or if calls
+    occur before creation, is_valid is False (rejecting concurrent ID reuse and foreign overlaps).
+    """
+    all_manager_binds = [
+        c
+        for c in calls
+        if c.interface == "wl_registry"
+        and c.method == "bind"
+        and (m := BIND_RE.match(c.args)) is not None
+        and int(m["manager_id"]) == manager_id
+    ]
+
+    prior_binds = [c for c in all_manager_binds if c.index < bind.index]
+    prior_death: int | None = None
+    if prior_binds:
+        last_prior = prior_binds[-1]
+        prior_destroy = next(
+            (
+                c.index
+                for c in calls
+                if c.interface == "wp_color_manager_v1"
+                and c.object_id == manager_id
+                and c.method == "destroy"
+                and last_prior.index < c.index < bind.index
+            ),
+            None,
+        )
+        prior_delete = next(
+            (
+                c.index
+                for c in calls
+                if c.interface == "wl_display"
+                and c.method == "delete_id"
+                and c.args == str(manager_id)
+                and last_prior.index < c.index < bind.index
+            ),
+            None,
+        )
+        if prior_destroy is None and prior_delete is None:
+            return False, 0
+        prior_death = prior_destroy if prior_destroy is not None else prior_delete
+
+    next_binds = [c for c in all_manager_binds if c.index > bind.index]
+    mgr_end_index = len(calls)
+    if next_binds:
+        next_bind = next_binds[0]
+        mgr_destroy = next(
+            (
+                c.index
+                for c in calls
+                if c.interface == "wp_color_manager_v1"
+                and c.object_id == manager_id
+                and c.method == "destroy"
+                and bind.index < c.index < next_bind.index
+            ),
+            None,
+        )
+        mgr_delete = next(
+            (
+                c.index
+                for c in calls
+                if c.interface == "wl_display"
+                and c.method == "delete_id"
+                and c.args == str(manager_id)
+                and bind.index < c.index < next_bind.index
+            ),
+            None,
+        )
+        if mgr_destroy is None and mgr_delete is None:
+            return False, 0
+        mgr_end_index = min(idx for idx in (mgr_destroy, mgr_delete) if idx is not None)
+    else:
+        mgr_destroy = next(
+            (
+                c.index
+                for c in calls
+                if c.interface == "wp_color_manager_v1"
+                and c.object_id == manager_id
+                and c.method == "destroy"
+                and c.index > bind.index
+            ),
+            None,
+        )
+        if mgr_destroy is not None:
+            mgr_end_index = mgr_destroy
+
+    start_boundary = prior_death if prior_death is not None else -1
+    if any(
+        c.interface == "wp_color_manager_v1"
+        and c.object_id == manager_id
+        and start_boundary < c.index < bind.index
+        for c in calls
+    ):
+        return False, 0
+
+    return True, mgr_end_index
+
+
+def _has_active_id_collision(
+    calls: list[TraceCall],
+    creations: dict[tuple[str, int], list[int]],
+    interface: str,
+    object_id: int,
+) -> bool:
+    """Check if object_id was created multiple times concurrently without intervening destroy or delete_id."""
+    creation_indices = creations.get((interface, object_id), [])
+    if len(creation_indices) <= 1:
+        return False
+    for i in range(len(creation_indices) - 1):
+        c1 = creation_indices[i]
+        c2 = creation_indices[i + 1]
+        destroyed = any(
+            c.interface == interface
+            and c.object_id == object_id
+            and c.method in ("destroy", "destroy_registry")
+            and c1 < c.index < c2
+            for c in calls
+        )
+        deleted = any(
+            c.interface == "wl_display"
+            and c.method == "delete_id"
+            and c.args == str(object_id)
+            and c1 < c.index < c2
+            for c in calls
+        )
+        if not destroyed and not deleted:
+            return True
+    return False
+
+
+def _verify_registry_connection_link(
+    calls: list[TraceCall],
+    reg_a: int,
+    reg_b: int,
+    manager_global_id: int,
+) -> tuple[bool, str | None]:
+    """Verify that two registry IDs belong to the same connection and share consistent globals."""
+    if reg_a == reg_b:
+        return True, None
+
+    def _is_registry_created(reg_id: int) -> bool:
+        if reg_id == 2:
+            return True
+        return any(
+            c.interface == "wl_display"
+            and c.method == "get_registry"
+            and (m := (NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args))) is not None
+            and int(m.group("object_id")) == reg_id
+            for c in calls
+        )
+
+    if not _is_registry_created(reg_a):
+        return False, f"wl_registry#{reg_a} was not created by wl_display on this connection"
+    if not _is_registry_created(reg_b):
+        return False, f"wl_registry#{reg_b} was not created by wl_display on this connection"
+
+    def _has_manager_global(reg_id: int) -> bool:
+        return any(
+            c.interface == "wl_registry"
+            and c.object_id == reg_id
+            and c.method == "global"
+            and (m := GLOBAL_RE.match(c.args)) is not None
+            and int(m.group("global_id")) == manager_global_id
+            for c in calls
+        )
+
+    if not _has_manager_global(reg_a) or not _has_manager_global(reg_b):
+        return (
+            False,
+            f"inconsistent global advertisement for wp_color_manager_v1 between wl_registry#{reg_a} and wl_registry#{reg_b}",
+        )
+
+    return True, None
+
+
 def _used_before_creation(
     calls: list[TraceCall], interface: str, object_id: int, creation_index: int
 ) -> bool:
@@ -409,10 +594,8 @@ def validate_trace(trace: str) -> dict[str, Any]:
         raise TraceValidationError("wp_color_manager_v1 was advertised but not bound")
 
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
-        if (
-            manager_bind_counts[manager_id] != 1
-            or _used_before_creation(calls, "wp_color_manager_v1", manager_id, bind.index)
-        ):
+        valid_gen, mgr_end_index = _is_valid_manager_generation(bindings, bind, manager_id, calls)
+        if not valid_gen:
             continue
         perceptual = next(
             (
@@ -422,7 +605,7 @@ def validate_trace(trace: str) -> dict[str, Any]:
                 and call.object_id == manager_id
                 and call.method == "supported_intent"
                 and call.args == "0"
-                and call.index > bind.index
+                and bind.index < call.index <= mgr_end_index
             ),
             None,
         )
@@ -436,7 +619,7 @@ def validate_trace(trace: str) -> dict[str, Any]:
                 and call.object_id == manager_id
                 and call.method == "done"
                 and call.args == ""
-                and call.index > perceptual.index
+                and perceptual.index < call.index <= mgr_end_index
             ),
             None,
         )
@@ -449,7 +632,7 @@ def validate_trace(trace: str) -> dict[str, Any]:
                 call.interface != "wp_color_manager_v1"
                 or call.object_id != manager_id
                 or call.method != "get_surface"
-                or call.index <= bind.index
+                or not (bind.index < call.index <= mgr_end_index)
             ):
                 continue
             match = GET_SURFACE_RE.match(call.args)
@@ -1489,10 +1672,8 @@ def validate_composite_window_trace(
     candidates_sdr: list[dict[str, Any]] = []
 
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
-        if (
-            manager_bind_counts[manager_id] != 1
-            or _used_before_creation(calls, "wp_color_manager_v1", manager_id, bind.index)
-        ):
+        valid_gen, mgr_end_index = _is_valid_manager_generation(bindings, bind, manager_id, calls)
+        if not valid_gen:
             continue
         perceptual = next(
             (
@@ -1502,7 +1683,7 @@ def validate_composite_window_trace(
                 and call.object_id == manager_id
                 and call.method == "supported_intent"
                 and call.args == "0"
-                and call.index > bind.index
+                and bind.index < call.index <= mgr_end_index
             ),
             None,
         )
@@ -1518,7 +1699,7 @@ def validate_composite_window_trace(
                 and call.object_id == manager_id
                 and call.method == "done"
                 and call.args == ""
-                and call.index > perceptual.index
+                and perceptual.index < call.index <= mgr_end_index
             ),
             None,
         )
@@ -1532,7 +1713,7 @@ def validate_composite_window_trace(
                 call.interface != "wp_color_manager_v1"
                 or call.object_id != manager_id
                 or call.method != "get_surface"
-                or call.index <= bind.index
+                or not (bind.index < call.index <= mgr_end_index)
             ):
                 continue
             match = GET_SURFACE_RE.match(call.args)
@@ -1550,6 +1731,15 @@ def validate_composite_window_trace(
             if wl_surface_id not in target_window_surfaces:
                 continue
             has_get_surface_window = True
+
+            if _has_active_id_collision(calls, creations, "wl_surface", wl_surface_id):
+                raise TraceValidationError(
+                    f"concurrent active lifetime collision detected for wl_surface#{wl_surface_id}"
+                )
+            if _has_active_id_collision(calls, creations, "wp_color_management_surface_v1", color_surface_id):
+                raise TraceValidationError(
+                    f"concurrent active lifetime collision detected for wp_color_management_surface_v1#{color_surface_id}"
+                )
 
             wl_surface_creations = creations.get(("wl_surface", wl_surface_id), [])
             if (
@@ -1598,12 +1788,16 @@ def validate_composite_window_trace(
                     ),
                     None,
                 )
-                if comp_bind is not None and comp_bind.object_id != bind.object_id:
-                    order_error = (
-                        f"wl_surface#{wl_surface_id} was created by wl_compositor#{comp_id} "
-                        f"bound from foreign registry wl_registry#{comp_bind.object_id}"
+                if comp_bind is not None:
+                    link_ok, link_err = _verify_registry_connection_link(
+                        calls, comp_bind.object_id, bind.object_id, global_id
                     )
-                    continue
+                    if not link_ok:
+                        order_error = (
+                            f"wl_surface#{wl_surface_id} was created by wl_compositor#{comp_id} "
+                            f"bound from foreign registry wl_registry#{comp_bind.object_id}: {link_err}"
+                        )
+                        continue
 
             xdg_surf = next(
                 (
@@ -1632,16 +1826,24 @@ def validate_composite_window_trace(
                     ),
                     None,
                 )
-                if wm_bind is not None and wm_bind.object_id != bind.object_id:
-                    order_error = (
-                        f"xdg_wm_base#{wm_id} for wl_surface#{wl_surface_id} was bound "
-                        f"from foreign registry wl_registry#{wm_bind.object_id}"
+                if wm_bind is not None:
+                    link_ok, link_err = _verify_registry_connection_link(
+                        calls, wm_bind.object_id, bind.object_id, global_id
                     )
-                    continue
+                    if not link_ok:
+                        order_error = (
+                            f"xdg_wm_base#{wm_id} for wl_surface#{wl_surface_id} was bound "
+                            f"from foreign registry wl_registry#{wm_bind.object_id}: {link_err}"
+                        )
+                        continue
 
             manager_creator_ids: set[int] = set()
             for c in calls:
-                if c.interface == "wp_color_manager_v1" and c.object_id == manager_id:
+                if (
+                    c.interface == "wp_color_manager_v1"
+                    and c.object_id == manager_id
+                    and bind.index < c.index <= mgr_end_index
+                ):
                     if c.method in ("create_parametric_creator", "create_icc_creator"):
                         m_cr = NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args)
                         if m_cr:
@@ -1992,10 +2194,8 @@ def validate_multiphase_trace(
     candidate_unknown: dict[str, Any] | None = None
 
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
-        if (
-            manager_bind_counts[manager_id] != 1
-            or _used_before_creation(calls, "wp_color_manager_v1", manager_id, bind.index)
-        ):
+        valid_gen, mgr_end_index = _is_valid_manager_generation(bindings, bind, manager_id, calls)
+        if not valid_gen:
             continue
         perceptual = next(
             (
@@ -2005,7 +2205,7 @@ def validate_multiphase_trace(
                 and call.object_id == manager_id
                 and call.method == "supported_intent"
                 and call.args == "0"
-                and call.index > bind.index
+                and bind.index < call.index <= mgr_end_index
             ),
             None,
         )
@@ -2019,7 +2219,7 @@ def validate_multiphase_trace(
                 and call.object_id == manager_id
                 and call.method == "done"
                 and call.args == ""
-                and call.index > perceptual.index
+                and perceptual.index < call.index <= mgr_end_index
             ),
             None,
         )
@@ -2032,7 +2232,7 @@ def validate_multiphase_trace(
                 call.interface != "wp_color_manager_v1"
                 or call.object_id != manager_id
                 or call.method != "get_surface"
-                or call.index <= bind.index
+                or not (bind.index < call.index <= mgr_end_index)
             ):
                 continue
             match = GET_SURFACE_RE.match(call.args)
@@ -2468,11 +2668,27 @@ def create_trace_only_report(
     )
     matched_surface["effective_buffer_id"] = effective_buffer
 
-    if app_subsurfaces:
-        subsurface_names = ", ".join(f"wl_surface#{s}" for s in sorted(app_subsurfaces))
+    active_subsurfaces = []
+    for child in app_subsurfaces:
+        child_buf = _effective_buffer_at_commit(calls, child, target_commit_index)
+        has_pending_attach = any(
+            c.interface == "wl_surface"
+            and c.object_id == child
+            and c.method == "attach"
+            and c.index <= target_commit_index
+            and (m := ATTACH_RE.match(c.args)) is not None
+            and m["buffer_id"] is not None
+            and int(m["buffer_id"]) != 0
+            for c in calls
+        )
+        if child_buf is not None or has_pending_attach:
+            active_subsurfaces.append(child)
+
+    if active_subsurfaces:
+        subsurface_names = ", ".join(f"wl_surface#{s}" for s in sorted(active_subsurfaces))
         evidence["status"] = "UNKNOWN"
         evidence["reason"] = (
-            f"subsurface detected for target window ({subsurface_names}); "
+            f"active buffer detected on subsurface ({subsurface_names}); "
             "video surface origin cannot be unambiguously proven on toplevel window"
         )
         evidence["scope"] = TRACE_ONLY_UNKNOWN_SCOPE
