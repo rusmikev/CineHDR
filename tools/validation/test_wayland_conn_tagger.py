@@ -554,16 +554,22 @@ assert alt.wl_display_connect(None) == 0x7770
 
         Verifies:
         1. When the loaded libwayland lacks optional wrapped functions (such as
-           wl_display_dispatch_queue_timeout / wl_display_dispatch_timeout), dlsym
-           on the substituted handle returns NULL with dlerror set (and ctypes raises
+           wl_display_dispatch_queue_timeout / wl_display_dispatch_timeout), dlopen
+           leaves the original library handle untouched without mutating DT_SYMTAB or
+           calling mprotect (including when built with -Wl,-z,noseparate-code), so
+           dlsym on the handle returns NULL with dlerror set (and ctypes raises
            AttributeError).
         2. Direct PLT calls to the missing wrapped symbol safely return -1 without
            calling a NULL real_fn.
+        3. Unattributed Wayland debug output emitted through the un-substituted handle
+           is prefixed with [conn#untracked fd#?] and honestly classified as UNKNOWN
+           by the trace parser (never a false PASS and never a crash).
         """
         partial_dir = os.path.join(self.work_dir, "partial_wl")
         os.makedirs(partial_dir, exist_ok=True)
         partial_so = os.path.join(partial_dir, "libwayland-client.so.0")
         partial_src = """
+#include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -575,15 +581,30 @@ struct mock_wl_interface {
     int event_count;
     const void *events;
 };
+const struct mock_wl_interface wl_display_interface = { "wl_display", 1, 0, NULL, 0, NULL };
 const struct mock_wl_interface wl_callback_interface = { "wl_callback", 1, 0, NULL, 0, NULL };
 const struct mock_wl_interface wl_registry_interface = { "wl_registry", 1, 0, NULL, 0, NULL };
 
-void *wl_display_connect(const char *name) { (void)name; return (void *)0x1111; }
+void *wl_display_connect(const char *name) {
+    (void)name;
+    const char *volatile msg = "[100.000]  -> wl_display#1.get_registry(new id wl_registry#2)\\n";
+    fprintf(stderr, "%s", msg);
+    return (void *)0x1111;
+}
 void *wl_display_connect_to_fd(int fd) { (void)fd; return (void *)0x1112; }
 void wl_display_disconnect(void *d) { (void)d; }
 int wl_display_get_fd(void *d) { (void)d; return 9; }
+void *wl_proxy_get_display(void *p) { (void)p; return (void *)0x1111; }
+void *wl_proxy_marshal_array_flags(void *p, uint32_t op, const void *i, uint32_t v, uint32_t f, void *a) {
+    (void)p; (void)op; (void)i; (void)v; (void)f; (void)a; return NULL;
+}
+int wl_display_dispatch_queue(void *d, void *q) { (void)d; (void)q; return 0; }
 int wl_display_dispatch(void *d) { (void)d; return 0; }
+int wl_display_dispatch_queue_pending(void *d, void *q) { (void)d; (void)q; return 0; }
 int wl_display_dispatch_pending(void *d) { (void)d; return 0; }
+int wl_display_dispatch_queue_pending_single(void *d, void *q) { (void)d; (void)q; return 0; }
+int wl_display_dispatch_pending_single(void *d) { (void)d; return 0; }
+int wl_display_roundtrip_queue(void *d, void *q) { (void)d; (void)q; return 0; }
 int wl_display_roundtrip(void *d) { (void)d; return 0; }
 int wl_display_flush(void *d) { (void)d; return 0; }
 int wl_display_prepare_read(void *d) { (void)d; return 0; }
@@ -618,24 +639,44 @@ void *wl_proxy_marshal_flags(void *p, uint32_t op, const void *i, uint32_t v, ui
             check=True,
         )
 
-        env = dict(os.environ)
-        env["LD_PRELOAD"] = f"{self.so_path}:{partial_so}"
-        env["LD_BIND_NOW"] = "1"
-
-        proc_c = subprocess.run(
-            [self.bin_path, "--missing-symbol"],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
+        nosep_so = os.path.join(self.work_dir, "libwayland_conn_tag_nosep.so")
+        subprocess.run(
+            [
+                "gcc",
+                "-Wall",
+                "-Wextra",
+                "-shared",
+                "-fPIC",
+                "-Wl,--as-needed",
+                "-Wl,-z,noseparate-code",
+                "-o",
+                nosep_so,
+                self.tagger_src,
+                "-ldl",
+                "-lwayland-client",
+            ],
+            check=True,
         )
-        self.assertEqual(
-            proc_c.returncode,
-            0,
-            f"C missing symbol / NULL real_fn guard test failed (rc={proc_c.returncode}): {proc_c.stderr}",
-        )
 
-        py_script = """
+        for tagger_so in (self.so_path, nosep_so):
+            env = dict(os.environ)
+            env["LD_PRELOAD"] = f"{tagger_so}:{partial_so}"
+            env["LD_BIND_NOW"] = "1"
+
+            proc_c = subprocess.run(
+                [self.bin_path, "--missing-symbol"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(
+                proc_c.returncode,
+                0,
+                f"C missing symbol / NULL real_fn guard test failed for {tagger_so} (rc={proc_c.returncode}): {proc_c.stderr}",
+            )
+
+            py_script = """
 import ctypes
 
 wl = ctypes.CDLL("libwayland-client.so.0")
@@ -648,22 +689,241 @@ for missing_sym in ("wl_display_dispatch_queue_timeout", "wl_display_dispatch_ti
         raise AssertionError(f"Unexpectedly resolved missing wrapped symbol {missing_sym}")
     except AttributeError:
         pass
+
+wl.wl_display_connect.restype = ctypes.c_void_p
+wl.wl_display_connect.argtypes = [ctypes.c_char_p]
+assert wl.wl_display_connect(None) == 0x1111
 """
-        proc_py = subprocess.run(
-            ["python3", "-c", py_script],
+            proc_py = subprocess.run(
+                ["python3", "-c", py_script],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(
+                proc_py.returncode,
+                0,
+                f"Python missing wrapped symbol test failed for {tagger_so}: {proc_py.stderr}",
+            )
+            self.assertIn("[conn#untracked fd#?]", proc_py.stderr)
+
+            trace_file = os.path.join(self.work_dir, "partial_fallback_trace.log")
+            with open(trace_file, "w", encoding="utf-8") as f:
+                f.write(proc_py.stderr)
+
+            from pathlib import Path
+            from parse_wayland_color_trace import create_trace_only_report
+
+            report = create_trace_only_report(
+                Path(trace_file),
+                oracle="composite_window",
+                expected_app_id="io.github.rusmikev.CineHDR",
+            )
+            self.assertEqual(report["status"], "UNKNOWN")
+
+    def test_as_needed_and_noseparate_code_build_ctypes_resolution(self):
+        """Regression test for defect 1 & 3: -Wl,--as-needed and -Wl,-z,noseparate-code build.
+
+        Verifies:
+        1. Building wayland_conn_tagger.c with -Wl,--as-needed and -Wl,-z,noseparate-code
+           retains DT_NEEDED for libwayland-client.so.0 and does not crash with SIGSEGV.
+        2. ctypes.CDLL("libwayland-client.so.0").wl_display_connect (and unwrapped symbols)
+           succeeds without AttributeError in a process (python3) that does not link
+           against libwayland-client.so.0 at startup, and emits tagged Wayland debug lines.
+        """
+        as_needed_so = os.path.join(self.work_dir, "libwayland_conn_tag_as_needed.so")
+        subprocess.run(
+            [
+                "gcc",
+                "-Wall",
+                "-Wextra",
+                "-shared",
+                "-fPIC",
+                "-Wl,--as-needed",
+                "-Wl,-z,noseparate-code",
+                "-o",
+                as_needed_so,
+                self.tagger_src,
+                "-ldl",
+                "-lwayland-client",
+            ],
+            check=True,
+        )
+
+        readelf_proc = subprocess.run(
+            ["readelf", "-d", as_needed_so],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertIn(
+            "libwayland-client.so.0",
+            readelf_proc.stdout,
+            "DT_NEEDED for libwayland-client.so.0 was stripped under -Wl,--as-needed",
+        )
+
+        env = dict(os.environ)
+        env["LD_PRELOAD"] = as_needed_so
+        env["WAYLAND_DEBUG"] = "1"
+
+        script = """
+import ctypes
+import socket
+
+lib = ctypes.CDLL("libwayland-client.so.0")
+assert lib.wl_display_connect is not None
+assert lib.wl_display_connect_to_fd is not None
+assert lib.wl_display_create_queue is not None
+reg_intf = ctypes.c_char.in_dll(lib, "wl_registry_interface")
+
+lib.wl_display_connect_to_fd.restype = ctypes.c_void_p
+lib.wl_display_connect_to_fd.argtypes = [ctypes.c_int]
+lib.wl_display_disconnect.restype = None
+lib.wl_display_disconnect.argtypes = [ctypes.c_void_p]
+lib.wl_display_flush.restype = ctypes.c_int
+lib.wl_display_flush.argtypes = [ctypes.c_void_p]
+lib.wl_proxy_marshal_constructor.restype = ctypes.c_void_p
+lib.wl_proxy_destroy.restype = None
+lib.wl_proxy_destroy.argtypes = [ctypes.c_void_p]
+
+s1, s2 = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+d = lib.wl_display_connect_to_fd(s1.fileno())
+assert d
+reg = lib.wl_proxy_marshal_constructor(
+    ctypes.c_void_p(d),
+    ctypes.c_uint32(1),
+    ctypes.byref(reg_intf),
+    ctypes.c_uint32(0),
+)
+assert reg
+lib.wl_display_flush(ctypes.c_void_p(d))
+lib.wl_proxy_destroy(ctypes.c_void_p(reg))
+lib.wl_display_disconnect(ctypes.c_void_p(d))
+s2.close()
+"""
+        proc = subprocess.run(
+            ["python3", "-c", script],
             env=env,
             capture_output=True,
             text=True,
             timeout=10,
         )
         self.assertEqual(
-            proc_py.returncode,
+            proc.returncode,
             0,
-            f"Python missing wrapped symbol test failed: {proc_py.stderr}",
+            f"--as-needed / noseparate-code ctypes script failed: {proc.stderr}",
+        )
+        lines = [line.strip() for line in proc.stderr.splitlines() if line.strip()]
+        self.assertTrue(lines)
+        for line in lines:
+            m = TAGGED_LINE_RE.match(line)
+            self.assertIsNotNone(m, f"Line missing connection tag: {line}")
+            self.assertEqual(int(m.group("conn_id")), 1)
+
+    def test_wayland_interposer_before_and_after_shim(self):
+        """Regression test for defect 2: another Wayland interposer before/after shim.
+
+        Verifies that when LD_PRELOAD chains wayland_conn_tagger with another Wayland
+        interposer (intercepting wl_display_connect, wl_display_connect_to_fd, and
+        wl_display_get_fd via RTLD_NEXT without defining wl_proxy_marshal_array_flags):
+        1. Both preload orders (tagger:other and other:tagger) identify the true
+           libwayland-client handle independently of the intermediate interposer.
+        2. wl_display_get_registry succeeds on both connections and emits properly
+           tagged [conn#1 ...] and [conn#2 ...] lines while executing the chained
+           Wayland interposer.
+        """
+        other_wl_so = os.path.join(self.work_dir, "libother_wayland_interposer.so")
+        other_wl_src = """
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <dlfcn.h>
+#include <wayland-client.h>
+
+struct wl_display *wl_display_connect(const char *name) {
+    struct wl_display *(*next_fn)(const char *) =
+        (struct wl_display *(*)(const char *))dlsym(RTLD_NEXT, "wl_display_connect");
+    fprintf(stdout, "[other_wl_connect]\\n");
+    fflush(stdout);
+    return next_fn ? next_fn(name) : NULL;
+}
+
+struct wl_display *wl_display_connect_to_fd(int fd) {
+    struct wl_display *(*next_fn)(int) =
+        (struct wl_display *(*)(int))dlsym(RTLD_NEXT, "wl_display_connect_to_fd");
+    fprintf(stdout, "[other_wl_connect_to_fd]\\n");
+    fflush(stdout);
+    return next_fn ? next_fn(fd) : NULL;
+}
+
+int wl_display_get_fd(struct wl_display *display) {
+    int (*next_fn)(struct wl_display *) =
+        (int (*)(struct wl_display *))dlsym(RTLD_NEXT, "wl_display_get_fd");
+    return next_fn ? next_fn(display) : -1;
+}
+"""
+        subprocess.run(
+            [
+                "gcc",
+                "-Wall",
+                "-Wextra",
+                "-shared",
+                "-fPIC",
+                "-o",
+                other_wl_so,
+                "-x",
+                "c",
+                "-",
+                "-ldl",
+            ],
+            input=other_wl_src,
+            text=True,
+            check=True,
         )
 
+        for preload in (
+            f"{self.so_path}:{other_wl_so}",
+            f"{other_wl_so}:{self.so_path}",
+        ):
+            env = dict(os.environ)
+            env["LD_PRELOAD"] = preload
+            env["WAYLAND_DEBUG"] = "1"
+
+            proc = subprocess.run(
+                [self.bin_path],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"Harness failed with LD_PRELOAD={preload}: {proc.stderr}",
+            )
+            self.assertIn("[other_wl_connect_to_fd]", proc.stdout)
+
+            lines = [line.strip() for line in proc.stderr.splitlines() if line.strip()]
+            self.assertGreaterEqual(len(lines), 6)
+            parsed = []
+            for line in lines:
+                m = TAGGED_LINE_RE.match(line)
+                self.assertIsNotNone(
+                    m, f"Line missing tag with LD_PRELOAD={preload}: {line}"
+                )
+                parsed.append((int(m.group("conn_id")), m.group("call")))
+
+            reg_conns = {
+                cid for cid, call in parsed if "wl_display#1.get_registry" in call
+            }
+            self.assertEqual(
+                reg_conns,
+                {1, 2},
+                f"get_registry failed with LD_PRELOAD={preload}: {reg_conns}",
+            )
+
     def test_flatpak_platform_50_preload_loading(self):
-        """Verifies loading wayland_conn_tagger inside Flatpak Platform 50 without playback."""
+        """Verifies building and loading wayland_conn_tagger in Flatpak Platform 50 without playback."""
         flatpak_bin = shutil.which("flatpak")
         if not flatpak_bin:
             raise unittest.SkipTest("flatpak binary not available")
@@ -677,18 +937,71 @@ for missing_sym in ("wl_display_dispatch_queue_timeout", "wl_display_dispatch_ti
         if check.returncode != 0:
             raise unittest.SkipTest("org.gnome.Platform//50 not installed")
 
+        so_to_test = self.so_path
+        sdk_check = subprocess.run(
+            [flatpak_bin, "info", "org.gnome.Sdk//50"],
+            capture_output=True,
+            text=True,
+        )
+        if sdk_check.returncode == 0:
+            fp_so_path = os.path.join(self.work_dir, "libwayland_conn_tag_fp50.so")
+            build_cmd = [
+                flatpak_bin,
+                "run",
+                "--user",
+                f"--filesystem={self.work_dir}:rw",
+                f"--filesystem={self.src_dir}:ro",
+                "--command=gcc",
+                "org.gnome.Sdk//50",
+                "-Wall",
+                "-Wextra",
+                "-shared",
+                "-fPIC",
+                "-Wl,--as-needed",
+                "-Wl,-z,noseparate-code",
+                "-o",
+                fp_so_path,
+                self.tagger_src,
+                "-ldl",
+                "-lwayland-client",
+            ]
+            build_proc = subprocess.run(
+                build_cmd, capture_output=True, text=True, timeout=20
+            )
+            self.assertEqual(
+                build_proc.returncode,
+                0,
+                f"Flatpak Sdk 50 build failed: {build_proc.stderr}",
+            )
+            so_to_test = fp_so_path
+
         cmd = [
             flatpak_bin,
             "run",
             "--user",
             f"--filesystem={self.work_dir}:ro",
-            f"--env=LD_PRELOAD={self.so_path}",
+            f"--env=LD_PRELOAD={so_to_test}",
+            "--env=WAYLAND_DEBUG=1",
             "--command=python3",
             "org.gnome.Platform//50",
             "-c",
-            "import ctypes; lib = ctypes.CDLL('libwayland-client.so.0'); assert lib.wl_display_roundtrip_queue is not None",
+            (
+                "import ctypes, socket; "
+                "lib = ctypes.CDLL('libwayland-client.so.0'); "
+                "assert lib.wl_display_connect is not None; "
+                "assert lib.wl_display_roundtrip_queue is not None; "
+                "s1, s2 = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM); "
+                "lib.wl_display_connect_to_fd.restype = ctypes.c_void_p; "
+                "lib.wl_display_connect_to_fd.argtypes = [ctypes.c_int]; "
+                "lib.wl_display_disconnect.restype = None; "
+                "lib.wl_display_disconnect.argtypes = [ctypes.c_void_p]; "
+                "d = lib.wl_display_connect_to_fd(s1.fileno()); "
+                "assert d; "
+                "lib.wl_display_disconnect(ctypes.c_void_p(d)); "
+                "s2.close()"
+            ),
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         self.assertEqual(
             proc.returncode,
             0,

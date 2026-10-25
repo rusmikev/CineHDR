@@ -42,9 +42,11 @@
  *      dlopen/dlclose reference counting.
  * 6. --missing-symbol:
  *    When preloaded against a partial libwayland lacking
- *    wl_display_dispatch_queue_timeout, verifies that dlsym on the substituted
- *    handle returns NULL (with dlerror) and direct PLT invocation safely
- *    returns -1 without calling a NULL real_fn.
+ *    wl_display_dispatch_queue_timeout, verifies that dlopen leaves the
+ *    original library handle untouched (no ELF symbol table / mprotect
+ *    mutation), dlsym on that handle returns NULL (with dlerror) for the
+ *    absent symbol, and direct PLT invocation safely returns -1 without
+ *    calling a NULL real_fn.
  */
 
 static void sync_callback(void *data, struct wl_callback *cb, uint32_t serial) {
@@ -356,8 +358,8 @@ static int run_missing_symbol_test(void) {
     void *connect_fn = dlsym(sub_h, "wl_display_connect");
     Dl_info info;
     if (!connect_fn || !dladdr(connect_fn, &info) || !info.dli_fname ||
-        strstr(info.dli_fname, "libwayland_conn_tag.so") == NULL) {
-        fprintf(stderr, "wl_display_connect did not resolve to tagger\n");
+        strstr(info.dli_fname, "libwayland_conn_tag.so") != NULL) {
+        fprintf(stderr, "Expected original handle (not tagger) when runtime libwayland lacks optional wrapped symbol\n");
         return 21;
     }
 

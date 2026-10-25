@@ -2,14 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <dlfcn.h>
-#include <elf.h>
 #include <link.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
 #include <pthread.h>
-#include <sys/mman.h>
 #include <unistd.h>
 #include <wayland-client.h>
 
@@ -39,12 +37,13 @@
  *    poll source (gdkeventsource) and multi-threaded event readers.
  * 5. Dynamic library loading (dlopen, dlclose) to route dlopen/ctypes consumers
  *    (e.g. CineHDR's Python ctypes background probes) to this interposer library
- *    only when real_dlopen succeeds and resolves to the active libwayland-client
- *    instance, preserving load failures, alternative library handles, and
- *    dlopen/dlclose reference balance while leaving global dlsym untouched.
- *    Any wrapped entry point absent in the actually loaded libwayland is marked
- *    SHN_UNDEF in this interposer's in-memory DT_SYMTAB so dlsym on a substituted
- *    handle returns NULL (with dlerror set) and NULL real_fn is never called.
+ *    only when real_dlopen succeeds, resolves to the active libwayland-client
+ *    instance (identified independently of intermediate LD_PRELOAD interposers),
+ *    and that libwayland-client exports all wrapped entry points. If full and
+ *    safe interception is impossible (e.g. an optional wrapped symbol is absent
+ *    in the loaded libwayland), the original handle is returned untouched without
+ *    mutating ELF symbol tables or page permissions, so the trace parser honestly
+ *    reports UNKNOWN rather than a false PASS or crash.
  * 6. Stderr formatting routines (__fprintf_chk, vfprintf, fprintf, fputs) called by
  *    libwayland's internal wl_closure_print to prefix each message with:
  *    [conn#<id> fd#<fd>]
@@ -86,9 +85,19 @@ static void *(*real_dlopen)(const char *, int) = NULL;
 static int (*real_dlclose)(void *) = NULL;
 static void *tagger_handle = NULL;
 static void *target_wayland_handle = NULL;
+static bool target_has_all_wrapped_symbols = false;
 static pthread_mutex_t dl_lock = PTHREAD_MUTEX_INITIALIZER;
 static size_t substituted_open_count = 0;
 static volatile bool tagger_ready = false;
+
+/*
+ * Retain DT_NEEDED for libwayland-client.so.0 even when linked with
+ * -Wl,--as-needed so that unwrapped Wayland symbols remain in tagger_handle's
+ * local lookup scope in processes (such as python3) that do not link directly
+ * against libwayland-client.
+ */
+__attribute__((used))
+static const void *volatile keep_wayland_dt_needed = (const void *)&wl_display_get_fd;
 
 static int (*real_wl_display_get_fd)(struct wl_display *) = NULL;
 static struct wl_display *(*real_wl_proxy_get_display)(struct wl_proxy *) = NULL;
@@ -116,6 +125,16 @@ static void (*real_wl_display_cancel_read)(struct wl_display *) = NULL;
 static int (*real_wl_display_read_events)(struct wl_display *) = NULL;
 
 static void conn_tagger_init(void);
+
+static bool is_wayland_client_lib(const char *filename) {
+    if (!filename) return false;
+    const char *slash = strrchr(filename, '/');
+    const char *name = slash ? slash + 1 : filename;
+    if (strcmp(name, "libwayland-client.so") == 0) return true;
+    if (strcmp(name, "libwayland-client.so.0") == 0) return true;
+    if (strncmp(name, "libwayland-client.so.0.", 23) == 0) return true;
+    return false;
+}
 
 static void init_real_dlfcn(void) {
     if (!real_dlopen) {
@@ -145,70 +164,45 @@ static void *resolve_target_wl_symbol(const char *name) {
     return next_sym ? next_sym : in_target;
 }
 
-struct wrapped_sym_status {
-    const char *name;
-    bool present;
-};
-
-struct dynsym_sync_ctx {
+struct find_wayland_ctx {
     uintptr_t self_addr;
-    const struct wrapped_sym_status *entries;
-    size_t count;
+    void *found_handle;
 };
 
-static int sync_dynsym_phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
+static int find_target_wayland_phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
     (void)size;
-    struct dynsym_sync_ctx *ctx = (struct dynsym_sync_ctx *)data;
-    bool match = false;
-    const ElfW(Dyn) *dyn = NULL;
-
+    struct find_wayland_ctx *ctx = (struct find_wayland_ctx *)data;
+    if (!info->dlpi_name || info->dlpi_name[0] == '\0') {
+        return 0;
+    }
     for (int i = 0; i < info->dlpi_phnum; i++) {
         const ElfW(Phdr) *p = &info->dlpi_phdr[i];
         if (p->p_type == PT_LOAD) {
             uintptr_t start = info->dlpi_addr + p->p_vaddr;
             uintptr_t end = start + p->p_memsz;
             if (ctx->self_addr >= start && ctx->self_addr < end) {
-                match = true;
-            }
-        } else if (p->p_type == PT_DYNAMIC) {
-            dyn = (const ElfW(Dyn) *)(info->dlpi_addr + p->p_vaddr);
-        }
-    }
-    if (!match || !dyn) return 0;
-
-    ElfW(Sym) *symtab = NULL;
-    const char *strtab = NULL;
-    size_t strsz = 0;
-    for (const ElfW(Dyn) *d = dyn; d->d_tag != DT_NULL; d++) {
-        if (d->d_tag == DT_SYMTAB) symtab = (ElfW(Sym) *)d->d_un.d_ptr;
-        else if (d->d_tag == DT_STRTAB) strtab = (const char *)d->d_un.d_ptr;
-        else if (d->d_tag == DT_STRSZ) strsz = d->d_un.d_val;
-    }
-    if (!symtab || !strtab || !strsz) return 1;
-
-    size_t max_syms = ((uintptr_t)strtab > (uintptr_t)symtab)
-        ? ((uintptr_t)strtab - (uintptr_t)symtab) / sizeof(ElfW(Sym))
-        : 4096;
-    long page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) page_size = 4096;
-
-    for (size_t i = 0; i < max_syms; i++) {
-        uint32_t st_name = symtab[i].st_name;
-        if (st_name == 0 || st_name >= strsz) continue;
-        const char *sname = strtab + st_name;
-        for (size_t j = 0; j < ctx->count; j++) {
-            if (!ctx->entries[j].present && strcmp(sname, ctx->entries[j].name) == 0) {
-                uintptr_t page = (uintptr_t)&symtab[i] & ~(uintptr_t)(page_size - 1);
-                if (mprotect((void *)page, (size_t)page_size * 2, PROT_READ | PROT_WRITE) == 0) {
-                    symtab[i].st_value = 0;
-                    symtab[i].st_shndx = SHN_UNDEF;
-                    mprotect((void *)page, (size_t)page_size * 2, PROT_READ);
-                }
-                break;
+                return 0;
             }
         }
     }
-    return 1;
+    if (!is_wayland_client_lib(info->dlpi_name)) {
+        return 0;
+    }
+    if (real_dlopen) {
+        void *h = real_dlopen(info->dlpi_name, RTLD_LAZY | RTLD_NOLOAD);
+        if (h) {
+            if (real_dlclose) {
+                real_dlclose(h);
+            }
+            if (h != tagger_handle &&
+                dlsym(h, "wl_display_create_queue") != NULL &&
+                dlsym(h, "wl_registry_interface") != NULL) {
+                ctx->found_handle = h;
+                return 1;
+            }
+        }
+    }
+    return 0;
 }
 
 static void refresh_real_wl_symbols(void) {
@@ -258,43 +252,29 @@ static void refresh_real_wl_symbols(void) {
     real_wl_display_read_events =
         (int (*)(struct wl_display *))resolve_target_wl_symbol("wl_display_read_events");
 
-    const struct wrapped_sym_status statuses[] = {
-        { "wl_display_connect_to_fd", real_wl_display_connect_to_fd != NULL },
-        { "wl_display_connect", real_wl_display_connect != NULL },
-        { "wl_display_disconnect", real_wl_display_disconnect != NULL },
-        { "wl_proxy_marshal_array_flags", real_wl_proxy_marshal_array_flags != NULL },
-        { "wl_display_dispatch_queue", real_wl_display_dispatch_queue != NULL },
-        { "wl_display_dispatch", real_wl_display_dispatch != NULL },
-        { "wl_display_dispatch_queue_pending", real_wl_display_dispatch_queue_pending != NULL },
-        { "wl_display_dispatch_pending", real_wl_display_dispatch_pending != NULL },
-        { "wl_display_dispatch_queue_pending_single", real_wl_display_dispatch_queue_pending_single != NULL },
-        { "wl_display_dispatch_pending_single", real_wl_display_dispatch_pending_single != NULL },
-        { "wl_display_dispatch_queue_timeout", real_wl_display_dispatch_queue_timeout != NULL },
-        { "wl_display_dispatch_timeout", real_wl_display_dispatch_timeout != NULL },
-        { "wl_display_roundtrip_queue", real_wl_display_roundtrip_queue != NULL },
-        { "wl_display_roundtrip", real_wl_display_roundtrip != NULL },
-        { "wl_display_flush", real_wl_display_flush != NULL },
-        { "wl_display_prepare_read", real_wl_display_prepare_read != NULL },
-        { "wl_display_prepare_read_queue", real_wl_display_prepare_read_queue != NULL },
-        { "wl_display_cancel_read", real_wl_display_cancel_read != NULL },
-        { "wl_display_read_events", real_wl_display_read_events != NULL },
-    };
-
-    bool any_missing = false;
-    for (size_t i = 0; i < sizeof(statuses) / sizeof(statuses[0]); i++) {
-        if (!statuses[i].present) {
-            any_missing = true;
-            break;
-        }
-    }
-    if (any_missing) {
-        struct dynsym_sync_ctx ctx = {
-            .self_addr = (uintptr_t)&refresh_real_wl_symbols,
-            .entries = statuses,
-            .count = sizeof(statuses) / sizeof(statuses[0]),
-        };
-        dl_iterate_phdr(sync_dynsym_phdr_cb, &ctx);
-    }
+    target_has_all_wrapped_symbols =
+        (target_wayland_handle != NULL) &&
+        (real_wl_display_get_fd != NULL) &&
+        (real_wl_proxy_get_display != NULL) &&
+        (real_wl_display_connect_to_fd != NULL) &&
+        (real_wl_display_connect != NULL) &&
+        (real_wl_display_disconnect != NULL) &&
+        (real_wl_proxy_marshal_array_flags != NULL) &&
+        (real_wl_display_dispatch_queue != NULL) &&
+        (real_wl_display_dispatch != NULL) &&
+        (real_wl_display_dispatch_queue_pending != NULL) &&
+        (real_wl_display_dispatch_pending != NULL) &&
+        (real_wl_display_dispatch_queue_pending_single != NULL) &&
+        (real_wl_display_dispatch_pending_single != NULL) &&
+        (real_wl_display_dispatch_queue_timeout != NULL) &&
+        (real_wl_display_dispatch_timeout != NULL) &&
+        (real_wl_display_roundtrip_queue != NULL) &&
+        (real_wl_display_roundtrip != NULL) &&
+        (real_wl_display_flush != NULL) &&
+        (real_wl_display_prepare_read != NULL) &&
+        (real_wl_display_prepare_read_queue != NULL) &&
+        (real_wl_display_cancel_read != NULL) &&
+        (real_wl_display_read_events != NULL);
 
     /* Clear any dlerror left by probing optional symbols. */
     (void)dlerror();
@@ -314,18 +294,24 @@ static void conn_tagger_init(void) {
         }
     }
 
-    /* Identify the active underlying libwayland-client handle in RTLD_NEXT. */
-    void *probe_sym = dlsym(RTLD_NEXT, "wl_display_get_fd");
-    if (!probe_sym) {
-        probe_sym = dlsym(RTLD_NEXT, "wl_display_connect");
-    }
-    if (probe_sym && real_dlopen) {
-        Dl_info wl_info;
-        if (dladdr(probe_sym, &wl_info) && wl_info.dli_fname) {
-            target_wayland_handle = real_dlopen(wl_info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
-            if (target_wayland_handle && real_dlclose) {
-                /* Balance RTLD_NOLOAD refcount; DT_NEEDED/LD_PRELOAD keeps it mapped. */
-                real_dlclose(target_wayland_handle);
+    /* Identify the true libwayland-client handle independently of intermediate interposers. */
+    struct find_wayland_ctx wl_ctx = {
+        .self_addr = (uintptr_t)&conn_tagger_init,
+        .found_handle = NULL,
+    };
+    dl_iterate_phdr(find_target_wayland_phdr_cb, &wl_ctx);
+    target_wayland_handle = wl_ctx.found_handle;
+
+    if (!target_wayland_handle && real_dlopen) {
+        void *h = real_dlopen("libwayland-client.so.0", RTLD_LAZY | RTLD_NOLOAD);
+        if (h) {
+            if (real_dlclose) {
+                real_dlclose(h);
+            }
+            if (h != tagger_handle &&
+                dlsym(h, "wl_display_create_queue") != NULL &&
+                dlsym(h, "wl_registry_interface") != NULL) {
+                target_wayland_handle = h;
             }
         }
     }
@@ -691,24 +677,16 @@ int wl_display_read_events(struct wl_display *display) {
  *
  * 1. Calls real_dlopen(filename, flags) first so nonexistent paths or invalid
  *    flags fail with NULL and original dlerror().
- * 2. Substitutes tagger_handle only when filename names libwayland-client AND
- *    the loaded handle matches target_wayland_handle (the active RTLD_NEXT
- *    libwayland-client), so explicit alternative libraries are never silently
- *    replaced with the system one.
+ * 2. Substitutes tagger_handle only when filename names libwayland-client,
+ *    the loaded handle matches target_wayland_handle (the true libwayland-client
+ *    identified independently of intermediate LD_PRELOAD interposers), AND
+ *    target_has_all_wrapped_symbols is true. If any wrapped symbol is missing
+ *    in the loaded libwayland, real_h is returned untouched so dlsym never
+ *    lies and the trace parser honestly classifies untagged lines as UNKNOWN.
  * 3. Tracks substituted_open_count under dl_lock so each dlclose(tagger_handle)
  *    decrements the corresponding reference on target_wayland_handle without
  *    unloading the interposer or underflowing on extra dlclose calls.
  * ========================================================================= */
-
-static bool is_wayland_client_lib(const char *filename) {
-    if (!filename) return false;
-    const char *slash = strrchr(filename, '/');
-    const char *name = slash ? slash + 1 : filename;
-    if (strcmp(name, "libwayland-client.so") == 0) return true;
-    if (strcmp(name, "libwayland-client.so.0") == 0) return true;
-    if (strncmp(name, "libwayland-client.so.0.", 23) == 0) return true;
-    return false;
-}
 
 void *dlopen(const char *filename, int flags) {
     if (!tagger_ready) {
@@ -728,7 +706,7 @@ void *dlopen(const char *filename, int flags) {
             target_wayland_handle = real_h;
             refresh_real_wl_symbols();
         }
-        if (real_h == target_wayland_handle) {
+        if (real_h == target_wayland_handle && target_has_all_wrapped_symbols) {
             substituted_open_count++;
             pthread_mutex_unlock(&dl_lock);
             return tagger_handle;
