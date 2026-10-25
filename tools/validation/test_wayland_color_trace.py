@@ -3470,6 +3470,25 @@ SYNTHETIC_MPV_HDR_TRACE = """
 """.strip()
 
 
+SYNTHETIC_TAGGED_MPV_HDR_TRACE = "\n".join(
+    f"[conn#1 fd#9] {line}" for line in SYNTHETIC_MPV_HDR_TRACE.splitlines()
+)
+
+
+def _tag_trace(trace: str, conn_id: int = 1, fd: int = 9) -> str:
+    """Helper to prefix untagged trace lines with connection tags for hermetic unit testing."""
+    lines = []
+    for line in trace.splitlines():
+        trimmed = line.strip()
+        if not trimmed:
+            continue
+        if trimmed.startswith("[conn#"):
+            lines.append(trimmed)
+        else:
+            lines.append(f"[conn#{conn_id} fd#{fd}] {trimmed}")
+    return "\n".join(lines)
+
+
 class TestTraceOnlyCliValidation(unittest.TestCase):
     """Hermetic CLI and API tests for autonomous L3p Wayland trace validation (--trace-only).
 
@@ -3482,7 +3501,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             trace_path = root / "mpv.log"
-            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+            trace_path.write_text(SYNTHETIC_TAGGED_MPV_HDR_TRACE, encoding="utf-8")
 
             # Positive report
             rep = create_trace_only_report(trace_path, "mpv")
@@ -3518,13 +3537,48 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(fail_ev["app_id"], "mpv")
             self.assertEqual(fail_ev["error"], "simulated error")
 
+    def test_trace_only_untagged_trace_returns_unknown(self):
+        """Negative control: untagged trace in --trace-only mode returns UNKNOWN because connection attribution cannot be proven."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-untagged.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+
+            # Direct API test
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertEqual(rep["protocol_evidence_level"], "L3p")
+            self.assertTrue(rep["trace_only"])
+            self.assertEqual(rep["scope"], TRACE_ONLY_UNKNOWN_SCOPE)
+            self.assertIn("trace-only L3p validation requires verified connection tags", rep["reason"])
+
+            # CLI test
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertEqual(data["protocol_evidence_level"], "L3p")
+            self.assertTrue(data.get("trace_only"))
+            self.assertIn("trace-only L3p validation requires verified connection tags", data["reason"])
+
+    def test_composite_window_untagged_trace_passes_in_standard_or_l1_mode(self):
+        """Autonomous L1 test: validate_composite_window_trace on untagged trace succeeds when trace_only=False."""
+        ev = validate_composite_window_trace(SYNTHETIC_MPV_HDR_TRACE, "mpv", trace_only=False)
+        self.assertEqual(ev["status"], "PASS")
+
     def test_trace_only_synthetic_mpv_positive(self):
         """Hermetic CLI test: synthetic raw Wayland trace with app_id=mpv succeeds in --trace-only mode."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+            trace_path.write_text(SYNTHETIC_TAGGED_MPV_HDR_TRACE, encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -3550,7 +3604,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["trace"]["path"], "mpv-wayland.log")
             self.assertEqual(
                 data["trace"]["sha256"],
-                hashlib.sha256(SYNTHETIC_MPV_HDR_TRACE.encode("utf-8")).hexdigest(),
+                hashlib.sha256(SYNTHETIC_TAGGED_MPV_HDR_TRACE.encode("utf-8")).hexdigest(),
             )
 
     def test_trace_only_synthetic_foreign_app_id_rejected(self):
@@ -3559,7 +3613,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+            trace_path.write_text(SYNTHETIC_TAGGED_MPV_HDR_TRACE, encoding="utf-8")
 
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
@@ -3570,23 +3624,20 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
                     "--output", str(out_path),
                 ])
             self.assertEqual(status, 1)
-            self.assertIn("app_id 'org.videolan.vlc' not found", stderr.getvalue())
+            self.assertIn("no connection with app-id 'org.videolan.vlc' observed", stderr.getvalue())
             data = json.loads(out_path.read_text(encoding="utf-8"))
-            self.assertEqual(data["status"], "FAIL")
+            self.assertEqual(data["status"], "UNKNOWN")
             self.assertTrue(data.get("trace_only"))
             self.assertEqual(data.get("protocol_evidence_level"), "L3p")
             self.assertEqual(data["expected_app_id"], "org.videolan.vlc")
-            self.assertEqual(data["observed_app_id"], "mpv")
-            self.assertEqual(data["observed_app_ids"], ["mpv"])
-            self.assertEqual(data["app_id"], "org.videolan.vlc")
-            self.assertIn("app_id 'org.videolan.vlc' not found", data["error"])
+            self.assertIn("no connection with app-id 'org.videolan.vlc' observed", data["reason"])
             self.assertNotIn("publication_report", data)
             self.assertNotIn("backend", data)
 
     def test_trace_only_synthetic_no_attach_rejected(self):
         """Hermetic CLI test: negative control where trace has HDR description & commit but no attach fails with status=FAIL."""
         trace_without_attach = "\n".join(
-            line for line in SYNTHETIC_MPV_HDR_TRACE.splitlines()
+            line for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines()
             if "attach" not in line
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -3614,13 +3665,13 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_attach_only_on_other_surface_rejected(self):
         """Hermetic CLI test: negative control where attach occurs only on another surface fails with status=FAIL."""
         lines = []
-        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+        for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines():
             if "attach" in line:
                 continue
             lines.append(line)
             if "create_surface(new id wl_surface#61)" in line:
-                lines.append('[ 1042.0051] -> wl_compositor#1.create_surface(new id wl_surface#62)')
-                lines.append('[ 1042.0052] -> wl_surface#62.attach(wl_buffer#99, 0, 0)')
+                lines.append('[conn#1 fd#9] [ 1042.0051] -> wl_compositor#1.create_surface(new id wl_surface#62)')
+                lines.append('[conn#1 fd#9] [ 1042.0052] -> wl_surface#62.attach(wl_buffer#99, 0, 0)')
         trace_other_attach = "\n".join(lines)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3647,12 +3698,12 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_attach_after_commit_rejected(self):
         """Hermetic CLI test: negative control where attach occurs after the chosen HDR commit fails with status=FAIL."""
         lines = []
-        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+        for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines():
             if "attach" in line:
                 continue
             lines.append(line)
             if "wl_surface#61.commit()" in line:
-                lines.append('[ 1042.015]  -> wl_surface#61.attach(wl_buffer#99, 0, 0)')
+                lines.append('[conn#1 fd#9] [ 1042.015]  -> wl_surface#61.attach(wl_buffer#99, 0, 0)')
         trace_late_attach = "\n".join(lines)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3679,10 +3730,10 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_attach_null_before_commit_rejected(self):
         """Hermetic CLI test: negative control where buffer is replaced with nil before HDR commit fails with status=FAIL."""
         lines = []
-        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+        for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines():
             lines.append(line)
             if "attach(wl_buffer#99" in line:
-                lines.append('[ 1042.0136] -> wl_surface#61.attach(nil, 0, 0)')
+                lines.append('[conn#1 fd#9] [ 1042.0136] -> wl_surface#61.attach(nil, 0, 0)')
         trace_null_attach = "\n".join(lines)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3709,13 +3760,13 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_preserved_buffer_from_previous_commit_succeeds(self):
         """Hermetic CLI test: buffer committed in prior commit remains effective for HDR commit without new attach."""
         lines = []
-        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+        for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines():
             if "attach(wl_buffer#99" in line:
                 continue
             if "xdg_toplevel#68.set_app_id" in line:
                 lines.append(line)
-                lines.append('[ 1042.0085] -> wl_surface#61.attach(wl_buffer#99, 0, 0)')
-                lines.append('[ 1042.0086] -> wl_surface#61.commit()')
+                lines.append('[conn#1 fd#9] [ 1042.0085] -> wl_surface#61.attach(wl_buffer#99, 0, 0)')
+                lines.append('[conn#1 fd#9] [ 1042.0086] -> wl_surface#61.commit()')
                 continue
             lines.append(line)
         trace_preserved = "\n".join(lines)
@@ -3739,12 +3790,12 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_subsurface_detected_returns_unknown(self):
         """Hermetic CLI test: when an active subsurface with a buffer is present for the window, video surface origin is ambiguous -> status=UNKNOWN."""
         lines = []
-        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+        for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines():
             lines.append(line)
             if "set_app_id" in line:
-                lines.append('[ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
-                lines.append('[ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
-                lines.append('[ 1042.0083] -> wl_surface#62.attach(wl_buffer#88, 0, 0)')
+                lines.append('[conn#1 fd#9] [ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
+                lines.append('[conn#1 fd#9] [ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
+                lines.append('[conn#1 fd#9] [ 1042.0083] -> wl_surface#62.attach(wl_buffer#88, 0, 0)')
         trace_subsurface = "\n".join(lines)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3770,11 +3821,11 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_declared_unused_subsurface_passes(self):
         """Hermetic CLI test: declared subsurface with no buffer does not block PASS when toplevel has confirmed buffer."""
         lines = []
-        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+        for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines():
             lines.append(line)
             if "set_app_id" in line:
-                lines.append('[ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
-                lines.append('[ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
+                lines.append('[conn#1 fd#9] [ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
+                lines.append('[conn#1 fd#9] [ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
         trace_subsurface = "\n".join(lines)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3796,15 +3847,15 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_subsurface_reparented_after_commit_rejected(self):
         """Hermetic CLI test: subsurface active at HDR commit reparented to alien surface after commit still yields UNKNOWN."""
         lines = []
-        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+        for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines():
             lines.append(line)
             if "set_app_id" in line:
-                lines.append('[ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
-                lines.append('[ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
-                lines.append('[ 1042.0083] -> wl_surface#62.attach(wl_buffer#88, 0, 0)')
+                lines.append('[conn#1 fd#9] [ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
+                lines.append('[conn#1 fd#9] [ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
+                lines.append('[conn#1 fd#9] [ 1042.0083] -> wl_surface#62.attach(wl_buffer#88, 0, 0)')
         # Reparent child#62 to alien surface#80 after commit
-        lines.append('[ 1042.0300] -> wl_compositor#1.create_surface(new id wl_surface#80)')
-        lines.append('[ 1042.0301] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#71, wl_surface#62, wl_surface#80)')
+        lines.append('[conn#1 fd#9] [ 1042.0300] -> wl_compositor#1.create_surface(new id wl_surface#80)')
+        lines.append('[conn#1 fd#9] [ 1042.0301] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#71, wl_surface#62, wl_surface#80)')
         trace_subsurface = "\n".join(lines)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3859,7 +3910,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -3903,7 +3954,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -3944,7 +3995,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -3984,7 +4035,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -4025,7 +4076,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -4065,7 +4116,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -4108,7 +4159,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace_unlinked, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace_unlinked), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -4130,7 +4181,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace_display999, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace_display999), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -4152,7 +4203,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(trace_display1, encoding="utf-8")
+            trace_path.write_text(_tag_trace(trace_display1), encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -4168,7 +4219,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_missing_registry_creation_returns_unknown(self):
         """Mutation 1: trace omitting wl_display#1.get_registry returns UNKNOWN."""
         trace_without_reg = "\n".join(
-            line for line in SYNTHETIC_MPV_HDR_TRACE.splitlines()
+            line for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines()
             if "get_registry" not in line
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -4196,11 +4247,11 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
 
     def test_trace_only_synthetic_duplicate_registry_creation_returns_unknown(self):
         """Mutation 2: duplicate wl_display#1.get_registry before get_surface without termination returns UNKNOWN."""
-        lines = SYNTHETIC_MPV_HDR_TRACE.splitlines()
+        lines = SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines()
         idx = next(i for i, line in enumerate(lines) if "get_surface" in line)
         trace_dup_reg = "\n".join(
             lines[:idx]
-            + ["[ 1042.0085] -> wl_display#1.get_registry(new id wl_registry#2)"]
+            + ["[conn#1 fd#9] [ 1042.0085] -> wl_display#1.get_registry(new id wl_registry#2)"]
             + lines[idx:]
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -4229,7 +4280,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
     def test_trace_only_synthetic_missing_commit_rejected(self):
         """Hermetic CLI test: trace missing wl_surface.commit after set_image_description fails with status=FAIL."""
         trace_without_commit = "\n".join(
-            line for line in SYNTHETIC_MPV_HDR_TRACE.splitlines()
+            line for line in SYNTHETIC_TAGGED_MPV_HDR_TRACE.splitlines()
             if "commit()" not in line
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -4256,7 +4307,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
 
     def test_trace_only_synthetic_confirmed_sdr_rejected(self):
         """Hermetic CLI test: negative control where only SDR transfer (sRGB tf=1) is committed fails with status=FAIL."""
-        sdr_trace = SYNTHETIC_MPV_HDR_TRACE.replace(
+        sdr_trace = SYNTHETIC_TAGGED_MPV_HDR_TRACE.replace(
             "set_tf_named(11)", "set_tf_named(1)"
         ).replace("set_primaries_named(6)", "set_primaries_named(1)")
 
@@ -4284,7 +4335,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
 
     def test_trace_only_synthetic_incomplete_or_ambiguous_returns_unknown(self):
         """Hermetic CLI test: ambiguous or unverified transfer (ext_linear tf=5 without luminances) returns status=UNKNOWN and non-zero exit."""
-        ambiguous_trace = SYNTHETIC_MPV_HDR_TRACE.replace(
+        ambiguous_trace = SYNTHETIC_TAGGED_MPV_HDR_TRACE.replace(
             "set_tf_named(11)", "set_tf_named(5)"
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -4318,7 +4369,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             trace_path = root / "trace.log"
             report_path = root / "publication-report.txt"
             out_path = root / "out.json"
-            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+            trace_path.write_text(SYNTHETIC_TAGGED_MPV_HDR_TRACE, encoding="utf-8")
 
             # Standard mode without --publication-report exits with code 2
             stderr = io.StringIO()
@@ -4353,7 +4404,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             trace_path = root / "trace.log"
             report_path = root / "publication-report.txt"
             out_path = root / "out.json"
-            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+            trace_path.write_text(SYNTHETIC_TAGGED_MPV_HDR_TRACE, encoding="utf-8")
             report_path.write_text("Overall result: FAIL\nExpected backend: gpu-next\n", encoding="utf-8")
 
             stderr = io.StringIO()
@@ -4375,7 +4426,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             trace_path = root / "trace.log"
             report_path = root / "publication-report.txt"
             out_path = root / "out.json"
-            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+            trace_path.write_text(SYNTHETIC_TAGGED_MPV_HDR_TRACE, encoding="utf-8")
 
             for forbidden_args, expected_err in [
                 (["--publication-report", str(report_path)], "--publication-report cannot be used with --trace-only"),
@@ -4401,7 +4452,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             root = Path(temporary)
             trace_path = root / "trace.log"
             out_path = root / "out.json"
-            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+            trace_path.write_text(SYNTHETIC_TAGGED_MPV_HDR_TRACE, encoding="utf-8")
 
             # Missing --app-id
             stderr = io.StringIO()
@@ -4436,7 +4487,7 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             trace_path = root / "trace.log"
             report_path = root / "valid-report.txt"
             out_path = root / "out.json"
-            trace_path.write_text(SYNTHETIC_MPV_HDR_TRACE, encoding="utf-8")
+            trace_path.write_text(SYNTHETIC_TAGGED_MPV_HDR_TRACE, encoding="utf-8")
             report_path.write_text("Overall result: PASS\nExpected backend: gpu-next\n", encoding="utf-8")
 
             status_ok = main([
@@ -4584,6 +4635,61 @@ class TestTaggedConnectionTraceValidation(unittest.TestCase):
             rep = create_trace_only_report(trace_path, "mpv")
             self.assertEqual(rep["status"], "UNKNOWN")
             self.assertIn("multiple conflicting connections observed with app-id 'mpv'", rep["reason"])
+
+    def test_tagged_trace_inconsistent_fd_for_same_conn_id_returns_unknown(self):
+        """Negative control: changing fd within conn#1 (e.g. from fd#9 to fd#12 on commit) returns UNKNOWN."""
+        tampered_trace = SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.014] -> wl_surface#61.commit()",
+            "[conn#1 fd#12] [ 1042.014] -> wl_surface#61.commit()",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "inconsistent_fd.log"
+            out_path = root / "out.json"
+            trace_path.write_text(tampered_trace, encoding="utf-8")
+
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertIn("inconsistent socket fd for conn#1", rep["reason"])
+            self.assertIn("expected fd#9, observed fd#12", rep["reason"])
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertIn("inconsistent socket fd for conn#1", data["reason"])
+
+    def test_tagged_trace_missing_fd_on_protocol_message_returns_unknown(self):
+        """Negative control: tag on protocol message without fd# (e.g. [conn#1]) returns UNKNOWN."""
+        tampered_trace = SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.014] -> wl_surface#61.commit()",
+            "[conn#1] [ 1042.014] -> wl_surface#61.commit()",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "missing_fd.log"
+            out_path = root / "out.json"
+            trace_path.write_text(tampered_trace, encoding="utf-8")
+
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertIn("missing socket fd in connection tag", rep["reason"])
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertIn("missing socket fd in connection tag", data["reason"])
 
 
 if __name__ == "__main__":

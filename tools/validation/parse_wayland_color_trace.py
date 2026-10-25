@@ -1739,23 +1739,33 @@ def _unknown_composite_evidence(reason: str) -> dict[str, Any]:
 
 
 def _partition_by_connection(
-    trace: str, expected_app_id: str | None = None
+    trace: str,
+    expected_app_id: str | None = None,
+    *,
+    trace_only: bool = False,
 ) -> tuple[str, int | None, int, dict[str, Any] | None]:
     """Inspect trace for verifiable connection tags [conn#<id> fd#<fd>].
 
     Returns (effective_trace, selected_conn_id, total_conns, unknown_evidence_dict).
     If connection tags are present:
-    - Rejects untracked [conn#untracked] or untagged calls in multi-connection trace as UNKNOWN.
+    - Rejects untracked [conn#untracked] calls as UNKNOWN.
+    - Rejects protocol messages with missing fd in tag (e.g. [conn#<id>]) as UNKNOWN.
+    - Rejects inconsistent socket fd within any conn_id as UNKNOWN.
+    - Rejects untagged calls in tagged trace as UNKNOWN.
     - Selects the unique connection claiming expected_app_id.
     - If no connection or multiple connections claim expected_app_id, returns UNKNOWN.
     - Isolates lines belonging to the chosen connection.
     If no connection tags are present:
-    - Returns (trace, None, 1, None) for legacy / untagged single-connection processing.
+    - If trace_only is True: returns UNKNOWN (cannot prove connection attribution for L3p).
+    - If trace_only is False: returns (trace, None, 1, None) for legacy / untagged single-connection processing.
     """
     has_tagged_line = False
     tagged_lines_by_conn: dict[int, list[str]] = {}
+    conn_fds: dict[int, int] = {}
     untagged_call_lines: list[str] = []
     untracked_call_lines: list[str] = []
+    missing_fd_call_lines: list[str] = []
+    inconsistent_fd_lines: list[tuple[int, int, int, str]] = []
 
     for line in trace.splitlines():
         trimmed = line.strip()
@@ -1770,12 +1780,33 @@ def _partition_by_connection(
         if m_tag:
             has_tagged_line = True
             conn_id = int(m_tag.group("conn_id"))
+            fd_str = m_tag.group("fd")
+            if fd_str is None:
+                missing_fd_call_lines.append(trimmed)
+                continue
+            fd = int(fd_str)
+            if conn_id in conn_fds:
+                if conn_fds[conn_id] != fd:
+                    inconsistent_fd_lines.append((conn_id, conn_fds[conn_id], fd, trimmed))
+                    continue
+            else:
+                conn_fds[conn_id] = fd
             tagged_lines_by_conn.setdefault(conn_id, []).append(line)
             continue
         if CALL_RE.search(trimmed):
             untagged_call_lines.append(trimmed)
 
     if not has_tagged_line:
+        if trace_only:
+            return (
+                trace,
+                None,
+                1,
+                _unknown_composite_evidence(
+                    "trace-only L3p validation requires verified connection tags [conn#<id> fd#<fd>] for all Wayland calls; "
+                    "untagged trace cannot prove connection attribution"
+                ),
+            )
         return trace, None, 1, None
 
     if untracked_call_lines:
@@ -1785,6 +1816,27 @@ def _partition_by_connection(
             len(tagged_lines_by_conn),
             _unknown_composite_evidence(
                 f"trace contains untracked Wayland debug call without verified connection attribution: {untracked_call_lines[0]}"
+            ),
+        )
+
+    if missing_fd_call_lines:
+        return (
+            trace,
+            None,
+            len(tagged_lines_by_conn),
+            _unknown_composite_evidence(
+                f"missing socket fd in connection tag: {missing_fd_call_lines[0]}"
+            ),
+        )
+
+    if inconsistent_fd_lines:
+        cid, exp_fd, obs_fd, bad_line = inconsistent_fd_lines[0]
+        return (
+            trace,
+            None,
+            len(tagged_lines_by_conn),
+            _unknown_composite_evidence(
+                f"inconsistent socket fd for conn#{cid}: expected fd#{exp_fd}, observed fd#{obs_fd} in line: {bad_line}"
             ),
         )
 
@@ -1883,7 +1935,7 @@ def validate_composite_window_trace(
         raise fatal
 
     effective_trace, selected_conn, total_conns, unknown_ev = _partition_by_connection(
-        trace, expected_app_id
+        trace, expected_app_id, trace_only=trace_only
     )
     if unknown_ev is not None:
         return unknown_ev
@@ -3104,7 +3156,7 @@ def create_trace_only_report(
     # Fail-closed autonomous video surface proof (L3p):
     # PASS requires a verified non-zero wl_buffer active at the chosen HDR commit_index
     # per Wayland double-buffered surface state, and absence of subsurface offload ambiguity.
-    effective_trace, _, _, _ = _partition_by_connection(trace_text, target_app_id)
+    effective_trace, _, _, _ = _partition_by_connection(trace_text, target_app_id, trace_only=True)
     calls = _calls(effective_trace)
     matched_surface = evidence.get("matched", {}).get("surface", {})
     target_surf = matched_surface.get("wl_surface_id")
