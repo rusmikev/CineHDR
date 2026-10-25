@@ -25,7 +25,7 @@
  * Solution:
  * This library intercepts:
  * 1. Connection lifecycle (wl_display_connect, wl_display_connect_to_fd, wl_display_disconnect)
- *    to register each display and assign a unique conn_id and socket fd.
+ *    and atomic discovery to register each display and assign a unique conn_id and socket fd.
  * 2. All public request marshalling entry points (wl_proxy_marshal_array_flags)
  *    to establish connection context during request formatting.
  * 3. All public event dispatch entry points (wl_display_dispatch*, wl_display_roundtrip*)
@@ -33,8 +33,10 @@
  * 4. Event reading and loop synchronization entry points (wl_display_read_events,
  *    wl_display_prepare_read*, wl_display_cancel_read, wl_display_flush) used by GTK's
  *    poll source (gdkeventsource) and multi-threaded event readers.
- * 5. Dynamic symbol resolution (dlsym) to route dlopen/ctypes consumers (e.g. CineHDR's
- *    Python ctypes background probes) directly to wrapped functions.
+ * 5. Dynamic library loading (dlopen) to route dlopen/ctypes consumers (e.g. CineHDR's
+ *    Python ctypes background probes) directly to this interposer library, while
+ *    leaving global dlsym untouched to preserve standard caller-relative RTLD_NEXT
+ *    semantics for other libraries and interposers.
  * 6. Stderr formatting routines (__fprintf_chk, vfprintf, fprintf, fputs) called by
  *    libwayland's internal wl_closure_print to prefix each message with:
  *    [conn#<id> fd#<fd>]
@@ -68,9 +70,14 @@ struct conn_scope {
     int prev_fd;
 };
 
-static void register_display(struct wl_display *display, int fd) {
+static void register_display_locked(struct wl_display *display, int fd) {
     if (!display) return;
-    pthread_mutex_lock(&conns_lock);
+    for (struct conn_info *c = conns; c; c = c->next) {
+        if (c->display == display) {
+            if (fd >= 0) c->fd = fd;
+            return;
+        }
+    }
     struct conn_info *ci = (struct conn_info *)malloc(sizeof(*ci));
     if (ci) {
         ci->display = display;
@@ -79,6 +86,12 @@ static void register_display(struct wl_display *display, int fd) {
         ci->next = conns;
         conns = ci;
     }
+}
+
+static void register_display(struct wl_display *display, int fd) {
+    if (!display) return;
+    pthread_mutex_lock(&conns_lock);
+    register_display_locked(display, fd);
     pthread_mutex_unlock(&conns_lock);
 }
 
@@ -91,51 +104,53 @@ static void unregister_display(struct wl_display *display) {
             struct conn_info *to_free = *curr;
             *curr = (*curr)->next;
             free(to_free);
-            break;
+        } else {
+            curr = &(*curr)->next;
         }
-        curr = &(*curr)->next;
     }
     pthread_mutex_unlock(&conns_lock);
 }
 
-static struct conn_info *find_conn(struct wl_display *display) {
-    if (!display) return NULL;
+static bool get_or_register_conn(struct wl_display *display, int *out_conn_id, int *out_fd) {
+    if (!display) return false;
     pthread_mutex_lock(&conns_lock);
     for (struct conn_info *c = conns; c; c = c->next) {
         if (c->display == display) {
+            if (out_conn_id) *out_conn_id = c->conn_id;
+            if (out_fd) *out_fd = c->fd;
             pthread_mutex_unlock(&conns_lock);
-            return c;
+            return true;
         }
     }
+
+    /* First discovery of an untracked wl_display: resolve socket fd atomically */
+    static int (*real_get_fd)(struct wl_display *) = NULL;
+    if (!real_get_fd) {
+        real_get_fd = (int (*)(struct wl_display *))dlsym(RTLD_NEXT, "wl_display_get_fd");
+    }
+    int fd = real_get_fd ? real_get_fd(display) : -1;
+    if (fd >= 0) {
+        register_display_locked(display, fd);
+        for (struct conn_info *c = conns; c; c = c->next) {
+            if (c->display == display) {
+                if (out_conn_id) *out_conn_id = c->conn_id;
+                if (out_fd) *out_fd = c->fd;
+                pthread_mutex_unlock(&conns_lock);
+                return true;
+            }
+        }
+    }
+
     pthread_mutex_unlock(&conns_lock);
-    return NULL;
+    return false;
 }
 
 static inline struct conn_scope enter_conn_scope(struct wl_display *display) {
     struct conn_scope scope = { current_conn_id, current_conn_fd };
-    if (!display) {
-        current_conn_id = -1;
-        current_conn_fd = -1;
-        return scope;
-    }
-    struct conn_info *ci = find_conn(display);
-    if (!ci) {
-        /* Auto-register display if created before tagger or via non-intercepted path */
-        static int (*real_get_fd)(struct wl_display *) = NULL;
-        if (!real_get_fd) {
-            real_get_fd = (int (*)(struct wl_display *))dlsym(RTLD_NEXT, "wl_display_get_fd");
-        }
-        if (real_get_fd) {
-            int fd = real_get_fd(display);
-            if (fd >= 0) {
-                register_display(display, fd);
-                ci = find_conn(display);
-            }
-        }
-    }
-    if (ci) {
-        current_conn_id = ci->conn_id;
-        current_conn_fd = ci->fd;
+    int id = -1, fd = -1;
+    if (display && get_or_register_conn(display, &id, &fd)) {
+        current_conn_id = id;
+        current_conn_fd = fd;
     } else {
         current_conn_id = -1;
         current_conn_fd = -1;
@@ -344,56 +359,79 @@ int wl_display_read_events(struct wl_display *display) {
 }
 
 /* =========================================================================
- * Dynamic Symbol Resolution Interception (dlsym)
- * Ensures that callers loading libwayland-client via dlopen (e.g. Python ctypes)
- * obtain pointers to our wrapped functions instead of bypassing LD_PRELOAD.
+ * Dynamic Library Loading Interception (dlopen, dlclose)
+ *
+ * To intercept calls from runtimes like Python ctypes that load
+ * libwayland-client dynamically (e.g. CineHDR's background CM probe and
+ * output HDR monitor), we intercept dlopen for libwayland-client and return
+ * a handle referencing this interposer library.
+ *
+ * This narrower approach:
+ * 1. Preserves global dlsym completely untouched, guaranteeing standard
+ *    caller-relative RTLD_NEXT semantics for all other libraries in the process
+ *    (preventing infinite recursion in multi-interposer chains).
+ * 2. Ensures that symbol lookups on foreign library handles (e.g. libm) or
+ *    missing symbols on wayland handles return NULL as expected, preserving
+ *    proper dlsym / dlerror behavior.
  * ========================================================================= */
 
-static void *(*real_dlsym)(void *, const char *) = NULL;
+static void *tagger_handle = NULL;
+static char tagger_lib_path[4096] = {0};
+static void *(*real_dlopen)(const char *, int) = NULL;
 
-static void init_real_dlsym(void) {
-    if (!real_dlsym) {
-        real_dlsym = (void *(*)(void *, const char *))dlvsym(RTLD_NEXT, "dlsym", "GLIBC_2.2.5");
-        if (!real_dlsym) {
-            real_dlsym = (void *(*)(void *, const char *))dlvsym(RTLD_NEXT, "dlsym", "GLIBC_2.34");
+static void init_real_dlopen(void) {
+    if (!real_dlopen) {
+        real_dlopen = (void *(*)(const char *, int))dlvsym(RTLD_NEXT, "dlopen", "GLIBC_2.2.5");
+        if (!real_dlopen) {
+            real_dlopen = (void *(*)(const char *, int))dlvsym(RTLD_NEXT, "dlopen", "GLIBC_2.34");
         }
     }
 }
 
 __attribute__((constructor))
 static void conn_tagger_init(void) {
-    init_real_dlsym();
+    init_real_dlopen();
+    Dl_info info;
+    if (dladdr((void *)conn_tagger_init, &info) && info.dli_fname) {
+        strncpy(tagger_lib_path, info.dli_fname, sizeof(tagger_lib_path) - 1);
+        if (real_dlopen) {
+            tagger_handle = real_dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD);
+        }
+    }
 }
 
-void *dlsym(void *handle, const char *symbol) {
-    if (!real_dlsym) init_real_dlsym();
+static bool is_wayland_client_lib(const char *filename) {
+    if (!filename) return false;
+    const char *slash = strrchr(filename, '/');
+    const char *name = slash ? slash + 1 : filename;
+    if (strcmp(name, "libwayland-client.so") == 0) return true;
+    if (strcmp(name, "libwayland-client.so.0") == 0) return true;
+    if (strncmp(name, "libwayland-client.so.0.", 23) == 0) return true;
+    return false;
+}
 
-    /* Direct delegation when resolving real symbols inside tagger wrappers */
-    if (handle == RTLD_NEXT) {
-        return real_dlsym(handle, symbol);
+void *dlopen(const char *filename, int flags) {
+    if (!real_dlopen) init_real_dlopen();
+    if (filename && is_wayland_client_lib(filename)) {
+        if (tagger_lib_path[0] && real_dlopen) {
+            void *h = real_dlopen(tagger_lib_path, flags | RTLD_NOLOAD);
+            if (h) return h;
+        }
+        if (tagger_handle) return tagger_handle;
     }
+    return real_dlopen ? real_dlopen(filename, flags) : NULL;
+}
 
-    if (strcmp(symbol, "wl_display_connect") == 0) return (void *)wl_display_connect;
-    if (strcmp(symbol, "wl_display_connect_to_fd") == 0) return (void *)wl_display_connect_to_fd;
-    if (strcmp(symbol, "wl_display_disconnect") == 0) return (void *)wl_display_disconnect;
-    if (strcmp(symbol, "wl_proxy_marshal_array_flags") == 0) return (void *)wl_proxy_marshal_array_flags;
-    if (strcmp(symbol, "wl_display_dispatch_queue") == 0) return (void *)wl_display_dispatch_queue;
-    if (strcmp(symbol, "wl_display_dispatch") == 0) return (void *)wl_display_dispatch;
-    if (strcmp(symbol, "wl_display_dispatch_queue_pending") == 0) return (void *)wl_display_dispatch_queue_pending;
-    if (strcmp(symbol, "wl_display_dispatch_pending") == 0) return (void *)wl_display_dispatch_pending;
-    if (strcmp(symbol, "wl_display_dispatch_queue_pending_single") == 0) return (void *)wl_display_dispatch_queue_pending_single;
-    if (strcmp(symbol, "wl_display_dispatch_pending_single") == 0) return (void *)wl_display_dispatch_pending_single;
-    if (strcmp(symbol, "wl_display_dispatch_queue_timeout") == 0) return (void *)wl_display_dispatch_queue_timeout;
-    if (strcmp(symbol, "wl_display_dispatch_timeout") == 0) return (void *)wl_display_dispatch_timeout;
-    if (strcmp(symbol, "wl_display_roundtrip_queue") == 0) return (void *)wl_display_roundtrip_queue;
-    if (strcmp(symbol, "wl_display_roundtrip") == 0) return (void *)wl_display_roundtrip;
-    if (strcmp(symbol, "wl_display_flush") == 0) return (void *)wl_display_flush;
-    if (strcmp(symbol, "wl_display_prepare_read") == 0) return (void *)wl_display_prepare_read;
-    if (strcmp(symbol, "wl_display_prepare_read_queue") == 0) return (void *)wl_display_prepare_read_queue;
-    if (strcmp(symbol, "wl_display_cancel_read") == 0) return (void *)wl_display_cancel_read;
-    if (strcmp(symbol, "wl_display_read_events") == 0) return (void *)wl_display_read_events;
-
-    return real_dlsym(handle, symbol);
+int dlclose(void *handle) {
+    static int (*real_dlclose)(void *) = NULL;
+    if (!real_dlclose) {
+        real_dlclose = (int (*)(void *))dlvsym(RTLD_NEXT, "dlclose", "GLIBC_2.2.5");
+        if (!real_dlclose) real_dlclose = (int (*)(void *))dlvsym(RTLD_NEXT, "dlclose", "GLIBC_2.34");
+    }
+    if (handle == tagger_handle) {
+        return 0;
+    }
+    return real_dlclose ? real_dlclose(handle) : 0;
 }
 
 /* =========================================================================

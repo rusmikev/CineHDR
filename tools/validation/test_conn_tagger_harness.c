@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <dlfcn.h>
 #include <wayland-client.h>
 
 /*
@@ -24,6 +25,14 @@
  *    Launches 2 parallel pthreads, each performing [count] calls on its own
  *    connection concurrently, stressing thread-local isolation and atomic
  *    stderr output.
+ * 3. --read-events:
+ *    Simulates the GTK poll-driven event loop (wl_display_prepare_read,
+ *    wl_display_read_events, wl_display_dispatch_pending, wl_display_cancel_read)
+ *    across multiple connections.
+ * 4. --atomic-discovery [threads]:
+ *    Tests concurrent first discovery of an untracked wl_display by multiple
+ *    threads entering enter_conn_scope simultaneously, and verifies that
+ *    disconnect cleanly unregisters the display.
  */
 
 static void sync_callback(void *data, struct wl_callback *cb, uint32_t serial) {
@@ -206,6 +215,58 @@ static int run_read_events_test(void) {
     return 0;
 }
 
+struct discovery_worker_arg {
+    struct wl_display *display;
+};
+
+static void *discovery_worker(void *arg) {
+    struct discovery_worker_arg *targ = (struct discovery_worker_arg *)arg;
+    struct wl_callback *cb = wl_display_sync(targ->display);
+    (void)cb;
+    return NULL;
+}
+
+static int run_atomic_discovery_test(int num_threads) {
+    if (num_threads <= 0 || num_threads > 100) num_threads = 16;
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) return 1;
+
+    /* Connect directly via underlying libwayland, bypassing our connect wrapper
+     * so that the display is initially unregistered in the tagger. */
+    struct wl_display *(*real_connect)(int) =
+        (struct wl_display *(*)(int))dlsym(RTLD_NEXT, "wl_display_connect_to_fd");
+    if (!real_connect) return 2;
+
+    struct wl_display *d = real_connect(sv[0]);
+    if (!d) return 3;
+
+    pthread_t threads[100];
+    struct discovery_worker_arg args[100];
+    for (int i = 0; i < num_threads; i++) {
+        args[i].display = d;
+        pthread_create(&threads[i], NULL, discovery_worker, &args[i]);
+    }
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    wl_display_disconnect(d);
+    close(sv[1]);
+
+    /* Secondary display: after disconnect of d, verify next connection gets conn#2 */
+    int sv2[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv2) < 0) return 4;
+    struct wl_display *d2 = real_connect(sv2[0]);
+    if (!d2) return 5;
+
+    struct wl_callback *cb2 = wl_display_sync(d2);
+    (void)cb2;
+    wl_display_disconnect(d2);
+    close(sv2[1]);
+
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "--multithreaded") == 0) {
         int iters = (argc >= 3) ? atoi(argv[2]) : 2000;
@@ -214,6 +275,10 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "--read-events") == 0) {
         return run_read_events_test();
+    }
+    if (argc >= 2 && strcmp(argv[1], "--atomic-discovery") == 0) {
+        int threads = (argc >= 3) ? atoi(argv[2]) : 16;
+        return run_atomic_discovery_test(threads);
     }
     return run_interleaved_test();
 }

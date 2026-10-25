@@ -55,6 +55,7 @@ class TestWaylandConnTagger(unittest.TestCase):
             cls.bin_path,
             cls.harness_src,
             "-lwayland-client",
+            "-ldl",
         ]
         res_bin = subprocess.run(cmd_bin, capture_output=True, text=True)
         if res_bin.returncode != 0:
@@ -308,6 +309,208 @@ s2.close()
                 TAGGED_LINE_RE.match(line),
                 f"Unexpected tag without LD_PRELOAD: {line}",
             )
+
+    def test_two_interposers_rtld_next_chaining(self):
+        """Regression test for defect 1: chaining 2 interposers with RTLD_NEXT.
+
+        Verifies that wayland_conn_tagger does not hijack global dlsym, so
+        caller-relative RTLD_NEXT semantics are preserved in all preload permutations
+        without infinite recursion or crashes.
+        """
+        so_a = os.path.join(self.work_dir, "libinterposer_a.so")
+        so_b = os.path.join(self.work_dir, "libinterposer_b.so")
+        bin_app = os.path.join(self.work_dir, "test_interposer_app")
+
+        src_a = """
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <dlfcn.h>
+int puts(const char *s) {
+    int (*real_puts)(const char *) = (int (*)(const char *))dlsym(RTLD_NEXT, "puts");
+    printf("[a] ");
+    return real_puts(s);
+}
+"""
+        src_b = """
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <dlfcn.h>
+int puts(const char *s) {
+    int (*real_puts)(const char *) = (int (*)(const char *))dlsym(RTLD_NEXT, "puts");
+    printf("[b] ");
+    return real_puts(s);
+}
+"""
+        src_app = """
+#include <stdio.h>
+int main() {
+    puts("chain_test");
+    return 0;
+}
+"""
+        subprocess.run(
+            ["gcc", "-shared", "-fPIC", "-o", so_a, "-x", "c", "-", "-ldl"],
+            input=src_a,
+            text=True,
+            check=True,
+        )
+        subprocess.run(
+            ["gcc", "-shared", "-fPIC", "-o", so_b, "-x", "c", "-", "-ldl"],
+            input=src_b,
+            text=True,
+            check=True,
+        )
+        subprocess.run(
+            ["gcc", "-o", bin_app, "-x", "c", "-"],
+            input=src_app,
+            text=True,
+            check=True,
+        )
+
+        permutations = [
+            f"{self.so_path} {so_a} {so_b}",
+            f"{so_a} {self.so_path} {so_b}",
+            f"{so_a} {so_b} {self.so_path}",
+        ]
+        for preload in permutations:
+            env = dict(os.environ)
+            env["LD_PRELOAD"] = preload
+            proc = subprocess.run(
+                [bin_app], env=env, capture_output=True, text=True, timeout=5
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"Chained interposer failed with LD_PRELOAD={preload}: {proc.stderr}",
+            )
+            self.assertIn("[a]", proc.stdout)
+            self.assertIn("[b]", proc.stdout)
+            self.assertIn("chain_test", proc.stdout)
+
+    def test_foreign_library_and_missing_symbol_negative_control(self):
+        """Regression test for defect 2: dlsym on foreign library or missing symbol.
+
+        Verifies that:
+        1. Accessing Wayland symbols on foreign libraries (e.g. libm) returns NULL / raises AttributeError.
+        2. Accessing non-existent symbols on libwayland-client returns NULL / raises AttributeError.
+        3. Accessing existing Wayland symbols on libwayland-client succeeds.
+        """
+        env = dict(os.environ)
+        env["LD_PRELOAD"] = self.so_path
+
+        script = """
+import ctypes
+
+# 1. Foreign library must NOT return Wayland wrapper
+m = ctypes.CDLL("libm.so.6")
+try:
+    _ = m.wl_display_connect
+    raise AssertionError("Unexpectedly found wl_display_connect in libm.so.6")
+except AttributeError:
+    pass
+
+# 2. Missing symbol on Wayland handle must NOT return a pointer
+wl = ctypes.CDLL("libwayland-client.so.0")
+try:
+    _ = wl.nonexistent_symbol_12345_test
+    raise AssertionError("Unexpectedly found nonexistent symbol in libwayland-client")
+except AttributeError:
+    pass
+
+# 3. Existing wrapped and unwrapped symbols must resolve properly
+assert wl.wl_display_connect is not None
+assert wl.wl_display_roundtrip_queue is not None
+assert wl.wl_display_create_queue is not None
+"""
+        proc = subprocess.run(
+            ["python3", "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"Foreign library / missing symbol test failed: {proc.stderr}",
+        )
+
+    def test_atomic_first_discovery_concurrent_threads(self):
+        """Regression test for defect 3: atomic first discovery and complete disconnect.
+
+        Verifies:
+        - 16 concurrent threads entering enter_conn_scope on an untracked display
+          observe the identical conn_id (no duplicate entries in conns list).
+        - Subsequent connection after disconnect gets the next conn_id (conn#2).
+        """
+        env = dict(os.environ)
+        env["LD_PRELOAD"] = self.so_path
+        env["WAYLAND_DEBUG"] = "1"
+
+        proc = subprocess.run(
+            [self.bin_path, "--atomic-discovery", "16"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(
+            proc.returncode, 0, f"Atomic discovery test failed: {proc.stderr}"
+        )
+
+        lines = [line.strip() for line in proc.stderr.splitlines() if line.strip()]
+        self.assertEqual(
+            len(lines), 17, f"Expected 17 lines in trace, got {len(lines)}"
+        )
+
+        conn1_lines = [l for l in lines if l.startswith("[conn#1 ")]
+        conn2_lines = [l for l in lines if l.startswith("[conn#2 ")]
+        self.assertEqual(
+            len(conn1_lines),
+            16,
+            f"Expected 16 lines for conn#1, got {len(conn1_lines)}",
+        )
+        self.assertEqual(
+            len(conn2_lines),
+            1,
+            f"Expected 1 line for conn#2, got {len(conn2_lines)}",
+        )
+
+        unmatched = [l for l in lines if not TAGGED_LINE_RE.match(l)]
+        self.assertEqual(len(unmatched), 0, f"Found untagged lines: {unmatched}")
+
+    def test_flatpak_platform_50_preload_loading(self):
+        """Verifies loading wayland_conn_tagger inside Flatpak Platform 50 without playback."""
+        flatpak_bin = shutil.which("flatpak")
+        if not flatpak_bin:
+            raise unittest.SkipTest("flatpak binary not available")
+
+        # Check if org.gnome.Platform//50 is installed
+        check = subprocess.run(
+            [flatpak_bin, "info", "org.gnome.Platform//50"],
+            capture_output=True,
+            text=True,
+        )
+        if check.returncode != 0:
+            raise unittest.SkipTest("org.gnome.Platform//50 not installed")
+
+        cmd = [
+            flatpak_bin,
+            "run",
+            "--user",
+            f"--filesystem={self.work_dir}:ro",
+            f"--env=LD_PRELOAD={self.so_path}",
+            "--command=python3",
+            "org.gnome.Platform//50",
+            "-c",
+            "import ctypes; lib = ctypes.CDLL('libwayland-client.so.0'); assert lib.wl_display_roundtrip_queue is not None",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"Flatpak Platform 50 preload test failed: {proc.stderr}",
+        )
 
 
 if __name__ == "__main__":
