@@ -170,6 +170,36 @@
        - **Наблюдаемое происхождение реестра**: для статуса `PASS` в автономном режиме `--trace-only` происхождение `wl_registry` должно быть явно зафиксировано в трассе вызовом `wl_display#1.get_registry`. При отсутствии наблюдаемого создания возвращается `status: UNKNOWN` (`reason: creation of wl_registry#X by wl_display#1 was not observed in trace: registry origin cannot be proven`);
        - **Контроль активных поколений реестра**: при наличии нескольких вызовов `wl_display#1.get_registry` для одного и того же ID без завершения предыдущего поколения (`delete_id`) возвращается `status: UNKNOWN` (`reason: multiple active creations of wl_registry#X observed in trace without termination: connection belonging cannot be established in unified WAYLAND_DEBUG`);
        - **Канонический положительный и отрицательные контроли**: синтетическая трасса `SYNTHETIC_MPV_HDR_TRACE` дополнена каноническим созданием `wl_display#1.get_registry(new id wl_registry#2)`, добавлены регрессионные тесты для мутации 1 (удаление создания реестра → UNKNOWN) и мутации 2 (дублирование создания реестра перед `get_surface` без завершения → UNKNOWN).
+   13. **Воспроизводимый инструмент маркировки соединений Wayland (`wayland_conn_tagger.c`) и автономный тест (`2026-10-25`)**:
+       - **Проблема коллизии соединений**: при запуске mpv с `vo=gpu-next` и `waylandvk` одновременно открываются независимые Wayland-соединения (mpv и Mesa Vulkan WSI), в которых создаются идентичные численные ID (`wl_display#1`, `wl_registry#2`, `wl_callback#3`). В стандартном `WAYLAND_DEBUG=1` все сообщения смешиваются в общий поток `stderr` без атрибуции соединения, делая невозможным надёжное доказательство принадлежности объектов;
+       - **Архитектура шима (`tools/validation/wayland_conn_tagger.c`)**: библиотека `LD_PRELOAD`, перехватывающая:
+         - Жизненный цикл соединений: `wl_display_connect_to_fd`, `wl_display_connect`, `wl_display_disconnect` (регистрация указателя `display`, назначение уникального `conn_id` и сохранение сокета `fd`);
+         - Маршаллинг запросов клиента: `wl_proxy_marshal_array_flags` (охватывает все макросы и вызовы `wl_proxy_marshal*` в `libwayland-client`);
+         - Диспетчеризацию входящих событий: все 10 публичных функций диспетчеризации (`wl_display_dispatch`, `wl_display_dispatch_queue`, `wl_display_dispatch_queue_pending`, `wl_display_dispatch_queue_pending_single`, `wl_display_dispatch_pending`, `wl_display_dispatch_pending_single`, `wl_display_dispatch_queue_timeout`, `wl_display_dispatch_timeout`, `wl_display_roundtrip`, `wl_display_roundtrip_queue`);
+         - Форматированный вывод `stderr`: `__fprintf_chk` (используемый внутренней функцией `wl_closure_print`), `__vfprintf_chk`, `fprintf`, `vfprintf`, `fputs`;
+         - Защита контекста потока: контекст соединения сохраняется в thread-local переменных `current_conn_id` и `current_conn_fd` с использованием RAII-подобного сохранения/восстановления стека контекстов (`enter_conn_scope` / `leave_conn_scope`) и guard-флага от рекурсии. Сообщения протокола вне активного контекста маркируются как `[conn#untracked fd#?]`, исключая присвоение чужого `conn_id`;
+       - **Автономный тест (`tools/validation/test_conn_tagger_harness.c`, `test_wayland_conn_tagger.py`)**:
+         - Через `socketpair` и `wl_display_connect_to_fd` запускаются два клиента в одном процессе;
+         - Исходящие запросы (`get_registry`, `sync`) и входящие события (`callback.done`) перемежаются;
+         - Положительный контроль подтверждает наличие меток `[conn#1 fd#...]` и `[conn#2 fd#...]` на всех сообщениях;
+         - Отрицательный контроль подтверждает отсутствие меток при запуске без `LD_PRELOAD`;
+       - **Команды сборки и тестирования**:
+         ```bash
+         # Сборка библиотеки-перехватчика
+         gcc -Wall -Wextra -shared -fPIC -o /tmp/libwayland_conn_tag.so tools/validation/wayland_conn_tagger.c -ldl -lwayland-client
+
+         # Сборка тестового стенда
+         gcc -Wall -Wextra -o /tmp/test_conn_tagger_harness tools/validation/test_conn_tagger_harness.c -lwayland-client
+
+         # Автономный запуск через Python unittest
+         python3 tools/validation/test_wayland_conn_tagger.py
+         ```
+       - **Ограничения применения к нативному `mpv`**:
+         1. **Динамическая линковка**: `LD_PRELOAD` работает только с динамически слинкованным `libwayland-client.so.0`; статические бинарники не могут быть перехвачены;
+         2. **Изоляция Flatpak / Sandboxing**: при запуске внутри Flatpak-песочницы хостовый путь библиотеки недоступен без явного проброса через `--filesystem`;
+         3. **Флаг `RTLD_DEEPBIND`**: если драйвер или библиотека открывает `libwayland-client` через `dlopen(..., RTLD_DEEPBIND)`, вызовы функций могут замыкаться внутри библиотеки минуя `LD_PRELOAD`;
+         4. **Наследование окружения**: дочерние процессы, порождаемые `mpv` (скрипты, yt-dlp), наследуют `LD_PRELOAD` и `WAYLAND_DEBUG`, если переменные не очищены;
+         5. **Перемешивание логов в `stderr`**: OSD-статусы и терминальные логи `mpv` попадают в `stderr` вместе с `WAYLAND_DEBUG`; для чистого захвата требуется перенаправление `2> wayland_tagged.log` или запуск с `--msg-level=all=warn`.
 
 #### 2.2. Проверяемые источники
 - Коммит `074c38cf577183e57c36f64b9e40c78bcfd870a9` (`fix: bypass KWin/GTK color management deadlock via linear extended and graceful SDR fallback`).
@@ -276,12 +306,16 @@
   - `TestTraceOnlyCli.test_trace_only_synthetic_foreign_registry_unlinked_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `TestTraceOnlyCliValidation.test_trace_only_synthetic_missing_registry_creation_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
   - `TestTraceOnlyCliValidation.test_trace_only_synthetic_duplicate_registry_creation_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
+- **Маркировка соединений Wayland в многопоточном/мульти-очередном клиенте (2026-10-25)**:
+  - `TestWaylandConnTagger.test_tagged_multi_connection_execution` (`tools/validation/test_wayland_conn_tagger.py`)
+  - `TestWaylandConnTagger.test_untagged_execution_negative_control` (`tools/validation/test_wayland_conn_tagger.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).
 - **Команда воспроизведения юнит-тестов (после переноса `C2a`)**:
   ```bash
   python3 -m unittest tools/validation/test_wayland_color_trace.py -v
+  python3 tools/validation/test_wayland_conn_tagger.py -v
   ```
 - **Команда запуска CLI парсера на сохранённом логе трассы и отчёте публикации**:
   ```bash
