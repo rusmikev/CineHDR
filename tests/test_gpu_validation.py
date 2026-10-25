@@ -1471,6 +1471,81 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertEqual(status, "FAIL")
         self.assertIn("not recreated", detail)
 
+    def test_context_cycle_requires_published_frame_and_preserves_hdr_active_and_color_state(self):
+        """P1.5 lifecycle: context-cycle must require a newly published frame and preserve hdr_active + render_color_state."""
+        old_ctx = object()
+        new_ctx = object()
+        step = ValidationStep("GL context cycle 1", "context-cycle", 10, 1)
+
+        def make_session():
+            s = GpuValidationSession.__new__(GpuValidationSession)
+            s.player = MagicMock()
+            s.window = SimpleNamespace(get_width=lambda: 1280, get_height=lambda: 720)
+            s.video_area = SimpleNamespace(
+                render_backend_active="opengl-next",
+                render_session_status="active",
+                render_context_generation=1,
+                render_frame_generation=5,
+                mpv_ctx=old_ctx,
+                gl_area=SimpleNamespace(get_realized=lambda: True, unrealize=lambda: None),
+                _first_frame_logged=True,
+                hdr_controller=SimpleNamespace(
+                    _disconnected=False,
+                    is_hdr_content=True,
+                    is_hdr_active=True,
+                ),
+                render_target_format="GL_RGBA16F",
+                render_target_depth=16,
+                render_color_state="rec2100-pq",
+            )
+            with patch("src.gpu_validation.GLib.timeout_add", return_value=99):
+                s._apply_step(step)
+            s.video_area.render_context_generation = 2
+            s.video_area.mpv_ctx = new_ctx
+            s.video_area.render_frame_generation = 6
+            return s
+
+        # Positive control: context recreated, new frame published (5->6), HDR active and color state preserved
+        session_ok = make_session()
+        status, detail = session_ok._verify_step(
+            step,
+            {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": "rec2100-pq"},
+        )
+        self.assertEqual(status, "PASS")
+        self.assertIn("1→2", detail)
+
+        # Negative control 1: _first_frame_logged is True, but frame was dropped/superseded before publication (frame_gen 5->5)
+        session_no_pub = make_session()
+        session_no_pub.video_area.render_frame_generation = 5
+        status_no_pub, detail_no_pub = session_no_pub._verify_step(
+            step,
+            {"time_pos": 10.0, "render_frame_generation": 5, "render_color_state": "rec2100-pq"},
+        )
+        self.assertEqual(status_no_pub, "FAIL")
+        self.assertIn("no new video frame was published after context recreation", detail_no_pub)
+
+        # Negative control 2: is_hdr_content stayed True, but is_hdr_active flipped to False across recreation
+        session_hdr_drop = make_session()
+        session_hdr_drop.video_area.hdr_controller.is_hdr_active = False
+        status_hdr_drop, detail_hdr_drop = session_hdr_drop._verify_step(
+            step,
+            {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": "rec2100-pq"},
+        )
+        self.assertEqual(status_hdr_drop, "FAIL")
+        self.assertIn("HDR output active state changed across context recreation", detail_hdr_drop)
+
+        # Negative control 3: render_target stayed ('GL_RGBA16F', 16), but published render_color_state degraded to 'srgb' or None
+        for bad_color in ("srgb", None):
+            with self.subTest(bad_color=bad_color):
+                session_color = make_session()
+                session_color.video_area.render_color_state = bad_color
+                status_color, detail_color = session_color._verify_step(
+                    step,
+                    {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": bad_color},
+                )
+                self.assertEqual(status_color, "FAIL")
+                self.assertIn("published color state changed", detail_color)
+
     def test_transition_accepts_published_hdr_state_after_a_new_frame(self):
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.video_area = SimpleNamespace(
@@ -1531,6 +1606,95 @@ class PublicationEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(status, "FAIL")
         self.assertIn("published target", detail)
+
+    def test_transition_verifies_mpv_target_properties_on_hdr_sdr_hdr_playlist(self):
+        """P1.5 playlist HDR->SDR->HDR: switch-media rejects stale mpv target-trc/target-prim on SDR or unconfigured targets on HDR."""
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.video_area = SimpleNamespace(
+            render_backend_active="opengl-next",
+            render_session_status="active",
+        )
+        session._transition_context_generation = 1
+
+        sdr_after = {
+            "time_pos": 8.0,
+            "playlist_pos": 0,
+            "render_frame_generation": 21,
+            "render_context_generation": 1,
+            "source_hdr": False,
+            "hdr_output_active": False,
+            "render_target_format": "GL_RGBA8",
+            "render_target_depth": 8,
+            "render_color_state": "srgb",
+            "dovi_profile": None,
+            "hwdec": "vaapi-copy",
+            "target_trc": "auto",
+            "target_prim": "auto",
+            "target_peak": "auto",
+        }
+        hdr_after = {
+            "time_pos": 12.0,
+            "playlist_pos": 1,
+            "render_frame_generation": 22,
+            "render_context_generation": 1,
+            "source_hdr": True,
+            "hdr_output_active": True,
+            "render_target_format": "GL_RGBA16F",
+            "render_target_depth": 16,
+            "render_color_state": "rec2100-pq",
+            "dovi_profile": None,
+            "hwdec": "vaapi-copy",
+            "target_trc": "pq",
+            "target_prim": "bt.2020",
+            "target_peak": "auto",
+        }
+
+        # Positive control: clean SDR return and HDR return
+        session._pending_render_frame_generation = 20
+        status_sdr, detail_sdr = session._verify_step(
+            ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr")),
+            sdr_after,
+        )
+        self.assertEqual(status_sdr, "PASS")
+        self.assertIn("target=auto/auto/auto", detail_sdr)
+
+        session._pending_render_frame_generation = 21
+        status_hdr, detail_hdr = session._verify_step(
+            ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr")),
+            hdr_after,
+        )
+        self.assertEqual(status_hdr, "PASS")
+        self.assertIn("target=pq/bt.2020/auto", detail_hdr)
+
+        # Negative control 1: SDR step with stale HDR target-trc or target-prim
+        for stale_sdr in (
+            {**sdr_after, "target_trc": "pq"},
+            {**sdr_after, "target_prim": "bt.2020"},
+            {**sdr_after, "target_peak": "unknown"},
+        ):
+            with self.subTest(stale_sdr=stale_sdr):
+                session._pending_render_frame_generation = 20
+                st, det = session._verify_step(
+                    ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr")),
+                    stale_sdr,
+                )
+                self.assertEqual(st, "FAIL")
+                self.assertIn("did not reset for SDR output state", det)
+
+        # Negative control 2: HDR step with unconfigured SDR target-trc or target-prim
+        for bad_hdr in (
+            {**hdr_after, "target_trc": "auto"},
+            {**hdr_after, "target_prim": "auto"},
+            {**hdr_after, "target_peak": "unknown"},
+        ):
+            with self.subTest(bad_hdr=bad_hdr):
+                session._pending_render_frame_generation = 21
+                st, det = session._verify_step(
+                    ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr")),
+                    bad_hdr,
+                )
+                self.assertEqual(st, "FAIL")
+                self.assertIn("did not match HDR output state", det)
 
     def test_counter_growth_survives_mpv_counter_reset(self):
         session = GpuValidationSession.__new__(GpuValidationSession)
