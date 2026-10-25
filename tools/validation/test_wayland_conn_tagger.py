@@ -479,6 +479,189 @@ assert wl.wl_display_create_queue is not None
         unmatched = [l for l in lines if not TAGGED_LINE_RE.match(l)]
         self.assertEqual(len(unmatched), 0, f"Found untagged lines: {unmatched}")
 
+    def test_nonexistent_path_and_alternative_library_and_dlclose_balance(self):
+        """Negative controls for nonexistent path, alternative library, and dlopen/dlclose balance.
+
+        Verifies:
+        1. dlopen("/nonexistent/libwayland-client.so.0", ...) returns NULL and sets dlerror()
+           (and ctypes.CDLL raises OSError).
+        2. dlopen("/path/to/alt/libwayland-client.so.0", ...) returns the alternative library's
+           own handle without silently replacing it with the shim or system libwayland.
+        3. dlopen/dlclose reference counting on the substituted shim handle is balanced,
+           and an extra unbalanced dlclose fails with -1 without unloading the shim.
+        """
+        alt_dir = os.path.join(self.work_dir, "alt_wl")
+        os.makedirs(alt_dir, exist_ok=True)
+        alt_so = os.path.join(alt_dir, "libwayland-client.so.0")
+        alt_src = """
+#include <stddef.h>
+int alt_wayland_marker(void) { return 777; }
+void *wl_display_connect(const char *name) { (void)name; return (void *)0x7770; }
+"""
+        subprocess.run(
+            ["gcc", "-Wall", "-Wextra", "-shared", "-fPIC", "-o", alt_so, "-x", "c", "-"],
+            input=alt_src,
+            text=True,
+            check=True,
+        )
+
+        env = dict(os.environ)
+        env["LD_PRELOAD"] = self.so_path
+
+        proc_c = subprocess.run(
+            [self.bin_path, "--handle-semantics", alt_so],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(
+            proc_c.returncode,
+            0,
+            f"C handle semantics test failed (rc={proc_c.returncode}): {proc_c.stderr}",
+        )
+
+        py_script = f"""
+import ctypes
+
+try:
+    ctypes.CDLL("/nonexistent/libwayland-client.so.0")
+    raise AssertionError("Expected OSError for /nonexistent/libwayland-client.so.0")
+except OSError:
+    pass
+
+alt = ctypes.CDLL({alt_so!r})
+assert alt.alt_wayland_marker() == 777
+alt.wl_display_connect.restype = ctypes.c_void_p
+alt.wl_display_connect.argtypes = [ctypes.c_char_p]
+assert alt.wl_display_connect(None) == 0x7770
+"""
+        proc_py = subprocess.run(
+            ["python3", "-c", py_script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(
+            proc_py.returncode,
+            0,
+            f"Python nonexistent/alternative library test failed: {proc_py.stderr}",
+        )
+
+    def test_missing_wrapped_symbol_and_null_real_fn_guard(self):
+        """Negative control for absent optional wrapped symbols in loaded libwayland.
+
+        Verifies:
+        1. When the loaded libwayland lacks optional wrapped functions (such as
+           wl_display_dispatch_queue_timeout / wl_display_dispatch_timeout), dlsym
+           on the substituted handle returns NULL with dlerror set (and ctypes raises
+           AttributeError).
+        2. Direct PLT calls to the missing wrapped symbol safely return -1 without
+           calling a NULL real_fn.
+        """
+        partial_dir = os.path.join(self.work_dir, "partial_wl")
+        os.makedirs(partial_dir, exist_ok=True)
+        partial_so = os.path.join(partial_dir, "libwayland-client.so.0")
+        partial_src = """
+#include <stddef.h>
+#include <stdint.h>
+
+struct mock_wl_interface {
+    const char *name;
+    int version;
+    int method_count;
+    const void *methods;
+    int event_count;
+    const void *events;
+};
+const struct mock_wl_interface wl_callback_interface = { "wl_callback", 1, 0, NULL, 0, NULL };
+const struct mock_wl_interface wl_registry_interface = { "wl_registry", 1, 0, NULL, 0, NULL };
+
+void *wl_display_connect(const char *name) { (void)name; return (void *)0x1111; }
+void *wl_display_connect_to_fd(int fd) { (void)fd; return (void *)0x1112; }
+void wl_display_disconnect(void *d) { (void)d; }
+int wl_display_get_fd(void *d) { (void)d; return 9; }
+int wl_display_dispatch(void *d) { (void)d; return 0; }
+int wl_display_dispatch_pending(void *d) { (void)d; return 0; }
+int wl_display_roundtrip(void *d) { (void)d; return 0; }
+int wl_display_flush(void *d) { (void)d; return 0; }
+int wl_display_prepare_read(void *d) { (void)d; return 0; }
+int wl_display_prepare_read_queue(void *d, void *q) { (void)d; (void)q; return 0; }
+void wl_display_cancel_read(void *d) { (void)d; }
+int wl_display_read_events(void *d) { (void)d; return 0; }
+void *wl_display_create_queue(void *d) { (void)d; return NULL; }
+void wl_event_queue_destroy(void *q) { (void)q; }
+int wl_proxy_add_listener(void *p, void (**l)(void), void *data) { (void)p; (void)l; (void)data; return 0; }
+void wl_proxy_destroy(void *p) { (void)p; }
+uint32_t wl_proxy_get_version(void *p) { (void)p; return 1; }
+void *wl_proxy_marshal_flags(void *p, uint32_t op, const void *i, uint32_t v, uint32_t f, ...) {
+    (void)p; (void)op; (void)i; (void)v; (void)f; return NULL;
+}
+"""
+        subprocess.run(
+            [
+                "gcc",
+                "-Wall",
+                "-Wextra",
+                "-shared",
+                "-fPIC",
+                "-Wl,-soname,libwayland-client.so.0",
+                "-o",
+                partial_so,
+                "-x",
+                "c",
+                "-",
+            ],
+            input=partial_src,
+            text=True,
+            check=True,
+        )
+
+        env = dict(os.environ)
+        env["LD_PRELOAD"] = f"{self.so_path}:{partial_so}"
+        env["LD_BIND_NOW"] = "1"
+
+        proc_c = subprocess.run(
+            [self.bin_path, "--missing-symbol"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(
+            proc_c.returncode,
+            0,
+            f"C missing symbol / NULL real_fn guard test failed (rc={proc_c.returncode}): {proc_c.stderr}",
+        )
+
+        py_script = """
+import ctypes
+
+wl = ctypes.CDLL("libwayland-client.so.0")
+assert wl.wl_display_connect is not None
+assert wl.wl_display_dispatch is not None
+
+for missing_sym in ("wl_display_dispatch_queue_timeout", "wl_display_dispatch_timeout"):
+    try:
+        getattr(wl, missing_sym)
+        raise AssertionError(f"Unexpectedly resolved missing wrapped symbol {missing_sym}")
+    except AttributeError:
+        pass
+"""
+        proc_py = subprocess.run(
+            ["python3", "-c", py_script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(
+            proc_py.returncode,
+            0,
+            f"Python missing wrapped symbol test failed: {proc_py.stderr}",
+        )
+
     def test_flatpak_platform_50_preload_loading(self):
         """Verifies loading wayland_conn_tagger inside Flatpak Platform 50 without playback."""
         flatpak_bin = shutil.which("flatpak")

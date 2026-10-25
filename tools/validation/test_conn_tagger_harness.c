@@ -33,6 +33,18 @@
  *    Tests concurrent first discovery of an untracked wl_display by multiple
  *    threads entering enter_conn_scope simultaneously, and verifies that
  *    disconnect cleanly unregisters the display.
+ * 5. --handle-semantics <alt_lib_path>:
+ *    Verifies dlopen/dlclose handle semantics:
+ *    - nonexistent path fails with NULL and sets dlerror();
+ *    - alternative libwayland-client.so.0 path returns its own handle, not
+ *      the shim or system library;
+ *    - system SONAME returns the substituted shim handle with balanced
+ *      dlopen/dlclose reference counting.
+ * 6. --missing-symbol:
+ *    When preloaded against a partial libwayland lacking
+ *    wl_display_dispatch_queue_timeout, verifies that dlsym on the substituted
+ *    handle returns NULL (with dlerror) and direct PLT invocation safely
+ *    returns -1 without calling a NULL real_fn.
  */
 
 static void sync_callback(void *data, struct wl_callback *cb, uint32_t serial) {
@@ -267,6 +279,110 @@ static int run_atomic_discovery_test(int num_threads) {
     return 0;
 }
 
+static int run_handle_semantics_test(const char *alt_lib_path) {
+    /* 1. Nonexistent path with libwayland-client.so.0 basename must fail */
+    dlerror();
+    void *bad_h = dlopen("/nonexistent/libwayland-client.so.0", RTLD_NOW);
+    const char *bad_err = dlerror();
+    if (bad_h != NULL || bad_err == NULL) {
+        fprintf(stderr, "Expected NULL handle and non-NULL dlerror for nonexistent path\n");
+        return 10;
+    }
+
+    /* 2. System SONAME must return the substituted tagger handle */
+    void *sub_h1 = dlopen("libwayland-client.so.0", RTLD_NOW);
+    void *sub_h2 = dlopen("libwayland-client.so.0", RTLD_LAZY);
+    if (!sub_h1 || !sub_h2 || sub_h1 != sub_h2) {
+        fprintf(stderr, "Expected identical non-NULL substituted handles\n");
+        return 11;
+    }
+    void *sub_connect = dlsym(sub_h1, "wl_display_connect");
+    Dl_info sub_info;
+    if (!sub_connect || !dladdr(sub_connect, &sub_info) || !sub_info.dli_fname ||
+        strstr(sub_info.dli_fname, "libwayland_conn_tag.so") == NULL) {
+        fprintf(stderr, "Expected wl_display_connect on substituted handle to come from tagger\n");
+        return 12;
+    }
+
+    /* 3. Alternative library path must NOT be replaced with tagger or system lib */
+    if (alt_lib_path && alt_lib_path[0] != '\0') {
+        void *alt_h = dlopen(alt_lib_path, RTLD_NOW | RTLD_LOCAL);
+        if (!alt_h || alt_h == sub_h1) {
+            fprintf(stderr, "Alternative library was missing or replaced by substituted handle\n");
+            return 13;
+        }
+        int (*alt_marker)(void) = (int (*)(void))dlsym(alt_h, "alt_wayland_marker");
+        void *alt_connect = dlsym(alt_h, "wl_display_connect");
+        Dl_info alt_info;
+        if (!alt_marker || alt_marker() != 777 || !alt_connect ||
+            alt_connect == sub_connect || !dladdr(alt_connect, &alt_info) ||
+            !alt_info.dli_fname || strcmp(alt_info.dli_fname, alt_lib_path) != 0) {
+            fprintf(stderr, "Alternative library symbols did not resolve from %s\n", alt_lib_path);
+            return 14;
+        }
+        if (dlclose(alt_h) != 0) {
+            fprintf(stderr, "dlclose on alternative handle failed\n");
+            return 15;
+        }
+    }
+
+    /* 4. Balanced dlclose on substituted handle + extra unbalanced dlclose protection */
+    if (dlclose(sub_h1) != 0) {
+        fprintf(stderr, "First balanced dlclose on substituted handle failed\n");
+        return 16;
+    }
+    if (dlclose(sub_h2) != 0) {
+        fprintf(stderr, "Second balanced dlclose on substituted handle failed\n");
+        return 17;
+    }
+    if (dlclose(sub_h1) == 0) {
+        fprintf(stderr, "Extra unbalanced dlclose on substituted handle unexpectedly returned 0\n");
+        return 18;
+    }
+    /* Tagger remains mapped and usable after balanced dlclose */
+    if (dlsym(sub_h1, "wl_display_connect") != sub_connect) {
+        fprintf(stderr, "Tagger handle unusable after dlclose\n");
+        return 19;
+    }
+    return 0;
+}
+
+static int run_missing_symbol_test(void) {
+    void *sub_h = dlopen("libwayland-client.so.0", RTLD_NOW);
+    if (!sub_h) {
+        fprintf(stderr, "dlopen(libwayland-client.so.0) failed\n");
+        return 20;
+    }
+    void *connect_fn = dlsym(sub_h, "wl_display_connect");
+    Dl_info info;
+    if (!connect_fn || !dladdr(connect_fn, &info) || !info.dli_fname ||
+        strstr(info.dli_fname, "libwayland_conn_tag.so") == NULL) {
+        fprintf(stderr, "wl_display_connect did not resolve to tagger\n");
+        return 21;
+    }
+
+    /* Optional wrapped symbol absent in loaded mock libwayland must return NULL via dlsym */
+    dlerror();
+    void *opt_fn = dlsym(sub_h, "wl_display_dispatch_queue_timeout");
+    const char *err = dlerror();
+    if (opt_fn != NULL || err == NULL) {
+        fprintf(stderr, "Expected NULL and dlerror for absent wrapped symbol wl_display_dispatch_queue_timeout\n");
+        return 22;
+    }
+
+    /* Direct PLT call to absent wrapped symbol must not call NULL real_fn */
+    int rc = wl_display_dispatch_queue_timeout(NULL, NULL, NULL);
+    if (rc != -1) {
+        fprintf(stderr, "Expected -1 from guarded wrapper when real_fn is NULL, got %d\n", rc);
+        return 23;
+    }
+
+    if (dlclose(sub_h) != 0) {
+        return 24;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "--multithreaded") == 0) {
         int iters = (argc >= 3) ? atoi(argv[2]) : 2000;
@@ -279,6 +395,13 @@ int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "--atomic-discovery") == 0) {
         int threads = (argc >= 3) ? atoi(argv[2]) : 16;
         return run_atomic_discovery_test(threads);
+    }
+    if (argc >= 2 && strcmp(argv[1], "--handle-semantics") == 0) {
+        const char *alt_path = (argc >= 3) ? argv[2] : "";
+        return run_handle_semantics_test(alt_path);
+    }
+    if (argc >= 2 && strcmp(argv[1], "--missing-symbol") == 0) {
+        return run_missing_symbol_test();
     }
     return run_interleaved_test();
 }
