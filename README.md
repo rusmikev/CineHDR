@@ -31,13 +31,16 @@ Play your videos with HDR support
 * Provided system integration launcher (**CineHDR**).
 
 **Known limitations / Известные ограничения:**
-* **Wayland Color Management Pipeline**: CineHDR prepares a true 16-bit `Rec.2100 PQ` surface and communicates target color states to GTK4. End-to-end native HDR output to the screen depends on the Wayland color-management protocol implementation in GTK and the compositor:
+* **Wayland Color Management Pipeline**: CineHDR prepares a true 16-bit `Rec.2100 PQ` surface and communicates target color states to GTK4. Preparing or publishing a PQ texture internally is client-side state and does NOT prove physical HDR presentation on the screen. End-to-end native HDR output requires:
+  1. Client-side texture publication (GDK float texture with `rec2100-pq` color state);
+  2. Protocol surface submission (L3p: `wp_color_management_surface_v1.set_image_description` + `wl_surface.commit` on the video surface);
+  3. Compositor presentation & physical display output (L4: visual verification on calibrated test patterns without clipping or unwanted tone-mapping).
   * **GTK 4 Color Management Configuration**: In GTK 4 (4.18–4.24.0), Wayland color management is experimental and requires `GDK_DEBUG=color-mgmt`. Without this flag, GTK disables `wp_color_manager_v1`, causing surfaces to be mapped to sRGB (falling back to high-quality SDR tone mapping via `mpv`):
     * **Flatpak (Default)**: In the installed Flatpak release (`cinehdr`), `GDK_DEBUG=color-mgmt` is enabled by default by the launcher before GTK initialization, preserving any other user-defined `GDK_DEBUG` flags. To opt out and disable automatic color management, set `CINEHDR_NO_COLOR_MGMT=1` (e.g., `flatpak run --env=CINEHDR_NO_COLOR_MGMT=1 io.github.rusmikev.CineHDR` or via `flatpak override --user --env=CINEHDR_NO_COLOR_MGMT=1 io.github.rusmikev.CineHDR`). Explicit `GDK_DEBUG=all:color-mgmt` is also respected as disabling color management.
     * **Native & Development Runs (`run_dev.py`)**: For local development runs, color management remains opt-in to avoid modifying system environment defaults: use `CINEHDR_EXPERIMENTAL_COLOR_MGMT=1`, `--experimental-color-mgmt`, or export `GDK_DEBUG=color-mgmt`.
   * **KDE Plasma (KWin)**: KWin advertises HDR capabilities (PQ, compound power 2.4) but intentionally does not advertise the `sRGB` transfer function (TF 9). GTK 4 strictly requires `sRGB` to establish its baseline color space. CineHDR models GTK's policy (`gtk_cm_policy`) and automatically detects this condition, falling back cleanly to `mpv`'s tone mapping to avoid washed-out colors.
-  * **GNOME (Mutter)**: Mutter supports client color management for `wp_color_manager_v1` including `sRGB`. Native HDR output requires both enabling experimental HDR in Mutter (`gsettings set org.gnome.mutter experimental-features "['experimental-hdr']"`, toggling HDR in GNOME Display Settings) and color management enabled in GTK (enabled by default in Flatpak).
-* **Verified GNOME scope**: Candidate v14 passed a bounded client-side SDR/HDR publication and Wayland composite-window submission test on GNOME Shell 50.5 for both render backends. This does not measure physical HDR output, direct scanout, or each frame presented by the compositor. Gate 2 and Dolby Vision validation remain open.
+  * **GNOME (Mutter)**: Mutter supports client color management for `wp_color_manager_v1` including `sRGB`. On GNOME ≥ 48, HDR is toggled directly per-monitor in **Settings → Displays** (no experimental flags needed); color management in GTK is enabled by default in the Flatpak build.
+* **Verified GNOME scope**: Candidate v14 passed a bounded client-side SDR/HDR publication and Wayland composite-window submission test on GNOME Shell 50.5 for both render backends. This does not measure physical HDR output, direct scanout, or each frame presented by the compositor. Preparing a PQ texture does not certify physical HDR presentation. Gate 2 and Dolby Vision validation remain open.
 * **libmpv Render Backend Selection (`render-backend`)**: CineHDR distinguishes its internal video rendering backend in `libmpv` from GTK's scene-graph renderer (`GSK_RENDERER`):
   * **Default**: `legacy` (`opengl` API) is the stable default backend.
   * **Experimental `gpu-next`**: Available via persistent preference in **Preferences → Video** and **HDR & Video Output** menu (`render-backend: gpu-next`). Changing this setting saves the choice for the next normal launch and requires an application restart; live renderer swapping in a running process is not supported. If `opengl-next` context creation fails at startup, CineHDR falls back safely to `legacy` while preserving the saved preference for subsequent runs.
@@ -47,6 +50,23 @@ Play your videos with HDR support
     * `CINEHDR_RENDER_BACKEND=legacy`: Explicit legacy OpenGL.
 * **GTK Renderer Selection (`GSK_RENDERER`)**: Configures GTK's scene-graph renderer independently of the `libmpv` video backend (`legacy`/`gpu-next`). When `GSK_RENDERER` is not explicitly set by the user, CineHDR's policy (`gtk_cm_policy.apply_gsk_renderer_policy`) selects `gl` on GTK ≥ 4.18 and `ngl` on earlier GTK versions (< 4.18); under the Niri compositor (`NIRI_SOCKET` detected), it also defaults to `gl`. Any explicit user `GSK_RENDERER` environment variable is preserved as-is.
 * Check **HDR Diagnostics** in the playback menu for the live pipeline state, active renderer backend, compositor capabilities, and specific fallback reasons.
+
+---
+
+### Verification & Platform Status / Статус проверки платформ
+
+Testing status is recorded strictly per evidence levels defined in [docs/TESTING.md](docs/TESTING.md) (L2 = basic UI/playback integrity, L3p = Wayland protocol surface description & commit proof, L4 = visual comparison on test patterns):
+
+| Environment / Окружение | Hardware & Stack | SDR Playback (L2) | mpv Reference (L3p) | HDR10 Protocol (L3p) | HDR10 Visual (L4) |
+|---|---|---|---|---|---|
+| **GNOME-AMD** | GNOME ≥ 48 / Mutter, AMD (Mesa) | **PASS** (2026-10-24, `a24fe81`) | **UNCLEAR** (2026-10-24, `6e0bbbe`) | `NOT_RUN` | `NOT_RUN` |
+| **GNOME-Intel** | GNOME ≥ 48 / Mutter, Intel (Mesa) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+| **GNOME-NVIDIA** | GNOME ≥ 48 / Mutter, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+| **KDE-AMD** | Plasma ≥ 6.3 / KWin, AMD (Mesa) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+| **KDE-NVIDIA** | Plasma ≥ 6.3 / KWin, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+
+> [!NOTE]
+> Detailed per-scenario matrices, logs, and evidence requirements (including HLG, WCG-SDR, and runtime exit checks) are maintained in [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
@@ -103,7 +123,7 @@ For general users, the easiest way to install **CineHDR** is using Flatpak:
 #### Option A: Pre-built Flatpak (Fastest) / Готовая сборка Flatpak
 1. Go to the [Actions](https://github.com/rusmikev/CineHDR/actions) tab of this repository.
 2. Click on the latest workflow run (e.g. "Implement HDR playback support...").
-3. Scroll down to the **Artifacts** section at the bottom and download `CineHDR-Flatpak-x86_64` (for standard PCs) or `CineHDR-Flatpak-aarch64` (for ARM devices).
+3. Scroll down to the **Artifacts** section at the bottom and download `CineHDR-Flatpak-x86_64` (scope 1.0 targets `x86_64`).
 4. Unzip the downloaded file to obtain `CineHDR.flatpak`.
 5. Install it by running the following command in your terminal:
    ```bash
