@@ -3791,6 +3791,40 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["status"], "PASS")
             self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
 
+    def test_trace_only_synthetic_subsurface_reparented_after_commit_rejected(self):
+        """Hermetic CLI test: subsurface active at HDR commit reparented to alien surface after commit still yields UNKNOWN."""
+        lines = []
+        for line in SYNTHETIC_MPV_HDR_TRACE.splitlines():
+            lines.append(line)
+            if "set_app_id" in line:
+                lines.append('[ 1042.0081] -> wl_compositor#1.create_surface(new id wl_surface#62)')
+                lines.append('[ 1042.0082] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#70, wl_surface#62, wl_surface#61)')
+                lines.append('[ 1042.0083] -> wl_surface#62.attach(wl_buffer#88, 0, 0)')
+        # Reparent child#62 to alien surface#80 after commit
+        lines.append('[ 1042.0300] -> wl_compositor#1.create_surface(new id wl_surface#80)')
+        lines.append('[ 1042.0301] -> wl_subcompositor#6.get_subsurface(new id wl_subsurface#71, wl_surface#62, wl_surface#80)')
+        trace_subsurface = "\n".join(lines)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_subsurface, encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = main([
+                    "--trace-only",
+                    "--trace", str(trace_path),
+                    "--app-id", "mpv",
+                    "--output", str(out_path),
+                ])
+            self.assertEqual(status, 1)
+            self.assertIn("active buffer detected on subsurface", stderr.getvalue())
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertEqual(data["scope"], TRACE_ONLY_UNKNOWN_SCOPE)
+            self.assertIn("active buffer detected on subsurface (wl_surface#62)", data["reason"])
+
     def test_trace_only_synthetic_reused_manager_id_same_registry_passes(self):
         """Hermetic CLI test: disjoint manager generations on the same registry succeed."""
         trace = """

@@ -853,6 +853,83 @@ def _find_toplevel_ancestor(
     return None, None
 
 
+def _surface_hierarchy_at_commit(
+    calls: list[TraceCall],
+    target_commit_index: int,
+) -> tuple[dict[int, str], dict[int, int]]:
+    """Determine toplevel surfaces (wl_surface -> app_id) and subsurface parentage
+
+    (child_wl_surface -> parent_wl_surface) as effective at target_commit_index.
+    """
+    xdg_surface_to_wl: dict[int, int] = {}
+    toplevel_to_xdg: dict[int, int] = {}
+    toplevel_surfaces: dict[int, str] = {}
+    subsurface_obj_to_child: dict[int, int] = {}
+    subsurfaces: dict[int, int] = {}
+
+    for call in calls:
+        if call.index > target_commit_index:
+            break
+
+        if call.interface == "xdg_wm_base" and call.method == "get_xdg_surface":
+            match = GET_XDG_SURFACE_RE.match(call.args)
+            if match is not None:
+                xdg_surface_to_wl[int(match["xdg_surface_id"])] = int(match["wl_surface_id"])
+        elif call.interface == "xdg_surface" and call.method == "get_toplevel":
+            match = GET_TOPLEVEL_RE.match(call.args)
+            if match is not None and call.object_id in xdg_surface_to_wl:
+                toplevel_to_xdg[int(match["toplevel_id"])] = xdg_surface_to_wl[call.object_id]
+        elif call.interface == "xdg_toplevel" and call.method == "set_app_id":
+            match = SET_APP_ID_RE.match(call.args)
+            if match is not None and call.object_id in toplevel_to_xdg:
+                wl_surf = toplevel_to_xdg[call.object_id]
+                toplevel_surfaces[wl_surf] = match["app_id"]
+        elif call.interface == "wl_subcompositor" and call.method == "get_subsurface":
+            match = GET_SUBSURFACE_RE.match(call.args)
+            if match is not None:
+                sub_id = int(match["subsurface_id"])
+                child = int(match["child_surface_id"])
+                parent = int(match["parent_surface_id"])
+                subsurfaces[child] = parent
+                subsurface_obj_to_child[sub_id] = child
+        elif call.interface == "wl_subsurface" and call.method == "destroy":
+            sub_id = call.object_id
+            child = subsurface_obj_to_child.pop(sub_id, None)
+            if child is not None:
+                subsurfaces.pop(child, None)
+        elif call.interface == "wl_surface" and call.method == "destroy":
+            surf_id = call.object_id
+            toplevel_surfaces.pop(surf_id, None)
+            subsurfaces.pop(surf_id, None)
+            for c, p in list(subsurfaces.items()):
+                if p == surf_id:
+                    del subsurfaces[c]
+        elif call.interface == "xdg_toplevel" and call.method == "destroy":
+            if call.object_id in toplevel_to_xdg:
+                wl_surf = toplevel_to_xdg.pop(call.object_id)
+                toplevel_surfaces.pop(wl_surf, None)
+        elif call.interface == "xdg_surface" and call.method == "destroy":
+            if call.object_id in xdg_surface_to_wl:
+                wl_surf = xdg_surface_to_wl.pop(call.object_id)
+                toplevel_surfaces.pop(wl_surf, None)
+        elif call.interface == "wl_display" and call.method == "delete_id":
+            try:
+                del_id = int(call.args.strip())
+                child = subsurface_obj_to_child.pop(del_id, None)
+                if child is not None:
+                    subsurfaces.pop(child, None)
+                if del_id in toplevel_to_xdg:
+                    wl_surf = toplevel_to_xdg.pop(del_id)
+                    toplevel_surfaces.pop(wl_surf, None)
+                if del_id in xdg_surface_to_wl:
+                    wl_surf = xdg_surface_to_wl.pop(del_id)
+                    toplevel_surfaces.pop(wl_surf, None)
+            except ValueError:
+                pass
+
+    return toplevel_surfaces, subsurfaces
+
+
 # wp_color_manager_v1.transfer_function named enum values
 # Source: /usr/share/wayland-protocols/staging/color-management/color-management-v1.xml:261-397
 # Package: wayland-protocols-devel-1.49-1.fc44.noarch (host system)
@@ -2689,18 +2766,14 @@ def create_failure_evidence(
     }
 
 
-def _effective_buffer_at_commit(
+def _buffer_state_at_commit(
     calls: list[TraceCall],
     target_surf: int,
     target_commit_index: int,
-) -> int | None:
-    """Determine the effective non-zero wl_buffer active at target_commit_index per Wayland double-buffering.
+) -> tuple[int | None, int | None, bool]:
+    """Determine effective current buffer and pending buffer state at target_commit_index.
 
-    wl_surface.attach updates the pending buffer state.
-    wl_surface.commit applies pending state to the current state.
-    If no attach occurred since the previous commit, the current buffer remains unchanged.
-    attach(nil, ...) or attach(0, ...) sets pending buffer to None, unmapping the surface upon commit.
-    Attaches occurring after target_commit_index have no effect on this commit.
+    Returns (effective_current_buffer, pending_buffer, pending_attached).
     """
     current_buffer: int | None = None
     pending_buffer: int | None = None
@@ -2729,9 +2802,25 @@ def _effective_buffer_at_commit(
                     pending_attached = False
                     pending_buffer = None
                 if call.index == target_commit_index:
-                    return current_buffer
+                    return current_buffer, pending_buffer, pending_attached
 
-    return current_buffer
+    return current_buffer, pending_buffer, pending_attached
+
+
+def _effective_buffer_at_commit(
+    calls: list[TraceCall],
+    target_surf: int,
+    target_commit_index: int,
+) -> int | None:
+    """Determine the effective non-zero wl_buffer active at target_commit_index per Wayland double-buffering.
+
+    wl_surface.attach updates the pending buffer state.
+    wl_surface.commit applies pending state to the current state.
+    If no attach occurred since the previous commit, the current buffer remains unchanged.
+    attach(nil, ...) or attach(0, ...) sets pending buffer to None, unmapping the surface upon commit.
+    Attaches occurring after target_commit_index have no effect on this commit.
+    """
+    return _buffer_state_at_commit(calls, target_surf, target_commit_index)[0]
 
 
 def create_trace_only_report(
@@ -2770,12 +2859,13 @@ def create_trace_only_report(
     # PASS requires a verified non-zero wl_buffer active at the chosen HDR commit_index
     # per Wayland double-buffered surface state, and absence of subsurface offload ambiguity.
     calls = _calls(trace_text)
-    toplevel_surfaces, subsurfaces, surface_attaches, _ = _surface_roles_and_attaches(calls)
     matched_surface = evidence.get("matched", {}).get("surface", {})
     target_surf = matched_surface.get("wl_surface_id")
     target_commit_index = matched_surface.get("commit_index")
     if target_surf is None or target_commit_index is None:
         raise TraceValidationError("target window surface could not be identified from trace evidence")
+
+    toplevel_surfaces, subsurfaces = _surface_hierarchy_at_commit(calls, target_commit_index)
 
     effective_buffer = _effective_buffer_at_commit(calls, target_surf, target_commit_index)
     if effective_buffer is None:
@@ -2805,6 +2895,7 @@ def create_trace_only_report(
                 f"at HDR commit (index {target_commit_index}); buffer was detached or set to null prior to commit"
             )
 
+        _, _, surface_attaches, _ = _surface_roles_and_attaches(calls)
         other_attaches = {
             s: [b for b in bufs if b != 0]
             for s, bufs in surface_attaches.items()
@@ -2820,7 +2911,7 @@ def create_trace_only_report(
             f"no non-zero wl_surface.attach observed on target window surface (wl_surface#{target_surf})"
         )
 
-    # Check for subsurfaces belonging to target window
+    # Check for subsurfaces belonging to target window at target_commit_index
     app_subsurfaces = [
         child for child in subsurfaces
         if _find_toplevel_ancestor(child, subsurfaces, toplevel_surfaces)[0] == target_surf
@@ -2839,18 +2930,10 @@ def create_trace_only_report(
 
     active_subsurfaces = []
     for child in app_subsurfaces:
-        child_buf = _effective_buffer_at_commit(calls, child, target_commit_index)
-        has_pending_attach = any(
-            c.interface == "wl_surface"
-            and c.object_id == child
-            and c.method == "attach"
-            and c.index <= target_commit_index
-            and (m := ATTACH_RE.match(c.args)) is not None
-            and m["buffer_id"] is not None
-            and int(m["buffer_id"]) != 0
-            for c in calls
+        child_current, child_pending, child_pending_attached = _buffer_state_at_commit(
+            calls, child, target_commit_index
         )
-        if child_buf is not None or has_pending_attach:
+        if child_current is not None or (child_pending_attached and child_pending is not None):
             active_subsurfaces.append(child)
 
     if active_subsurfaces:
