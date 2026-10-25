@@ -23,7 +23,7 @@
 |---|---|---|---|---|---|---|
 | SDR play (управление, seek, выход) | L2/L3 | PASS 2026-10-24 a24fe81 (L2) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Эталон mpv подтверждён по выходному пути (API/контекст + L3p его поверхности) | L3/L3p | PASS 2026-10-25 4fe5462 (RADV/waylandvk HDR10; parser 04c1252; L3p trace ac297a0, conn#4 fd#11, surface#5, effective_buffer#65) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
-| HDR10 `auto` — протокольная трасса | L3p | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| HDR10 `auto` — протокольная трасса | L3p | UNCLEAR 2026-10-25 e6351c7 (Flatpak Platform 50; trace 9feb993, 152 untracked lines during GTK read_events/ctypes probe; L3p unproven) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HDR10 `auto` — визуальная приёмка на паттерне | L4 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HLG `auto` — протокольная трасса | L3p | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HLG `auto` — визуальная приёмка на паттерне | L4 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |

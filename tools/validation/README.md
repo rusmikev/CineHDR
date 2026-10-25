@@ -176,12 +176,17 @@
          - Жизненный цикл соединений: `wl_display_connect_to_fd`, `wl_display_connect`, `wl_display_disconnect` (регистрация указателя `display`, назначение уникального `conn_id` и сохранение сокета `fd`);
          - Маршаллинг запросов клиента: `wl_proxy_marshal_array_flags` (охватывает все макросы и вызовы `wl_proxy_marshal*` в `libwayland-client`);
          - Диспетчеризацию входящих событий: все 10 публичных функций диспетчеризации (`wl_display_dispatch`, `wl_display_dispatch_queue`, `wl_display_dispatch_queue_pending`, `wl_display_dispatch_queue_pending_single`, `wl_display_dispatch_pending`, `wl_display_dispatch_pending_single`, `wl_display_dispatch_queue_timeout`, `wl_display_dispatch_timeout`, `wl_display_roundtrip`, `wl_display_roundtrip_queue`);
+         - Чтение событий и цикл дисплея: `wl_display_read_events`, `wl_display_prepare_read`, `wl_display_prepare_read_queue`, `wl_display_cancel_read`, `wl_display_flush` (используемые poll source GTK `gdkeventsource` и читателями очередей);
+         - Динамическое разрешение символов (`dlsym`): маршрутизация вызовов `dlsym` на функции-обёртки для потребителей, загружающих `libwayland-client.so.0` через `dlopen` (включая Python `ctypes.CDLL` в фоновых probe-потоках CineHDR), с защитой от рекурсии при `RTLD_NEXT`;
+         - Авторегистрация соединений: безопасное определение `fd` через `wl_display_get_fd` при первом обращении к функциям дисплея;
          - Форматированный вывод `stderr`: `__fprintf_chk` (используемый внутренней функцией `wl_closure_print`), `__vfprintf_chk`, `fprintf`, `vfprintf`, `fputs`;
          - Атомарность вывода и защита от гонок: вывод префикса `[conn#<id> fd#<fd>]` и тела сообщения объединяются в критическую секцию с `flockfile(stream)` / `funlockfile(stream)` (рекурсивный мьютекс потока), исключая разделение префикса и сообщения при параллельных вызовах из разных потоков;
          - Защита контекста потока: контекст соединения сохраняется в thread-local переменных `current_conn_id` и `current_conn_fd` с использованием RAII-подобного сохранения/восстановления стека контекстов (`enter_conn_scope` / `leave_conn_scope`) и guard-флага от рекурсии. Сообщения протокола вне активного контекста маркируются как `[conn#untracked fd#?]`, исключая присвоение чужого `conn_id`;
        - **Автономный тест (`tools/validation/test_conn_tagger_harness.c`, `test_wayland_conn_tagger.py`)**:
          - Через `socketpair` и `wl_display_connect_to_fd` запускаются два клиента в одном процессе;
          - Исходящие запросы (`get_registry`, `sync`) и входящие события (`callback.done`) перемежаются;
+         - Проверка GTK-цикла (`--read-events`): `prepare_read` → `read_events` → `dispatch_pending` подтверждает корректную маркировку событий без untracked;
+         - Проверка динамической загрузки `ctypes.CDLL`: тест подтверждает маршрутизацию вызовов Python ctypes через обёртки шима;
          - Многопоточный стресс-тест запускает 2 параллельных потока по 2000 вызовов `wl_display_get_registry` и подтверждает 4000 атомарных строк, 0 двойных меток, 0 строк без меток и ровно по 2000 строк на каждое соединение;
          - Положительный контроль подтверждает наличие меток `[conn#1 fd#...]` и `[conn#2 fd#...]` на всех сообщениях;
          - Отрицательный контроль подтверждает отсутствие меток при запуске без `LD_PRELOAD`;

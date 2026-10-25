@@ -30,7 +30,12 @@
  *    to establish connection context during request formatting.
  * 3. All public event dispatch entry points (wl_display_dispatch*, wl_display_roundtrip*)
  *    to establish connection context during incoming event dispatching across queues and threads.
- * 4. Stderr formatting routines (__fprintf_chk, vfprintf, fprintf, fputs) called by
+ * 4. Event reading and loop synchronization entry points (wl_display_read_events,
+ *    wl_display_prepare_read*, wl_display_cancel_read, wl_display_flush) used by GTK's
+ *    poll source (gdkeventsource) and multi-threaded event readers.
+ * 5. Dynamic symbol resolution (dlsym) to route dlopen/ctypes consumers (e.g. CineHDR's
+ *    Python ctypes background probes) directly to wrapped functions.
+ * 6. Stderr formatting routines (__fprintf_chk, vfprintf, fprintf, fputs) called by
  *    libwayland's internal wl_closure_print to prefix each message with:
  *    [conn#<id> fd#<fd>]
  *
@@ -108,7 +113,26 @@ static struct conn_info *find_conn(struct wl_display *display) {
 
 static inline struct conn_scope enter_conn_scope(struct wl_display *display) {
     struct conn_scope scope = { current_conn_id, current_conn_fd };
+    if (!display) {
+        current_conn_id = -1;
+        current_conn_fd = -1;
+        return scope;
+    }
     struct conn_info *ci = find_conn(display);
+    if (!ci) {
+        /* Auto-register display if created before tagger or via non-intercepted path */
+        static int (*real_get_fd)(struct wl_display *) = NULL;
+        if (!real_get_fd) {
+            real_get_fd = (int (*)(struct wl_display *))dlsym(RTLD_NEXT, "wl_display_get_fd");
+        }
+        if (real_get_fd) {
+            int fd = real_get_fd(display);
+            if (fd >= 0) {
+                register_display(display, fd);
+                ci = find_conn(display);
+            }
+        }
+    }
     if (ci) {
         current_conn_id = ci->conn_id;
         current_conn_fd = ci->fd;
@@ -268,6 +292,108 @@ int wl_display_roundtrip(struct wl_display *display) {
     int ret = real_fn(display);
     leave_conn_scope(scope);
     return ret;
+}
+
+/* =========================================================================
+ * Event Reading & Display Loop Interception
+ * Covers GTK event loops (gdkeventsource), explicit polling, and socket reading.
+ * ========================================================================= */
+
+int wl_display_flush(struct wl_display *display) {
+    static int (*real_fn)(struct wl_display *) = NULL;
+    if (!real_fn) real_fn = (int (*)(struct wl_display *))dlsym(RTLD_NEXT, "wl_display_flush");
+    struct conn_scope scope = enter_conn_scope(display);
+    int ret = real_fn ? real_fn(display) : -1;
+    leave_conn_scope(scope);
+    return ret;
+}
+
+int wl_display_prepare_read(struct wl_display *display) {
+    static int (*real_fn)(struct wl_display *) = NULL;
+    if (!real_fn) real_fn = (int (*)(struct wl_display *))dlsym(RTLD_NEXT, "wl_display_prepare_read");
+    struct conn_scope scope = enter_conn_scope(display);
+    int ret = real_fn ? real_fn(display) : -1;
+    leave_conn_scope(scope);
+    return ret;
+}
+
+int wl_display_prepare_read_queue(struct wl_display *display, struct wl_event_queue *queue) {
+    static int (*real_fn)(struct wl_display *, struct wl_event_queue *) = NULL;
+    if (!real_fn) real_fn = (int (*)(struct wl_display *, struct wl_event_queue *))dlsym(RTLD_NEXT, "wl_display_prepare_read_queue");
+    struct conn_scope scope = enter_conn_scope(display);
+    int ret = real_fn ? real_fn(display, queue) : -1;
+    leave_conn_scope(scope);
+    return ret;
+}
+
+void wl_display_cancel_read(struct wl_display *display) {
+    static void (*real_fn)(struct wl_display *) = NULL;
+    if (!real_fn) real_fn = (void (*)(struct wl_display *))dlsym(RTLD_NEXT, "wl_display_cancel_read");
+    struct conn_scope scope = enter_conn_scope(display);
+    if (real_fn) real_fn(display);
+    leave_conn_scope(scope);
+}
+
+int wl_display_read_events(struct wl_display *display) {
+    static int (*real_fn)(struct wl_display *) = NULL;
+    if (!real_fn) real_fn = (int (*)(struct wl_display *))dlsym(RTLD_NEXT, "wl_display_read_events");
+    struct conn_scope scope = enter_conn_scope(display);
+    int ret = real_fn ? real_fn(display) : -1;
+    leave_conn_scope(scope);
+    return ret;
+}
+
+/* =========================================================================
+ * Dynamic Symbol Resolution Interception (dlsym)
+ * Ensures that callers loading libwayland-client via dlopen (e.g. Python ctypes)
+ * obtain pointers to our wrapped functions instead of bypassing LD_PRELOAD.
+ * ========================================================================= */
+
+static void *(*real_dlsym)(void *, const char *) = NULL;
+
+static void init_real_dlsym(void) {
+    if (!real_dlsym) {
+        real_dlsym = (void *(*)(void *, const char *))dlvsym(RTLD_NEXT, "dlsym", "GLIBC_2.2.5");
+        if (!real_dlsym) {
+            real_dlsym = (void *(*)(void *, const char *))dlvsym(RTLD_NEXT, "dlsym", "GLIBC_2.34");
+        }
+    }
+}
+
+__attribute__((constructor))
+static void conn_tagger_init(void) {
+    init_real_dlsym();
+}
+
+void *dlsym(void *handle, const char *symbol) {
+    if (!real_dlsym) init_real_dlsym();
+
+    /* Direct delegation when resolving real symbols inside tagger wrappers */
+    if (handle == RTLD_NEXT) {
+        return real_dlsym(handle, symbol);
+    }
+
+    if (strcmp(symbol, "wl_display_connect") == 0) return (void *)wl_display_connect;
+    if (strcmp(symbol, "wl_display_connect_to_fd") == 0) return (void *)wl_display_connect_to_fd;
+    if (strcmp(symbol, "wl_display_disconnect") == 0) return (void *)wl_display_disconnect;
+    if (strcmp(symbol, "wl_proxy_marshal_array_flags") == 0) return (void *)wl_proxy_marshal_array_flags;
+    if (strcmp(symbol, "wl_display_dispatch_queue") == 0) return (void *)wl_display_dispatch_queue;
+    if (strcmp(symbol, "wl_display_dispatch") == 0) return (void *)wl_display_dispatch;
+    if (strcmp(symbol, "wl_display_dispatch_queue_pending") == 0) return (void *)wl_display_dispatch_queue_pending;
+    if (strcmp(symbol, "wl_display_dispatch_pending") == 0) return (void *)wl_display_dispatch_pending;
+    if (strcmp(symbol, "wl_display_dispatch_queue_pending_single") == 0) return (void *)wl_display_dispatch_queue_pending_single;
+    if (strcmp(symbol, "wl_display_dispatch_pending_single") == 0) return (void *)wl_display_dispatch_pending_single;
+    if (strcmp(symbol, "wl_display_dispatch_queue_timeout") == 0) return (void *)wl_display_dispatch_queue_timeout;
+    if (strcmp(symbol, "wl_display_dispatch_timeout") == 0) return (void *)wl_display_dispatch_timeout;
+    if (strcmp(symbol, "wl_display_roundtrip_queue") == 0) return (void *)wl_display_roundtrip_queue;
+    if (strcmp(symbol, "wl_display_roundtrip") == 0) return (void *)wl_display_roundtrip;
+    if (strcmp(symbol, "wl_display_flush") == 0) return (void *)wl_display_flush;
+    if (strcmp(symbol, "wl_display_prepare_read") == 0) return (void *)wl_display_prepare_read;
+    if (strcmp(symbol, "wl_display_prepare_read_queue") == 0) return (void *)wl_display_prepare_read_queue;
+    if (strcmp(symbol, "wl_display_cancel_read") == 0) return (void *)wl_display_cancel_read;
+    if (strcmp(symbol, "wl_display_read_events") == 0) return (void *)wl_display_read_events;
+
+    return real_dlsym(handle, symbol);
 }
 
 /* =========================================================================

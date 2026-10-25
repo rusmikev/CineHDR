@@ -136,11 +136,84 @@ static int run_interleaved_test(void) {
     return 0;
 }
 
+static int run_read_events_test(void) {
+    int sv1[2], sv2[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv1) < 0) {
+        perror("socketpair 1");
+        return 1;
+    }
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv2) < 0) {
+        perror("socketpair 2");
+        return 1;
+    }
+
+    struct wl_display *d1 = wl_display_connect_to_fd(sv1[0]);
+    struct wl_display *d2 = wl_display_connect_to_fd(sv2[0]);
+    if (!d1 || !d2) {
+        fprintf(stderr, "Failed to connect displays\n");
+        return 2;
+    }
+
+    /* Allocate wl_registry#2 on both connections */
+    struct wl_registry *r1 = wl_display_get_registry(d1);
+    struct wl_registry *r2 = wl_display_get_registry(d2);
+    (void)r1; (void)r2;
+
+    /* Allocate wl_callback#3 on both connections */
+    struct wl_callback *cb1 = wl_display_sync(d1);
+    struct wl_callback *cb2 = wl_display_sync(d2);
+    wl_callback_add_listener(cb1, &cb_listener, NULL);
+    wl_callback_add_listener(cb2, &cb_listener, NULL);
+
+    wl_display_flush(d1);
+    wl_display_flush(d2);
+
+    /* Consume requests on mock server side */
+    char buf[256];
+    if (read(sv1[1], buf, sizeof(buf)) < 0) {}
+    if (read(sv2[1], buf, sizeof(buf)) < 0) {}
+
+    /* Server sends events back on both connections */
+    uint32_t ev1[3] = { 3, (12 << 16) | 0, 101 };
+    uint32_t ev2[3] = { 3, (12 << 16) | 0, 202 };
+    if (write(sv1[1], ev1, sizeof(ev1)) < 0) {}
+    if (write(sv2[1], ev2, sizeof(ev2)) < 0) {}
+
+    /* Verify GTK-style read_events loop on connection 1 */
+    if (wl_display_prepare_read(d1) != 0) return 3;
+    if (wl_display_read_events(d1) != 0) return 4;
+    wl_display_dispatch_pending(d1);
+
+    /* Verify GTK-style read_events loop on connection 2 */
+    if (wl_display_prepare_read(d2) != 0) return 5;
+    if (wl_display_read_events(d2) != 0) return 6;
+    wl_display_dispatch_pending(d2);
+
+    /* Verify cancel_read and prepare_read_queue */
+    struct wl_event_queue *q = wl_display_create_queue(d1);
+    if (wl_display_prepare_read_queue(d1, q) == 0) {
+        wl_display_cancel_read(d1);
+    }
+    wl_event_queue_destroy(q);
+
+    wl_callback_destroy(cb1);
+    wl_callback_destroy(cb2);
+    wl_display_disconnect(d1);
+    wl_display_disconnect(d2);
+    close(sv1[1]);
+    close(sv2[1]);
+
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "--multithreaded") == 0) {
         int iters = (argc >= 3) ? atoi(argv[2]) : 2000;
         if (iters <= 0) iters = 2000;
         return run_multithreaded_test(iters);
+    }
+    if (argc >= 2 && strcmp(argv[1], "--read-events") == 0) {
+        return run_read_events_test();
     }
     return run_interleaved_test();
 }
