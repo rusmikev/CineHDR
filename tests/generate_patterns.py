@@ -59,6 +59,33 @@ L4_HDR10_DURATION_SECONDS = 60
 L4_HDR10_FRAME_COUNT = L4_HDR10_FPS * L4_HDR10_DURATION_SECONDS
 L4_HDR10_NITS_STEPS: tuple[int, ...] = (100, 203, 400, 600, 800, 1000)
 
+L4_HLG_MODE = "l4-hlg"
+L4_HLG_SCHEMA = "cinehdr.l4.hlg.pattern.v1"
+L4_HLG_GENERATOR_REVISION = "ffv1-l4-hlg-bt2020-60s-v1"
+L4_HLG_WIDTH = 1920
+L4_HLG_HEIGHT = 1080
+L4_HLG_FPS = 24
+L4_HLG_DURATION_SECONDS = 60
+L4_HLG_FRAME_COUNT = L4_HLG_FPS * L4_HLG_DURATION_SECONDS
+L4_HLG_LEVEL_STEPS: tuple[float, ...] = (0.05, 0.18, 0.50, 0.75, 0.88, 1.0)
+L4_HLG_VISUAL_ORACLE = {
+    "oracle_id": "hlg-relative-scene-light-contrast-v1",
+    "description": (
+        "Human observer verification on an HDR-capable display under identical window/fullscreen "
+        "conditions: (1) all 6 relative scene-light columns (5%, 18%, 50%, 75%, 88%, 100%) "
+        "must be distinguishable; (2) upper highlight gradations (75% reference white, 88% highlight, "
+        "100% peak) must show clear separation without highlight clipping into a single solid block; "
+        "(3) column 4 (75%) must match the bottom reference strip while columns 5 and 6 must be "
+        "distinctly brighter than the strip; (4) relative contrast and gradation steps must be "
+        "comparable when compared against reference mpv on the same physical display."
+    ),
+    "transfer": "arib-std-b67",
+    "color_primaries": "bt2020",
+    "reference_white_level": 0.75,
+    "reference_white_10bit": 969,
+    "upper_gradations_distinguishable": True,
+}
+
 _BITMAP_FONT_5X7: dict[str, tuple[str, ...]] = {
     "0": (
         "01110",
@@ -105,6 +132,15 @@ _BITMAP_FONT_5X7: dict[str, tuple[str, ...]] = {
         "00010",
         "00010",
     ),
+    "5": (
+        "11111",
+        "10000",
+        "11110",
+        "00001",
+        "00001",
+        "10001",
+        "01110",
+    ),
     "6": (
         "00110",
         "01000",
@@ -114,6 +150,15 @@ _BITMAP_FONT_5X7: dict[str, tuple[str, ...]] = {
         "10001",
         "01110",
     ),
+    "7": (
+        "11111",
+        "00001",
+        "00010",
+        "00100",
+        "01000",
+        "01000",
+        "01000",
+    ),
     "8": (
         "01110",
         "10001",
@@ -122,6 +167,51 @@ _BITMAP_FONT_5X7: dict[str, tuple[str, ...]] = {
         "10001",
         "10001",
         "01110",
+    ),
+    "9": (
+        "01110",
+        "10001",
+        "10001",
+        "01111",
+        "00001",
+        "00010",
+        "01100",
+    ),
+    "%": (
+        "11001",
+        "11010",
+        "00100",
+        "01000",
+        "01011",
+        "10011",
+        "00000",
+    ),
+    "G": (
+        "01110",
+        "10001",
+        "10000",
+        "10111",
+        "10001",
+        "10001",
+        "01110",
+    ),
+    "H": (
+        "10001",
+        "10001",
+        "10001",
+        "11111",
+        "10001",
+        "10001",
+        "10001",
+    ),
+    "L": (
+        "10000",
+        "10000",
+        "10000",
+        "10000",
+        "10000",
+        "10000",
+        "11111",
     ),
     "I": (
         "01110",
@@ -1412,6 +1502,255 @@ def ensure_l4_hdr10_pattern(
     return {**metadata, "path": str(media), "metadata_path": str(metadata_path)}
 
 
+def l4_hlg_code_10bit(scene_level: float) -> int:
+    """Return the 10-bit HLG code value [0..1023] for relative scene-light E."""
+
+    return min(max(int(round(linear_to_hlg(scene_level) * 1023)), 0), 1023)
+
+
+def l4_hlg_patches(
+    width: int = L4_HLG_WIDTH, height: int = L4_HLG_HEIGHT
+) -> list[dict[str, Any]]:
+    """Return metadata for the 6 relative scene-light HLG columns (5%/18%/50%/75%/88%/100%)."""
+
+    col_width = width // len(L4_HLG_LEVEL_STEPS)
+    margin_x = max(col_width // 40, 2)
+    patch_y0 = int(height * 0.18)
+    patch_y1 = int(height * 0.82)
+    ref_y0 = int(height * 0.85)
+    ref_y1 = int(height * 0.94)
+    center_y = (patch_y0 + patch_y1) // 2
+
+    entries: list[dict[str, Any]] = []
+    for col, level in enumerate(L4_HLG_LEVEL_STEPS):
+        x0 = col * col_width + margin_x
+        x1 = (col + 1) * col_width - margin_x
+        center_x = (x0 + x1) // 2
+        code_10bit = l4_hlg_code_10bit(level)
+        pct = int(round(level * 100))
+        entries.append({
+            "name": f"hlg_{pct}",
+            "label": f"{pct}% HLG",
+            "column": col,
+            "scene_level": level,
+            "expected_hlg_signal_float": round(linear_to_hlg(level), 6),
+            "expected_rgb_10bit": [code_10bit, code_10bit, code_10bit],
+            "bounds": {"x0": x0, "y0": patch_y0, "x1": x1, "y1": patch_y1},
+            "reference_75_strip_bounds": {"x0": x0, "y0": ref_y0, "x1": x1, "y1": ref_y1},
+            "sample_center": {"x": center_x, "y": center_y},
+        })
+    return entries
+
+
+def l4_hlg_raw_frame(
+    width: int = L4_HLG_WIDTH, height: int = L4_HLG_HEIGHT
+) -> bytes:
+    """Build one 10-bit planar GBR frame with 6 relative scene-light HLG columns."""
+
+    plane_bytes = width * height * 2
+    planes = [bytearray(plane_bytes) for _ in range(3)]
+    patches = l4_hlg_patches(width=width, height=height)
+    ref_75_code = l4_hlg_code_10bit(0.75)
+    ref_75_pixel = ref_75_code.to_bytes(2, "little")
+    scale = max(min(width // 320, height // 180), 1)
+    label_top_y = max(int(height * 0.05), 4)
+
+    for patch in patches:
+        b = patch["bounds"]
+        x0, y0, x1, y1 = b["x0"], b["y0"], b["x1"], b["y1"]
+        code_10bit = patch["expected_rgb_10bit"][0]
+        patch_run = code_10bit.to_bytes(2, "little") * (x1 - x0)
+        for y in range(y0, y1):
+            offset = (y * width + x0) * 2
+            end = offset + len(patch_run)
+            for plane in planes:
+                plane[offset:end] = patch_run
+
+        rb = patch["reference_75_strip_bounds"]
+        rx0, ry0, rx1, ry1 = rb["x0"], rb["y0"], rb["x1"], rb["y1"]
+        ref_run = ref_75_pixel * (rx1 - rx0)
+        for y in range(ry0, ry1):
+            offset = (y * width + rx0) * 2
+            end = offset + len(ref_run)
+            for plane in planes:
+                plane[offset:end] = ref_run
+
+        _draw_bitmap_label_gbrp10le(
+            planes,
+            width,
+            height,
+            patch["label"],
+            patch["sample_center"]["x"],
+            label_top_y,
+            scale,
+            ref_75_code,
+        )
+
+    return b"".join(planes)
+
+
+def l4_hlg_media_path(cache_dir: Path) -> Path:
+    return cache_dir / "cinehdr-l4-hlg-bt2020-60s.mkv"
+
+
+def l4_hlg_metadata_path(cache_dir: Path) -> Path:
+    return cache_dir / "cinehdr-l4-hlg-bt2020-60s.json"
+
+
+def _l4_hlg_encode_and_decode_frame0(
+    ffmpeg: str, cache_dir: Path, media: Path
+) -> bytes:
+    frame_bytes = l4_hlg_raw_frame(L4_HLG_WIDTH, L4_HLG_HEIGHT)
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix="cinehdr-l4-hlg-", suffix=".raw", dir=cache_dir, delete=False
+    ) as raw_file:
+        raw_path = Path(raw_file.name)
+        raw_file.write(frame_bytes)
+
+    decoded_check_path = cache_dir / "cinehdr-l4-hlg-decoded-frame0.raw"
+    try:
+        encode_cmd = [
+            ffmpeg, "-y", "-v", "error",
+            "-stream_loop", "-1",
+            "-f", "rawvideo", "-pixel_format", "gbrp10le",
+            "-video_size", f"{L4_HLG_WIDTH}x{L4_HLG_HEIGHT}",
+            "-framerate", str(L4_HLG_FPS),
+            "-i", str(raw_path),
+            "-frames:v", str(L4_HLG_FRAME_COUNT),
+            "-vf", "setparams=range=full:colorspace=gbr:color_primaries=bt2020:color_trc=arib-std-b67",
+            "-c:v", "ffv1", "-level", "3", "-pix_fmt", "gbrp10le",
+            "-flags:v", "+bitexact", "-threads", "1", "-map_metadata", "-1",
+            "-fflags", "+bitexact",
+            "-color_range", "pc", "-colorspace", "rgb",
+            "-color_primaries", "bt2020", "-color_trc", "arib-std-b67",
+            str(media),
+        ]
+        _run_checked(encode_cmd)
+
+        decode_cmd = [
+            ffmpeg, "-y", "-v", "error",
+            "-i", str(media),
+            "-frames:v", "1",
+            "-pix_fmt", "gbrp10le",
+            "-f", "rawvideo",
+            str(decoded_check_path),
+        ]
+        _run_checked(decode_cmd)
+        decoded_frame = decoded_check_path.read_bytes()
+    finally:
+        raw_path.unlink(missing_ok=True)
+        decoded_check_path.unlink(missing_ok=True)
+
+    expected_frame_size = L4_HLG_WIDTH * L4_HLG_HEIGHT * 3 * 2
+    if len(decoded_frame) != expected_frame_size:
+        raise FixtureError(
+            f"decoded L4 HLG frame size {len(decoded_frame)} != expected {expected_frame_size}"
+        )
+    return decoded_frame
+
+
+def _l4_hlg_verify_decoded_patches(
+    decoded_frame: bytes, patches: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    decoded_samples: list[dict[str, Any]] = []
+    for patch in patches:
+        cx = patch["sample_center"]["x"]
+        cy = patch["sample_center"]["y"]
+        actual_rgb = list(
+            sample_gbrp10le_frame(decoded_frame, L4_HLG_WIDTH, L4_HLG_HEIGHT, cx, cy)
+        )
+        if actual_rgb != patch["expected_rgb_10bit"]:
+            raise FixtureError(
+                f"decoded L4 HLG patch {patch['name']} at ({cx}, {cy}) = {actual_rgb}, "
+                f"expected {patch['expected_rgb_10bit']}"
+            )
+        decoded_samples.append({
+            "name": patch["name"],
+            "label": patch["label"],
+            "scene_level": patch["scene_level"],
+            "sample_center": patch["sample_center"],
+            "expected_rgb_10bit": patch["expected_rgb_10bit"],
+            "decoded_rgb_10bit": actual_rgb,
+        })
+    return decoded_samples
+
+
+def _l4_hlg_probe_and_validate_stream(
+    ffprobe: str, media: Path
+) -> tuple[dict[str, Any], float]:
+    probe_completed = _run_checked([
+        ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames",
+        "-show_entries", (
+            "stream=codec_name,width,height,pix_fmt,color_range,color_space,"
+            "color_transfer,color_primaries,r_frame_rate,nb_read_frames:format=duration"
+        ),
+        "-of", "json", str(media),
+    ])
+    probe_payload = json.loads(probe_completed.stdout)
+    stream = probe_payload["streams"][0]
+    format_duration = float(probe_payload.get("format", {}).get("duration", 0.0))
+
+    expected_stream = {
+        "codec_name": "ffv1",
+        "width": L4_HLG_WIDTH,
+        "height": L4_HLG_HEIGHT,
+        "pix_fmt": "gbrp10le",
+        "color_range": "pc",
+        "color_space": "gbr",
+        "color_transfer": "arib-std-b67",
+        "color_primaries": "bt2020",
+        "r_frame_rate": f"{L4_HLG_FPS}/1",
+        "nb_read_frames": str(L4_HLG_FRAME_COUNT),
+    }
+    for key, exp_val in expected_stream.items():
+        if stream.get(key) != exp_val:
+            raise FixtureError(f"L4 HLG stream field {key}={stream.get(key)!r}, expected {exp_val!r}")
+    if abs(format_duration - float(L4_HLG_DURATION_SECONDS)) > 0.05:
+        raise FixtureError(f"L4 HLG duration {format_duration}s != expected {L4_HLG_DURATION_SECONDS}s")
+    return stream, format_duration
+
+
+def ensure_l4_hlg_pattern(
+    cache_dir: Path,
+    *,
+    ffmpeg: str = "ffmpeg",
+    ffprobe: str = "ffprobe",
+) -> dict[str, Any]:
+    """Generate and verify a 60s 1920x1080 HLG ARIB STD-B67/BT.2020 L4 visual pattern outside Git."""
+
+    if shutil.which(ffmpeg) is None or shutil.which(ffprobe) is None:
+        raise FixtureError("ffmpeg and ffprobe are required to create the L4 HLG pattern")
+    cache_dir = cache_dir.expanduser().resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    media = l4_hlg_media_path(cache_dir)
+    metadata_path = l4_hlg_metadata_path(cache_dir)
+    patches = l4_hlg_patches()
+
+    decoded_frame = _l4_hlg_encode_and_decode_frame0(ffmpeg, cache_dir, media)
+    decoded_samples = _l4_hlg_verify_decoded_patches(decoded_frame, patches)
+    stream, format_duration = _l4_hlg_probe_and_validate_stream(ffprobe, media)
+
+    metadata = {
+        "schema": L4_HLG_SCHEMA,
+        "generator_revision": L4_HLG_GENERATOR_REVISION,
+        "mode": L4_HLG_MODE,
+        "dimensions": {"width": L4_HLG_WIDTH, "height": L4_HLG_HEIGHT},
+        "fps": L4_HLG_FPS,
+        "duration_seconds": L4_HLG_DURATION_SECONDS,
+        "frame_count": L4_HLG_FRAME_COUNT,
+        "ffmpeg_version": tool_version(ffmpeg),
+        "ffprobe_version": tool_version(ffprobe),
+        "sha256": sha256_file(media),
+        "stream": stream,
+        "format_duration": format_duration,
+        "patches": patches,
+        "decoded_patch_samples": decoded_samples,
+        "visual_oracle": L4_HLG_VISUAL_ORACLE,
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {**metadata, "path": str(media), "metadata_path": str(metadata_path)}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Create disposable CineHDR Gate 2 RGB/FFV1 or HEVC Main10 fixtures"
@@ -1419,7 +1758,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache-dir", type=Path, required=True)
     parser.add_argument(
         "--mode",
-        choices=("hdr", "hlg", "sdr", "wcg-sdr", L4_HDR10_MODE, "all"),
+        choices=("hdr", "hlg", "sdr", "wcg-sdr", L4_HDR10_MODE, L4_HLG_MODE, "all"),
         default="all",
     )
     parser.add_argument("--ffmpeg", default="ffmpeg")
@@ -1437,6 +1776,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "schema": L4_HDR10_SCHEMA,
             "mode": L4_HDR10_MODE,
+            "fixtures": [generated_l4],
+        }, indent=2, sort_keys=True))
+        return 0
+    if args.mode == L4_HLG_MODE:
+        try:
+            generated_l4 = ensure_l4_hlg_pattern(
+                args.cache_dir, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe
+            )
+        except FixtureError as error:
+            print(f"fixture generation failed: {error}", file=sys.stderr)
+            return 1
+        print(json.dumps({
+            "schema": L4_HLG_SCHEMA,
+            "mode": L4_HLG_MODE,
             "fixtures": [generated_l4],
         }, indent=2, sort_keys=True))
         return 0

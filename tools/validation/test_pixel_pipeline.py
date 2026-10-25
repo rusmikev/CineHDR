@@ -8,6 +8,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -616,6 +617,84 @@ class TestFixtureMathAndLayout(unittest.TestCase):
             payload = json.loads(out_l4.getvalue())
             self.assertEqual(payload["schema"], generate_patterns.L4_HDR10_SCHEMA)
             self.assertEqual(payload["mode"], "l4-hdr10")
+
+    def test_l4_hlg_pattern_layout_codes_and_hermetic_cli(self) -> None:
+        """Hermetically verify L4 HLG relative scene-light pattern without invoking real ffmpeg."""
+        patches = generate_patterns.l4_hlg_patches(width=600, height=360)
+        self.assertEqual([p["scene_level"] for p in patches], [0.05, 0.18, 0.50, 0.75, 0.88, 1.0])
+        self.assertEqual(
+            [p["label"] for p in patches],
+            ["5% HLG", "18% HLG", "50% HLG", "75% HLG", "88% HLG", "100% HLG"],
+        )
+        self.assertEqual(
+            [p["expected_rgb_10bit"][0] for p in patches],
+            [396, 688, 892, 969, 999, 1023],
+        )
+
+        frame = generate_patterns.l4_hlg_raw_frame(width=600, height=360)
+        self.assertEqual(len(frame), 600 * 360 * 3 * 2)
+        for patch in patches:
+            cx = patch["sample_center"]["x"]
+            cy = patch["sample_center"]["y"]
+            rgb = generate_patterns.sample_gbrp10le_frame(frame, 600, 360, cx, cy)
+            self.assertEqual(list(rgb), patch["expected_rgb_10bit"])
+
+            rb = patch["reference_75_strip_bounds"]
+            ref_y = (rb["y0"] + rb["y1"]) // 2
+            ref_rgb = generate_patterns.sample_gbrp10le_frame(frame, 600, 360, cx, ref_y)
+            self.assertEqual(list(ref_rgb), [969, 969, 969])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_l4 = {
+                "schema": generate_patterns.L4_HLG_SCHEMA,
+                "mode": generate_patterns.L4_HLG_MODE,
+                "duration_seconds": generate_patterns.L4_HLG_DURATION_SECONDS,
+                "path": str(Path(tmp) / "cinehdr-l4-hlg-bt2020-60s.mkv"),
+                "visual_oracle": generate_patterns.L4_HLG_VISUAL_ORACLE,
+            }
+            with mock.patch.object(
+                generate_patterns, "ensure_l4_hlg_pattern", return_value=fake_l4
+            ) as mock_l4, contextlib.redirect_stdout(io.StringIO()) as out_l4:
+                rc = generate_patterns.main(["--cache-dir", tmp, "--mode", "l4-hlg"])
+            self.assertEqual(rc, 0)
+            mock_l4.assert_called_once()
+            payload = json.loads(out_l4.getvalue())
+            self.assertEqual(payload["schema"], generate_patterns.L4_HLG_SCHEMA)
+            self.assertEqual(payload["mode"], "l4-hlg")
+            self.assertEqual(
+                payload["fixtures"][0]["visual_oracle"]["reference_white_level"], 0.75
+            )
+
+    def test_l4_hlg_pattern_live_encode_decode_and_metadata(self) -> None:
+        """Integration test: encode 1-frame live fixture through ffmpeg/ffprobe and verify stream & pixels."""
+        if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+            self.skipTest("ffmpeg/ffprobe unavailable")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            media = generate_patterns.l4_hlg_media_path(cache_dir)
+            patches = generate_patterns.l4_hlg_patches()
+
+            # Temporarily set FRAME_COUNT=24 (1s at 24fps) to make integration test fast (<1s)
+            with mock.patch.object(generate_patterns, "L4_HLG_FRAME_COUNT", 24), \
+                 mock.patch.object(generate_patterns, "L4_HLG_DURATION_SECONDS", 1.0):
+                decoded_frame = generate_patterns._l4_hlg_encode_and_decode_frame0(
+                    "ffmpeg", cache_dir, media
+                )
+                decoded_samples = generate_patterns._l4_hlg_verify_decoded_patches(
+                    decoded_frame, patches
+                )
+                stream, _ = generate_patterns._l4_hlg_probe_and_validate_stream(
+                    "ffprobe", media
+                )
+
+            self.assertEqual(stream["codec_name"], "ffv1")
+            self.assertEqual(stream["pix_fmt"], "gbrp10le")
+            self.assertEqual(stream["color_transfer"], "arib-std-b67")
+            self.assertEqual(stream["color_primaries"], "bt2020")
+            self.assertEqual(len(decoded_samples), 6)
+            for sample in decoded_samples:
+                self.assertEqual(sample["decoded_rgb_10bit"], sample["expected_rgb_10bit"])
 
 
 class TestProbeContract(unittest.TestCase):
