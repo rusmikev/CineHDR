@@ -165,6 +165,11 @@
        - **Жизненный цикл объектов**: приход события `wl_display#1.delete_id` завершает поколение объекта даже при отсутствии последующего `bind`. Вызовы на удалённом объекте без нового `bind` отбраковываются с ошибкой протокола (`status: FAIL`);
        - **Межинтерфейсные коллизии ID**: создание объекта с тем же численным ID при активном объекте другого интерфейса (например, `wl_surface#3` во время активности `wp_color_manager_v1#3`) выявляется кросс-интерфейсной проверкой коллизий активных жизненных циклов (`_has_active_id_collision`) и бракуется (`status: FAIL`);
        - **Временной срез иерархии подповерхностей (subsurfaces)**: принадлежность подповерхностей окну (`subsurfaces`) и состояние их буферов вычисляются функцией `_surface_hierarchy_at_commit` строго на момент выбранного HDR `commit_index`. Переподчинение подповерхности другому родителю или её уничтожение после этого коммита не искажает историческое состояние в момент HDR-публикации (`status: UNKNOWN`).
+   12. **Устранение ложных PASS в --trace-only при отсутствии/дублировании реестра: снятие безусловного доверия ID 2 и проверка поколений реестра (`2026-10-25`)**:
+       - **Снятие безусловного доверия reg_id == 2**: в `_verify_registry_connection_link` устранено безусловное предположение `if reg_id == 2: return True, None`. Одинаковый числовой ID реестра в объединённом `WAYLAND_DEBUG` не доказывает принадлежность одному соединению, особенно при повторном создании;
+       - **Наблюдаемое происхождение реестра**: для статуса `PASS` в автономном режиме `--trace-only` происхождение `wl_registry` должно быть явно зафиксировано в трассе вызовом `wl_display#1.get_registry`. При отсутствии наблюдаемого создания возвращается `status: UNKNOWN` (`reason: creation of wl_registry#X by wl_display#1 was not observed in trace: registry origin cannot be proven`);
+       - **Контроль активных поколений реестра**: при наличии нескольких вызовов `wl_display#1.get_registry` для одного и того же ID без завершения предыдущего поколения (`delete_id`) возвращается `status: UNKNOWN` (`reason: multiple active creations of wl_registry#X observed in trace without termination: connection belonging cannot be established in unified WAYLAND_DEBUG`);
+       - **Канонический положительный и отрицательные контроли**: синтетическая трасса `SYNTHETIC_MPV_HDR_TRACE` дополнена каноническим созданием `wl_display#1.get_registry(new id wl_registry#2)`, добавлены регрессионные тесты для мутации 1 (удаление создания реестра → UNKNOWN) и мутации 2 (дублирование создания реестра перед `get_surface` без завершения → UNKNOWN).
 
 #### 2.2. Проверяемые источники
 - Коммит `074c38cf577183e57c36f64b9e40c78bcfd870a9` (`fix: bypass KWin/GTK color management deadlock via linear extended and graceful SDR fallback`).
@@ -269,6 +274,8 @@
   - `TestTraceOnlyCli.test_trace_only_synthetic_manager_delete_id_before_use_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `TestTraceOnlyCli.test_trace_only_synthetic_concurrent_cross_interface_id_collision_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `TestTraceOnlyCli.test_trace_only_synthetic_foreign_registry_unlinked_rejected` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTraceOnlyCliValidation.test_trace_only_synthetic_missing_registry_creation_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTraceOnlyCliValidation.test_trace_only_synthetic_duplicate_registry_creation_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).

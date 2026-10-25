@@ -1916,6 +1916,7 @@ class TestGtkCmPolicy(unittest.TestCase):
     def test_composite_window_rejects_foreign_registry_surface(self):
         """wl_surface created by a compositor bound from a foreign registry must be rejected."""
         trace = """
+[ 1042.000]  -> wl_display#1.get_registry(new id wl_registry#2)
 [ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
 [ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
 [ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
@@ -3448,6 +3449,7 @@ class TestGtkCmPolicy(unittest.TestCase):
 
 
 SYNTHETIC_MPV_HDR_TRACE = """
+[ 1042.000]  -> wl_display#1.get_registry(new id wl_registry#2)
 [ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
 [ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
 [ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
@@ -4162,6 +4164,67 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             data = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertEqual(data["status"], "UNKNOWN")
             self.assertIn("connection belonging between wl_registry#2 and wl_registry#99 cannot be established", data["reason"])
+
+    def test_trace_only_synthetic_missing_registry_creation_returns_unknown(self):
+        """Mutation 1: trace omitting wl_display#1.get_registry returns UNKNOWN."""
+        trace_without_reg = "\n".join(
+            line for line in SYNTHETIC_MPV_HDR_TRACE.splitlines()
+            if "get_registry" not in line
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_without_reg, encoding="utf-8")
+
+            # Direct API test
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertIn("creation of wl_registry#2 by wl_display#1 was not observed", rep["reason"])
+
+            # CLI test
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertIn("creation of wl_registry#2 by wl_display#1 was not observed", data["reason"])
+
+    def test_trace_only_synthetic_duplicate_registry_creation_returns_unknown(self):
+        """Mutation 2: duplicate wl_display#1.get_registry before get_surface without termination returns UNKNOWN."""
+        lines = SYNTHETIC_MPV_HDR_TRACE.splitlines()
+        idx = next(i for i, line in enumerate(lines) if "get_surface" in line)
+        trace_dup_reg = "\n".join(
+            lines[:idx]
+            + ["[ 1042.0085] -> wl_display#1.get_registry(new id wl_registry#2)"]
+            + lines[idx:]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_dup_reg, encoding="utf-8")
+
+            # Direct API test
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertIn("multiple active creations of wl_registry#2 observed in trace without termination", rep["reason"])
+
+            # CLI test
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertIn("multiple active creations of wl_registry#2 observed in trace without termination", data["reason"])
 
     def test_trace_only_synthetic_missing_commit_rejected(self):
         """Hermetic CLI test: trace missing wl_surface.commit after set_image_description fails with status=FAIL."""

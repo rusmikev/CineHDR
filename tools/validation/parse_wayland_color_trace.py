@@ -443,48 +443,88 @@ def _verify_registry_connection_link(
 
     Returns (is_ok, reason, is_unproven_connection).
     """
-    def _is_created_by_display(reg_id: int) -> tuple[bool, str | None]:
-        if reg_id == 2:
-            return True, None
-        reg_creation = next(
-            (
-                c
-                for c in calls
-                if c.interface == "wl_display"
-                and c.object_id == 1
-                and c.method == "get_registry"
-                and (m := (NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args))) is not None
-                and int(m.group("object_id")) == reg_id
-            ),
-            None,
-        )
-        if reg_creation is None:
-            invalid_disp = next(
-                (
-                    c
-                    for c in calls
-                    if c.interface == "wl_display"
-                    and c.method == "get_registry"
-                    and (m := (NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args))) is not None
-                    and int(m.group("object_id")) == reg_id
-                ),
-                None,
+    def _check_registry(reg_id: int, is_cross_registry_pair: bool) -> tuple[bool, str | None, bool]:
+        disp1_creations: list[TraceCall] = []
+        other_disp_creations: list[TraceCall] = []
+        for c in calls:
+            if c.method == "get_registry":
+                m = NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args)
+                if m and int(m.group("object_id")) == reg_id:
+                    if c.interface == "wl_display" and c.object_id == 1:
+                        disp1_creations.append(c)
+                    else:
+                        other_disp_creations.append(c)
+
+        if other_disp_creations and not disp1_creations:
+            disp_info = f"{other_disp_creations[0].interface}#{other_disp_creations[0].object_id}"
+            return (
+                False,
+                f"wl_registry#{reg_id} was not created by wl_display#1 (observed: {disp_info}.get_registry)",
+                False,
             )
-            if invalid_disp is not None:
+
+        if not disp1_creations:
+            if is_cross_registry_pair:
+                return False, f"wl_registry#{reg_id} was not created by wl_display on this connection", False
+            return (
+                False,
+                f"creation of wl_registry#{reg_id} by wl_display#1 was not observed in trace: "
+                "registry origin cannot be proven",
+                True,
+            )
+
+        if len(disp1_creations) > 1:
+            has_unterminated = False
+            for i in range(len(disp1_creations) - 1):
+                c1 = disp1_creations[i]
+                c2 = disp1_creations[i + 1]
+                deleted = any(
+                    c.interface == "wl_display"
+                    and c.method == "delete_id"
+                    and c.args == str(reg_id)
+                    and c1.index < c.index < c2.index
+                    for c in calls
+                )
+                if not deleted:
+                    has_unterminated = True
+                    break
+            if has_unterminated:
                 return (
                     False,
-                    f"wl_registry#{reg_id} was not created by wl_display#1 (observed: wl_display#{invalid_disp.object_id}.get_registry)",
+                    f"multiple active creations of wl_registry#{reg_id} observed in trace without termination: "
+                    "connection belonging cannot be established in unified WAYLAND_DEBUG",
+                    True,
                 )
-            return False, f"wl_registry#{reg_id} was not created by wl_display on this connection"
-        return True, None
+            return (
+                False,
+                f"multiple generations of wl_registry#{reg_id} observed in trace: "
+                "registry generation cannot be proven in unified WAYLAND_DEBUG",
+                True,
+            )
 
-    ok_a, err_a = _is_created_by_display(reg_a)
+        creation_call = disp1_creations[0]
+        if any(
+            c.interface == "wl_registry"
+            and c.object_id == reg_id
+            and c.index < creation_call.index
+            for c in calls
+        ):
+            return (
+                False,
+                f"wl_registry#{reg_id} was used before its creation at index {creation_call.index}",
+                False,
+            )
+
+        return True, None, False
+
+    is_cross = (reg_a != reg_b)
+    ok_a, err_a, unp_a = _check_registry(reg_a, is_cross)
     if not ok_a:
-        return False, err_a, False
+        return False, err_a, unp_a
 
-    ok_b, err_b = _is_created_by_display(reg_b)
+    ok_b, err_b, unp_b = _check_registry(reg_b, is_cross)
     if not ok_b:
-        return False, err_b, False
+        return False, err_b, unp_b
 
     if reg_a == reg_b:
         return True, None, False
@@ -1675,6 +1715,8 @@ def _validate_app_id(app_id: str | None) -> str:
 def validate_composite_window_trace(
     trace: str,
     expected_app_id: str = DEFAULT_APP_ID,
+    *,
+    trace_only: bool = False,
 ) -> dict[str, Any]:
     """Validate passive Wayland color-management submission for CineHDR's composite window.
 
@@ -2049,6 +2091,48 @@ def validate_composite_window_trace(
                             f"from foreign registry wl_registry#{wm_bind.object_id}: {link_err}"
                         )
                         continue
+
+            if trace_only:
+                link_ok, link_err, is_unproven = _verify_registry_connection_link(
+                    calls, bind.object_id, bind.object_id, global_id
+                )
+                if not link_ok:
+                    if is_unproven:
+                        candidates_unknown.append(
+                            {
+                                "schema": TRACE_SCHEMA,
+                                "revision": PRIMARY_COMPOSITE_REVISION,
+                                "status": "UNKNOWN",
+                                "oracle": "primary_composite_window",
+                                "scope": UNKNOWN_SCOPE,
+                                "reason": link_err,
+                                "matched": {
+                                    "registry_global": {
+                                        "id": global_id,
+                                        "advertised_version": advertised_version,
+                                        "registry_id": bind.object_id,
+                                        "event_index": global_call.index,
+                                    },
+                                    "manager": {
+                                        "id": manager_id,
+                                        "bound_version": bound_version,
+                                        "bind_index": bind.index,
+                                        "perceptual_intent_index": perceptual.index,
+                                        "done_index": done.index,
+                                    },
+                                    "surface": {
+                                        "wl_surface_id": wl_surface_id,
+                                        "color_management_surface_id": color_surface_id,
+                                        "get_surface_index": get_surface.index,
+                                        "app_id": toplevel_surfaces.get(wl_surface_id, expected_app_id),
+                                        "role": "composite_toplevel_window",
+                                    },
+                                },
+                            }
+                        )
+                        continue
+                    order_error = f"registry #{bind.object_id} for wp_color_manager_v1 is invalid: {link_err}"
+                    continue
 
             manager_creator_ids: set[int] = set()
             for c in calls:
@@ -2840,7 +2924,9 @@ def create_trace_only_report(
     target_app_id = expected_app_id.strip()
 
     trace_text = trace_path.read_text(encoding="utf-8", errors="replace")
-    evidence = validate_composite_window_trace(trace_text, expected_app_id=target_app_id)
+    evidence = validate_composite_window_trace(
+        trace_text, expected_app_id=target_app_id, trace_only=True
+    )
 
     if evidence.get("status") == "UNKNOWN":
         evidence.update(
