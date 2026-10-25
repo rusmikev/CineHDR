@@ -1876,34 +1876,6 @@ def validate_composite_window_trace(
                 continue
             has_get_surface_window = True
 
-            has_col, col_err = _has_active_id_collision(calls, creations_by_id, wl_surface_id)
-            if has_col:
-                raise TraceValidationError(col_err)
-            has_col, col_err = _has_active_id_collision(calls, creations_by_id, color_surface_id)
-            if has_col:
-                raise TraceValidationError(col_err)
-            has_col, col_err = _has_active_id_collision(calls, creations_by_id, manager_id)
-            if has_col:
-                raise TraceValidationError(col_err)
-
-            wl_surface_creations = creations.get(("wl_surface", wl_surface_id), [])
-            if (
-                len(creations.get(("wp_color_management_surface_v1", color_surface_id), [])) != 1
-                or _used_before_creation(
-                    calls, "wp_color_management_surface_v1", color_surface_id,
-                    get_surface.index,
-                )
-                or len(wl_surface_creations) > 1
-                or (wl_surface_creations and wl_surface_creations[0] >= get_surface.index)
-                or (
-                    wl_surface_creations
-                    and _used_before_creation(
-                        calls, "wl_surface", wl_surface_id, wl_surface_creations[0]
-                    )
-                )
-            ):
-                continue
-
             # Connection isolation: verify that wl_surface and xdg_wm_base belong to this connection / registry
             surf_create = next(
                 (
@@ -1977,6 +1949,34 @@ def validate_composite_window_trace(
                             f"bound from foreign registry wl_registry#{comp_bind.object_id}: {link_err}"
                         )
                         continue
+
+            has_col, col_err = _has_active_id_collision(calls, creations_by_id, wl_surface_id)
+            if has_col:
+                raise TraceValidationError(col_err)
+            has_col, col_err = _has_active_id_collision(calls, creations_by_id, color_surface_id)
+            if has_col:
+                raise TraceValidationError(col_err)
+            has_col, col_err = _has_active_id_collision(calls, creations_by_id, manager_id)
+            if has_col:
+                raise TraceValidationError(col_err)
+
+            wl_surface_creations = creations.get(("wl_surface", wl_surface_id), [])
+            if (
+                len(creations.get(("wp_color_management_surface_v1", color_surface_id), [])) != 1
+                or _used_before_creation(
+                    calls, "wp_color_management_surface_v1", color_surface_id,
+                    get_surface.index,
+                )
+                or len(wl_surface_creations) > 1
+                or (wl_surface_creations and wl_surface_creations[0] >= get_surface.index)
+                or (
+                    wl_surface_creations
+                    and _used_before_creation(
+                        calls, "wl_surface", wl_surface_id, wl_surface_creations[0]
+                    )
+                )
+            ):
+                continue
 
             xdg_surf = next(
                 (
