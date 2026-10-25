@@ -49,6 +49,118 @@ FRAME_COUNT = 24
 PATCH_COLUMNS = 4
 PATCH_ROWS = 2
 
+L4_HDR10_MODE = "l4-hdr10"
+L4_HDR10_SCHEMA = "cinehdr.l4.hdr10.pattern.v1"
+L4_HDR10_GENERATOR_REVISION = "ffv1-l4-hdr10-pq-60s-v1"
+L4_HDR10_WIDTH = 1920
+L4_HDR10_HEIGHT = 1080
+L4_HDR10_FPS = 24
+L4_HDR10_DURATION_SECONDS = 60
+L4_HDR10_FRAME_COUNT = L4_HDR10_FPS * L4_HDR10_DURATION_SECONDS
+L4_HDR10_NITS_STEPS: tuple[int, ...] = (100, 203, 400, 600, 800, 1000)
+
+_BITMAP_FONT_5X7: dict[str, tuple[str, ...]] = {
+    "0": (
+        "01110",
+        "10001",
+        "10011",
+        "10101",
+        "11001",
+        "10001",
+        "01110",
+    ),
+    "1": (
+        "00100",
+        "01100",
+        "00100",
+        "00100",
+        "00100",
+        "00100",
+        "01110",
+    ),
+    "2": (
+        "01110",
+        "10001",
+        "00001",
+        "00010",
+        "00100",
+        "01000",
+        "11111",
+    ),
+    "3": (
+        "11110",
+        "00001",
+        "00001",
+        "01110",
+        "00001",
+        "00001",
+        "11110",
+    ),
+    "4": (
+        "00010",
+        "00110",
+        "01010",
+        "10010",
+        "11111",
+        "00010",
+        "00010",
+    ),
+    "6": (
+        "00110",
+        "01000",
+        "10000",
+        "11110",
+        "10001",
+        "10001",
+        "01110",
+    ),
+    "8": (
+        "01110",
+        "10001",
+        "10001",
+        "01110",
+        "10001",
+        "10001",
+        "01110",
+    ),
+    "I": (
+        "01110",
+        "00100",
+        "00100",
+        "00100",
+        "00100",
+        "00100",
+        "01110",
+    ),
+    "N": (
+        "10001",
+        "11001",
+        "10101",
+        "10011",
+        "10001",
+        "10001",
+        "10001",
+    ),
+    "T": (
+        "11111",
+        "00100",
+        "00100",
+        "00100",
+        "00100",
+        "00100",
+        "00100",
+    ),
+    " ": (
+        "00000",
+        "00000",
+        "00000",
+        "00000",
+        "00000",
+        "00000",
+        "00000",
+    ),
+}
+
 
 class FixtureError(RuntimeError):
     """The fixture cannot be created or no longer proves its requested inputs."""
@@ -1005,16 +1117,308 @@ def ensure_fixture(
     return {**metadata, "path": str(media), "metadata_path": str(metadata_path)}
 
 
+def l4_hdr10_pq_code_10bit(luminance_nits: float) -> int:
+    """Return the 10-bit PQ code value [0..1023] for the given luminance in cd/m²."""
+
+    return min(max(int(round(linear_to_pq(luminance_nits) * 1023)), 0), 1023)
+
+
+def l4_hdr10_patches(
+    width: int = L4_HDR10_WIDTH, height: int = L4_HDR10_HEIGHT
+) -> list[dict[str, Any]]:
+    """Return metadata for the 6 labeled luminance columns (100/203/400/600/800/1000 nits)."""
+
+    col_width = width // len(L4_HDR10_NITS_STEPS)
+    margin_x = max(col_width // 40, 2)
+    patch_y0 = int(height * 0.18)
+    patch_y1 = int(height * 0.82)
+    ref_y0 = int(height * 0.85)
+    ref_y1 = int(height * 0.94)
+    center_y = (patch_y0 + patch_y1) // 2
+
+    entries: list[dict[str, Any]] = []
+    for col, nits in enumerate(L4_HDR10_NITS_STEPS):
+        x0 = col * col_width + margin_x
+        x1 = (col + 1) * col_width - margin_x
+        center_x = (x0 + x1) // 2
+        code_10bit = l4_hdr10_pq_code_10bit(float(nits))
+        entries.append({
+            "name": f"nit_{nits}",
+            "label": f"{nits} NIT",
+            "column": col,
+            "nits": float(nits),
+            "expected_pq_float": round(linear_to_pq(float(nits)), 6),
+            "expected_rgb_10bit": [code_10bit, code_10bit, code_10bit],
+            "bounds": {"x0": x0, "y0": patch_y0, "x1": x1, "y1": patch_y1},
+            "reference_203_strip_bounds": {"x0": x0, "y0": ref_y0, "x1": x1, "y1": ref_y1},
+            "sample_center": {"x": center_x, "y": center_y},
+        })
+    return entries
+
+
+def _draw_bitmap_label_gbrp10le(
+    planes: list[bytearray],
+    width: int,
+    height: int,
+    text: str,
+    center_x: int,
+    top_y: int,
+    scale: int,
+    code_10bit: int,
+) -> None:
+    char_w = 5 * scale
+    spacing = scale
+    total_w = len(text) * char_w + max(len(text) - 1, 0) * spacing
+    start_x = max(center_x - total_w // 2, 0)
+    pixel_bytes = code_10bit.to_bytes(2, "little")
+
+    for idx, ch in enumerate(text):
+        glyph = _BITMAP_FONT_5X7.get(ch, _BITMAP_FONT_5X7[" "])
+        gx0 = start_x + idx * (char_w + spacing)
+        for gy, row_bits in enumerate(glyph):
+            for gx, bit in enumerate(row_bits):
+                if bit != "1":
+                    continue
+                px0 = gx0 + gx * scale
+                px1 = min(px0 + scale, width)
+                if px1 <= px0:
+                    continue
+                run_bytes = pixel_bytes * (px1 - px0)
+                for py in range(top_y + gy * scale, min(top_y + (gy + 1) * scale, height)):
+                    offset = (py * width + px0) * 2
+                    end = offset + len(run_bytes)
+                    for plane in planes:
+                        plane[offset:end] = run_bytes
+
+
+def l4_hdr10_raw_frame(
+    width: int = L4_HDR10_WIDTH, height: int = L4_HDR10_HEIGHT
+) -> bytes:
+    """Build one 10-bit planar GBR frame with 6 labeled HDR10 PQ luminance columns."""
+
+    plane_bytes = width * height * 2
+    planes = [bytearray(plane_bytes) for _ in range(3)]
+    patches = l4_hdr10_patches(width=width, height=height)
+    ref_203_code = l4_hdr10_pq_code_10bit(203.0)
+    ref_203_pixel = ref_203_code.to_bytes(2, "little")
+    scale = max(min(width // 320, height // 180), 1)
+    label_top_y = max(int(height * 0.05), 4)
+
+    for patch in patches:
+        b = patch["bounds"]
+        x0, y0, x1, y1 = b["x0"], b["y0"], b["x1"], b["y1"]
+        code_10bit = patch["expected_rgb_10bit"][0]
+        patch_run = code_10bit.to_bytes(2, "little") * (x1 - x0)
+        for y in range(y0, y1):
+            offset = (y * width + x0) * 2
+            end = offset + len(patch_run)
+            for plane in planes:
+                plane[offset:end] = patch_run
+
+        rb = patch["reference_203_strip_bounds"]
+        rx0, ry0, rx1, ry1 = rb["x0"], rb["y0"], rb["x1"], rb["y1"]
+        ref_run = ref_203_pixel * (rx1 - rx0)
+        for y in range(ry0, ry1):
+            offset = (y * width + rx0) * 2
+            end = offset + len(ref_run)
+            for plane in planes:
+                plane[offset:end] = ref_run
+
+        _draw_bitmap_label_gbrp10le(
+            planes,
+            width,
+            height,
+            patch["label"],
+            patch["sample_center"]["x"],
+            label_top_y,
+            scale,
+            ref_203_code,
+        )
+
+    return b"".join(planes)
+
+
+def sample_gbrp10le_frame(
+    frame: bytes, width: int, height: int, x: int, y: int
+) -> tuple[int, int, int]:
+    """Read (R, G, B) 10-bit codes at (x, y) from a planar gbrp10le frame."""
+
+    plane_size = width * height * 2
+    offset = (y * width + x) * 2
+    green = int.from_bytes(frame[offset:offset + 2], "little")
+    blue = int.from_bytes(frame[plane_size + offset:plane_size + offset + 2], "little")
+    red = int.from_bytes(frame[2 * plane_size + offset:2 * plane_size + offset + 2], "little")
+    return red, green, blue
+
+
+def l4_hdr10_media_path(cache_dir: Path) -> Path:
+    return cache_dir / "cinehdr-l4-hdr10-pq-bt2020-60s.mkv"
+
+
+def l4_hdr10_metadata_path(cache_dir: Path) -> Path:
+    return cache_dir / "cinehdr-l4-hdr10-pq-bt2020-60s.json"
+
+
+def ensure_l4_hdr10_pattern(
+    cache_dir: Path,
+    *,
+    ffmpeg: str = "ffmpeg",
+    ffprobe: str = "ffprobe",
+) -> dict[str, Any]:
+    """Generate and verify a 60s 1920x1080 HDR10 PQ/BT.2020 L4 visual pattern outside Git."""
+
+    if shutil.which(ffmpeg) is None or shutil.which(ffprobe) is None:
+        raise FixtureError("ffmpeg and ffprobe are required to create the L4 HDR10 pattern")
+    cache_dir = cache_dir.expanduser().resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    media = l4_hdr10_media_path(cache_dir)
+    metadata_path = l4_hdr10_metadata_path(cache_dir)
+    patches = l4_hdr10_patches()
+
+    frame_bytes = l4_hdr10_raw_frame(L4_HDR10_WIDTH, L4_HDR10_HEIGHT)
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix="cinehdr-l4-hdr10-", suffix=".raw", dir=cache_dir, delete=False
+    ) as raw_file:
+        raw_path = Path(raw_file.name)
+        raw_file.write(frame_bytes)
+
+    decoded_check_path = cache_dir / "cinehdr-l4-hdr10-decoded-frame0.raw"
+    try:
+        encode_cmd = [
+            ffmpeg, "-y", "-v", "error",
+            "-stream_loop", "-1",
+            "-f", "rawvideo", "-pixel_format", "gbrp10le",
+            "-video_size", f"{L4_HDR10_WIDTH}x{L4_HDR10_HEIGHT}",
+            "-framerate", str(L4_HDR10_FPS),
+            "-i", str(raw_path),
+            "-frames:v", str(L4_HDR10_FRAME_COUNT),
+            "-vf", "setparams=range=full:colorspace=gbr:color_primaries=bt2020:color_trc=smpte2084",
+            "-c:v", "ffv1", "-level", "3", "-pix_fmt", "gbrp10le",
+            "-flags:v", "+bitexact", "-threads", "1", "-map_metadata", "-1",
+            "-fflags", "+bitexact",
+            "-color_range", "pc", "-colorspace", "rgb",
+            "-color_primaries", "bt2020", "-color_trc", "smpte2084",
+            str(media),
+        ]
+        _run_checked(encode_cmd)
+
+        decode_cmd = [
+            ffmpeg, "-y", "-v", "error",
+            "-i", str(media),
+            "-frames:v", "1",
+            "-pix_fmt", "gbrp10le",
+            "-f", "rawvideo",
+            str(decoded_check_path),
+        ]
+        _run_checked(decode_cmd)
+        decoded_frame = decoded_check_path.read_bytes()
+    finally:
+        raw_path.unlink(missing_ok=True)
+        decoded_check_path.unlink(missing_ok=True)
+
+    expected_frame_size = L4_HDR10_WIDTH * L4_HDR10_HEIGHT * 3 * 2
+    if len(decoded_frame) != expected_frame_size:
+        raise FixtureError(
+            f"decoded L4 frame size {len(decoded_frame)} != expected {expected_frame_size}"
+        )
+
+    decoded_samples: list[dict[str, Any]] = []
+    for patch in patches:
+        cx = patch["sample_center"]["x"]
+        cy = patch["sample_center"]["y"]
+        actual_rgb = list(sample_gbrp10le_frame(decoded_frame, L4_HDR10_WIDTH, L4_HDR10_HEIGHT, cx, cy))
+        if actual_rgb != patch["expected_rgb_10bit"]:
+            raise FixtureError(
+                f"decoded L4 patch {patch['name']} at ({cx}, {cy}) = {actual_rgb}, "
+                f"expected {patch['expected_rgb_10bit']}"
+            )
+        decoded_samples.append({
+            "name": patch["name"],
+            "label": patch["label"],
+            "nits": patch["nits"],
+            "sample_center": patch["sample_center"],
+            "expected_rgb_10bit": patch["expected_rgb_10bit"],
+            "decoded_rgb_10bit": actual_rgb,
+        })
+
+    probe_completed = _run_checked([
+        ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames",
+        "-show_entries", (
+            "stream=codec_name,width,height,pix_fmt,color_range,color_space,"
+            "color_transfer,color_primaries,r_frame_rate,nb_read_frames:format=duration"
+        ),
+        "-of", "json", str(media),
+    ])
+    probe_payload = json.loads(probe_completed.stdout)
+    stream = probe_payload["streams"][0]
+    format_duration = float(probe_payload.get("format", {}).get("duration", 0.0))
+
+    expected_stream = {
+        "codec_name": "ffv1",
+        "width": L4_HDR10_WIDTH,
+        "height": L4_HDR10_HEIGHT,
+        "pix_fmt": "gbrp10le",
+        "color_range": "pc",
+        "color_space": "gbr",
+        "color_transfer": "smpte2084",
+        "color_primaries": "bt2020",
+        "r_frame_rate": f"{L4_HDR10_FPS}/1",
+        "nb_read_frames": str(L4_HDR10_FRAME_COUNT),
+    }
+    for key, exp_val in expected_stream.items():
+        if stream.get(key) != exp_val:
+            raise FixtureError(f"L4 stream field {key}={stream.get(key)!r}, expected {exp_val!r}")
+    if abs(format_duration - float(L4_HDR10_DURATION_SECONDS)) > 0.05:
+        raise FixtureError(f"L4 duration {format_duration}s != expected {L4_HDR10_DURATION_SECONDS}s")
+
+    metadata = {
+        "schema": L4_HDR10_SCHEMA,
+        "generator_revision": L4_HDR10_GENERATOR_REVISION,
+        "mode": L4_HDR10_MODE,
+        "dimensions": {"width": L4_HDR10_WIDTH, "height": L4_HDR10_HEIGHT},
+        "fps": L4_HDR10_FPS,
+        "duration_seconds": L4_HDR10_DURATION_SECONDS,
+        "frame_count": L4_HDR10_FRAME_COUNT,
+        "ffmpeg_version": tool_version(ffmpeg),
+        "ffprobe_version": tool_version(ffprobe),
+        "sha256": sha256_file(media),
+        "stream": stream,
+        "format_duration": format_duration,
+        "patches": patches,
+        "decoded_patch_samples": decoded_samples,
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {**metadata, "path": str(media), "metadata_path": str(metadata_path)}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Create disposable CineHDR Gate 2 RGB/FFV1 or HEVC Main10 fixtures"
     )
     parser.add_argument("--cache-dir", type=Path, required=True)
-    parser.add_argument("--mode", choices=("hdr", "hlg", "sdr", "wcg-sdr", "all"), default="all")
+    parser.add_argument(
+        "--mode",
+        choices=("hdr", "hlg", "sdr", "wcg-sdr", L4_HDR10_MODE, "all"),
+        default="all",
+    )
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     parser.add_argument("--fixture-profile", choices=FIXTURE_PROFILES, default=DEFAULT_FIXTURE_PROFILE)
     args = parser.parse_args(argv)
+    if args.mode == L4_HDR10_MODE:
+        try:
+            generated_l4 = ensure_l4_hdr10_pattern(
+                args.cache_dir, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe
+            )
+        except FixtureError as error:
+            print(f"fixture generation failed: {error}", file=sys.stderr)
+            return 1
+        print(json.dumps({
+            "schema": L4_HDR10_SCHEMA,
+            "mode": L4_HDR10_MODE,
+            "fixtures": [generated_l4],
+        }, indent=2, sort_keys=True))
+        return 0
     modes = ("hdr", "hlg", "sdr") if args.mode == "all" else (args.mode,)
     try:
         generated = [

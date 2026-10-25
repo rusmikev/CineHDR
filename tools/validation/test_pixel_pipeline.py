@@ -474,24 +474,76 @@ class TestFixtureMathAndLayout(unittest.TestCase):
             self.assertEqual(payload_wcg["fixtures"][0]["stream"]["color_primaries"], "bt2020")
             self.assertEqual(payload_wcg["fixtures"][0]["stream"]["color_transfer"], "iec61966-2-1")
 
-    def test_wcg_sdr_live_ffmpeg_ffprobe_generation_outside_git(self) -> None:
-        """When local ffmpeg/ffprobe are present, generate a temporary WCG-SDR fixture outside Git and verify ffprobe."""
-        import shutil
-        if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
-            self.skipTest("ffmpeg/ffprobe not installed locally")
-        with tempfile.TemporaryDirectory(prefix="cinehdr-wcg-sdr-") as tmp:
+    def test_wcg_sdr_hermetic_ensure_fixture_contract(self) -> None:
+        """Hermetically verify ensure_fixture('wcg-sdr') command & metadata validation without invoking real ffmpeg/ffprobe."""
+        spec = generate_patterns.fixture_spec("wcg-sdr")
+        expected_stream = generate_patterns._expected_stream(spec)
+        recorded_cmds: list[list[str]] = []
+
+        def fake_run_checked(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+            recorded_cmds.append(cmd)
+            media_arg = Path(cmd[-1])
+            media_arg.write_bytes(b"hermetic-ffv1-wcg-sdr")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
             cache_dir = Path(tmp)
-            result = generate_patterns.ensure_fixture("wcg-sdr", cache_dir)
-            media_path = Path(result["path"])
-            self.assertTrue(media_path.is_file())
-            stream = generate_patterns.ffprobe_stream(media_path, "ffprobe")
-            self.assertEqual(stream["codec_name"], "ffv1")
-            self.assertEqual(stream["pix_fmt"], "gbrp10le")
-            self.assertEqual(stream["color_range"], "pc")
-            self.assertEqual(stream["color_space"], "gbr")
-            self.assertEqual(stream["color_primaries"], "bt2020")
-            self.assertEqual(stream["color_transfer"], "iec61966-2-1")
-            self.assertEqual(stream["nb_read_frames"], str(generate_patterns.FRAME_COUNT))
+            with mock.patch.object(generate_patterns.shutil, "which", return_value="/usr/bin/mock"), \
+                 mock.patch.object(generate_patterns, "_run_checked", side_effect=fake_run_checked), \
+                 mock.patch.object(generate_patterns, "ffprobe_stream", return_value=dict(expected_stream)), \
+                 mock.patch.object(generate_patterns, "tool_version", side_effect=lambda exe: f"{exe} version 8.1.2 "):
+                result = generate_patterns.ensure_fixture("wcg-sdr", cache_dir)
+
+            self.assertEqual(result["mode"], "wcg-sdr")
+            self.assertEqual(result["stream"]["color_primaries"], "bt2020")
+            self.assertEqual(result["stream"]["color_transfer"], "iec61966-2-1")
+            self.assertEqual(len(recorded_cmds), 1)
+            self.assertIn("-color_primaries", recorded_cmds[0])
+            self.assertIn("bt2020", recorded_cmds[0])
+            self.assertIn("iec61966-2-1", recorded_cmds[0])
+
+    def test_l4_hdr10_pattern_layout_codes_and_hermetic_cli(self) -> None:
+        """Hermetically verify L4 HDR10 PQ/BT.2020 pattern (100/203/400/600/800/1000 nits) without invoking real ffmpeg."""
+        patches = generate_patterns.l4_hdr10_patches(width=600, height=360)
+        self.assertEqual([p["nits"] for p in patches], [100.0, 203.0, 400.0, 600.0, 800.0, 1000.0])
+        self.assertEqual(
+            [p["label"] for p in patches],
+            ["100 NIT", "203 NIT", "400 NIT", "600 NIT", "800 NIT", "1000 NIT"],
+        )
+        self.assertEqual(
+            [p["expected_rgb_10bit"][0] for p in patches],
+            [520, 594, 668, 712, 744, 769],
+        )
+
+        frame = generate_patterns.l4_hdr10_raw_frame(width=600, height=360)
+        self.assertEqual(len(frame), 600 * 360 * 3 * 2)
+        for patch in patches:
+            cx = patch["sample_center"]["x"]
+            cy = patch["sample_center"]["y"]
+            rgb = generate_patterns.sample_gbrp10le_frame(frame, 600, 360, cx, cy)
+            self.assertEqual(list(rgb), patch["expected_rgb_10bit"])
+
+            rb = patch["reference_203_strip_bounds"]
+            ref_y = (rb["y0"] + rb["y1"]) // 2
+            ref_rgb = generate_patterns.sample_gbrp10le_frame(frame, 600, 360, cx, ref_y)
+            self.assertEqual(list(ref_rgb), [594, 594, 594])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_l4 = {
+                "schema": generate_patterns.L4_HDR10_SCHEMA,
+                "mode": generate_patterns.L4_HDR10_MODE,
+                "duration_seconds": generate_patterns.L4_HDR10_DURATION_SECONDS,
+                "path": str(Path(tmp) / "cinehdr-l4-hdr10-pq-bt2020-60s.mkv"),
+            }
+            with mock.patch.object(
+                generate_patterns, "ensure_l4_hdr10_pattern", return_value=fake_l4
+            ) as mock_l4, contextlib.redirect_stdout(io.StringIO()) as out_l4:
+                rc = generate_patterns.main(["--cache-dir", tmp, "--mode", "l4-hdr10"])
+            self.assertEqual(rc, 0)
+            mock_l4.assert_called_once()
+            payload = json.loads(out_l4.getvalue())
+            self.assertEqual(payload["schema"], generate_patterns.L4_HDR10_SCHEMA)
+            self.assertEqual(payload["mode"], "l4-hdr10")
 
 
 class TestProbeContract(unittest.TestCase):
