@@ -502,6 +502,78 @@ class TestFixtureMathAndLayout(unittest.TestCase):
             self.assertIn("bt2020", recorded_cmds[0])
             self.assertIn("iec61966-2-1", recorded_cmds[0])
 
+    def test_hlg_relative_math_patch_codes_and_hermetic_contract(self) -> None:
+        """P1.3: HLG fixture uses relative [0, 1] ARIB STD-B67 math (not absolute nits), deterministic 10-bit codes, and HDR content detection."""
+        from src.hdr_detection import is_hdr_content
+
+        self.assertEqual(generate_patterns.linear_to_hlg(0.0), 0.0)
+        self.assertEqual(generate_patterns.linear_to_hlg(-0.5), 0.0)
+        self.assertAlmostEqual(generate_patterns.linear_to_hlg(1.0 / 12.0), 0.5, places=12)
+        self.assertAlmostEqual(generate_patterns.linear_to_hlg(0.75), 0.9470986396, places=9)
+        self.assertAlmostEqual(generate_patterns.linear_to_hlg(1.0), 1.0, places=6)
+
+        spec = generate_patterns.fixture_spec("hlg")
+        self.assertEqual(spec.mode, "hlg")
+        self.assertEqual(spec.pixel_format, "gbrp10le")
+        self.assertEqual(spec.color_range, "pc")
+        self.assertEqual(spec.color_space, "gbr")
+        self.assertEqual(spec.color_primaries, "bt2020")
+        self.assertEqual(spec.color_transfer, "arib-std-b67")
+        for patch in spec.patches:
+            for c in patch.rgb:
+                self.assertGreaterEqual(c, 0.0)
+                self.assertLessEqual(c, 1.0)
+
+        frame = generate_patterns.raw_frame(spec)
+        centers = generate_patterns.patch_centers()
+        expected_10bit = {
+            "black": (0, 0, 0),
+            "near_black": (396, 396, 396),
+            "reference_white": (969, 969, 969),
+            "peak_white": (1023, 1023, 1023),
+            "red_primary": (1023, 0, 0),
+            "green_primary": (0, 1023, 0),
+            "blue_primary": (0, 0, 1023),
+            "neutral_gradient": (894, 894, 894),
+        }
+        for name, exp_rgb in expected_10bit.items():
+            cx, cy = centers[name]
+            self.assertEqual(
+                generate_patterns.sample_gbrp10le_frame(
+                    frame, generate_patterns.WIDTH, generate_patterns.HEIGHT, cx, cy
+                ),
+                exp_rgb,
+            )
+
+        self.assertTrue(
+            is_hdr_content({
+                "primaries": "bt.2020",
+                "gamma": "hlg",
+                "colormatrix": "bt.2020-ncl",
+            })
+        )
+
+        expected_stream = generate_patterns._expected_stream(spec)
+        recorded_cmds: list[list[str]] = []
+
+        def fake_run_checked(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+            recorded_cmds.append(cmd)
+            Path(cmd[-1]).write_bytes(b"hermetic-ffv1-hlg")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            with mock.patch.object(generate_patterns.shutil, "which", return_value="/usr/bin/mock"), \
+                 mock.patch.object(generate_patterns, "_run_checked", side_effect=fake_run_checked), \
+                 mock.patch.object(generate_patterns, "ffprobe_stream", return_value=dict(expected_stream)), \
+                 mock.patch.object(generate_patterns, "tool_version", side_effect=lambda exe: f"{exe} version 8.1.2 "):
+                result = generate_patterns.ensure_fixture("hlg", cache_dir)
+            self.assertEqual(result["mode"], "hlg")
+            self.assertEqual(result["stream"]["color_primaries"], "bt2020")
+            self.assertEqual(result["stream"]["color_transfer"], "arib-std-b67")
+            self.assertEqual(len(recorded_cmds), 1)
+            self.assertIn("arib-std-b67", recorded_cmds[0])
+
     def test_l4_hdr10_pattern_layout_codes_and_hermetic_cli(self) -> None:
         """Hermetically verify L4 HDR10 PQ/BT.2020 pattern (100/203/400/600/800/1000 nits) without invoking real ffmpeg."""
         patches = generate_patterns.l4_hdr10_patches(width=600, height=360)

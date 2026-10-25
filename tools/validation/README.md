@@ -292,6 +292,7 @@
   - `TestGtkCmPolicy.test_composite_window_accepts_parametric_pq_and_hlg` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_composite_window_rejects_sdr_transfers` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_composite_window_rejects_wcg_sdr_transfer` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTraceOnlyCliValidation.test_trace_only_hlg_positive_and_wcg_sdr_negative_effective_commit_controls` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_composite_window_unrevealed_or_unknown_transfer_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_composite_window_ext_linear_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_composite_window_parameters_after_create_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
