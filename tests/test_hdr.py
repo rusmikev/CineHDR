@@ -494,7 +494,22 @@ class TestApplyHDRSettings(unittest.TestCase):
 
         # Scenario 4: Display is Wayland
         mock_display.__class__.__name__ = "GdkWaylandDisplay"
+        from contextlib import contextmanager
         from src.gtk_cm_policy import CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, PRIM_BT2020, TF_SRGB, TF_PQ
+
+        @contextmanager
+        def isolated_cm_env(**overrides):
+            with patch.dict(os.environ, {}, clear=False):
+                for key in (
+                    "CINEHDR_NO_COLOR_MGMT",
+                    "CINEHDR_EXPERIMENTAL_COLOR_MGMT",
+                    "GSK_RENDERER",
+                    "GDK_DEBUG",
+                ):
+                    os.environ.pop(key, None)
+                os.environ.update(overrides)
+                yield
+
         valid_caps = CmCaps(
             intents=frozenset([INTENT_PERCEPTUAL]),
             features=frozenset([FEAT_PARAMETRIC]),
@@ -502,7 +517,7 @@ class TestApplyHDRSettings(unittest.TestCase):
             primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
         )
         invalidate_hdr_support_cache()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+        with isolated_cm_env(GDK_DEBUG="color-mgmt"), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertTrue(check_hdr_support())
@@ -510,7 +525,7 @@ class TestApplyHDRSettings(unittest.TestCase):
         # Scenario 5: Display is Wayland but not composited
         mock_display.is_composited.return_value = False
         invalidate_hdr_support_cache()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+        with isolated_cm_env(GDK_DEBUG="color-mgmt"), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
@@ -519,7 +534,7 @@ class TestApplyHDRSettings(unittest.TestCase):
         # Scenario 6: Display is Wayland but no RGBA
         mock_display.is_rgba.return_value = False
         invalidate_hdr_support_cache()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+        with isolated_cm_env(GDK_DEBUG="color-mgmt"), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertFalse(check_hdr_support())
@@ -530,7 +545,7 @@ class TestApplyHDRSettings(unittest.TestCase):
         mock_dmabuf.get_n_formats.return_value = 0
         mock_display.get_dmabuf_formats.return_value = mock_dmabuf
         invalidate_hdr_support_cache()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
+        with isolated_cm_env(GDK_DEBUG="color-mgmt"), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
             self.assertTrue(check_hdr_support())
@@ -543,6 +558,7 @@ class TestApplyHDRSettings(unittest.TestCase):
     ):
         """P3.1: Sufficient CM/GTK/monitor caps + 0 dmabuf formats must allow HDR via GLTexture,
         while preserving negative controls for missing CM, missing TF, and SDR monitor."""
+        from contextlib import contextmanager
         from src.hdr_detection import (
             check_hdr_support,
             get_monitor_hdr_state,
@@ -560,6 +576,19 @@ class TestApplyHDRSettings(unittest.TestCase):
             TF_PQ,
         )
         from src.wayland_output_hdr import OutputHdrInfo
+
+        @contextmanager
+        def isolated_cm_env(**overrides):
+            with patch.dict(os.environ, {}, clear=False):
+                for key in (
+                    "CINEHDR_NO_COLOR_MGMT",
+                    "CINEHDR_EXPERIMENTAL_COLOR_MGMT",
+                    "GSK_RENDERER",
+                    "GDK_DEBUG",
+                ):
+                    os.environ.pop(key, None)
+                os.environ.update(overrides)
+                yield
 
         mock_colorstate.get_rec2100_pq = MagicMock()
         mock_display = MagicMock()
@@ -581,7 +610,7 @@ class TestApplyHDRSettings(unittest.TestCase):
 
         # Positive case: 0 dmabuf formats + valid CM/GTK/caps + HDR monitor -> HDR allowed & active
         invalidate_hdr_support_cache()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}, clear=False), \
+        with isolated_cm_env(GDK_DEBUG="color-mgmt"), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
              patch("src.wayland_cm_probe.probe_color_management", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
@@ -610,7 +639,7 @@ class TestApplyHDRSettings(unittest.TestCase):
 
         # Negative control 1: Missing compositor color-management protocol
         invalidate_hdr_support_cache()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}, clear=False), \
+        with isolated_cm_env(GDK_DEBUG="color-mgmt"), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
              patch("src.wayland_cm_probe.probe_color_management", return_value=False), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
@@ -629,7 +658,7 @@ class TestApplyHDRSettings(unittest.TestCase):
             primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
         )
         invalidate_hdr_support_cache()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}, clear=False), \
+        with isolated_cm_env(GDK_DEBUG="color-mgmt"), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
              patch("src.wayland_cm_probe.probe_color_management", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=caps_no_pq), \
@@ -642,7 +671,7 @@ class TestApplyHDRSettings(unittest.TestCase):
 
         # Negative control 3: Monitor in SDR mode blocks Auto HDR even when check_hdr_support() is True
         invalidate_hdr_support_cache()
-        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}, clear=False), \
+        with isolated_cm_env(GDK_DEBUG="color-mgmt"), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
              patch("src.wayland_cm_probe.probe_color_management", return_value=True), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
@@ -666,6 +695,19 @@ class TestApplyHDRSettings(unittest.TestCase):
             self.assertFalse(controller.committed_output_state.is_hdr)
             self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA8")
             self.assertEqual(controller.committed_output_state.gdk_color_state, "srgb")
+
+        # Negative control 4: Explicit CINEHDR_NO_COLOR_MGMT=1 opt-out blocks Auto HDR
+        invalidate_hdr_support_cache()
+        with isolated_cm_env(GDK_DEBUG="color-mgmt", CINEHDR_NO_COLOR_MGMT="1"), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=hdr_monitor), \
+             patch("src.hdr_controller.hdr_output_allowed", wraps=hdr_output_allowed), \
+             patch("src.hdr_controller.get_monitor_hdr_state", wraps=get_monitor_hdr_state):
+            allowed, reason = hdr_output_allowed("DP-1")
+            self.assertFalse(allowed)
+            self.assertEqual(reason, "GTK color management disabled via CINEHDR_NO_COLOR_MGMT")
 
     @patch("src.hdr_controller.check_hdr_support")
     def test_apply_hdr_settings_with_support_check(self, mock_support):
