@@ -447,119 +447,107 @@ def _has_active_id_collision(
     return False, None
 
 
-def _verify_registry_connection_link(
-    calls: list[TraceCall],
-    reg_a: int,
-    reg_b: int,
-    manager_global_id: int,
-    *,
-    connection_tags_verified: bool = False,
+def _find_registry_creations(
+    calls: list[TraceCall], reg_id: int
+) -> tuple[list[TraceCall], list[TraceCall]]:
+    """Return lists of get_registry calls creating reg_id: (disp1_creations, other_disp_creations)."""
+    disp1_creations: list[TraceCall] = []
+    other_disp_creations: list[TraceCall] = []
+    for c in calls:
+        if c.method == "get_registry":
+            m = NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args)
+            if m and int(m.group("object_id")) == reg_id:
+                if c.interface == "wl_display" and c.object_id == 1:
+                    disp1_creations.append(c)
+                else:
+                    other_disp_creations.append(c)
+    return disp1_creations, other_disp_creations
+
+
+def _check_registry_generations(
+    calls: list[TraceCall], reg_id: int, disp1_creations: list[TraceCall]
 ) -> tuple[bool, str | None, bool]:
-    """Verify that two registry IDs belong to the same proven connection.
-
-    Returns (is_ok, reason, is_unproven_connection).
-    """
-    def _check_registry(reg_id: int, is_cross_registry_pair: bool) -> tuple[bool, str | None, bool, TraceCall | None]:
-        disp1_creations: list[TraceCall] = []
-        other_disp_creations: list[TraceCall] = []
-        for c in calls:
-            if c.method == "get_registry":
-                m = NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args)
-                if m and int(m.group("object_id")) == reg_id:
-                    if c.interface == "wl_display" and c.object_id == 1:
-                        disp1_creations.append(c)
-                    else:
-                        other_disp_creations.append(c)
-
-        if other_disp_creations and not disp1_creations:
-            disp_info = f"{other_disp_creations[0].interface}#{other_disp_creations[0].object_id}"
-            return (
-                False,
-                f"wl_registry#{reg_id} was not created by wl_display#1 (observed: {disp_info}.get_registry)",
-                False,
-                None,
-            )
-
-        if not disp1_creations:
-            if is_cross_registry_pair:
-                return False, f"wl_registry#{reg_id} was not created by wl_display on this connection", False, None
-            return (
-                False,
-                f"creation of wl_registry#{reg_id} by wl_display#1 was not observed in trace: "
-                "registry origin cannot be proven",
-                True,
-                None,
-            )
-
-        if len(disp1_creations) > 1:
-            has_unterminated = False
-            for i in range(len(disp1_creations) - 1):
-                c1 = disp1_creations[i]
-                c2 = disp1_creations[i + 1]
-                deleted = any(
-                    c.interface == "wl_display"
-                    and c.method == "delete_id"
-                    and c.args == str(reg_id)
-                    and c1.index < c.index < c2.index
-                    for c in calls
-                )
-                if not deleted:
-                    has_unterminated = True
-                    break
-            if has_unterminated:
-                return (
-                    False,
-                    f"multiple active creations of wl_registry#{reg_id} observed in trace without termination: "
-                    "connection belonging cannot be established in unified WAYLAND_DEBUG",
-                    True,
-                    None,
-                )
-            return (
-                False,
-                f"multiple generations of wl_registry#{reg_id} observed in trace: "
-                "registry generation cannot be proven in unified WAYLAND_DEBUG",
-                True,
-                None,
-            )
-
-        creation_call = disp1_creations[0]
-        if any(
-            c.interface == "wl_registry"
-            and c.object_id == reg_id
-            and c.index < creation_call.index
+    """Verify that multiple creations of a registry ID are properly terminated."""
+    has_unterminated = False
+    for i in range(len(disp1_creations) - 1):
+        c1 = disp1_creations[i]
+        c2 = disp1_creations[i + 1]
+        deleted = any(
+            c.interface == "wl_display"
+            and c.method == "delete_id"
+            and c.args == str(reg_id)
+            and c1.index < c.index < c2.index
             for c in calls
-        ):
-            return (
-                False,
-                f"wl_registry#{reg_id} was used before its creation at index {creation_call.index}",
-                False,
-                None,
-            )
-
-        return True, None, False, creation_call
-
-    is_cross = (reg_a != reg_b)
-    ok_a, err_a, unp_a, creat_a = _check_registry(reg_a, is_cross)
-    if not ok_a:
-        return False, err_a, unp_a
-
-    ok_b, err_b, unp_b, creat_b = _check_registry(reg_b, is_cross)
-    if not ok_b:
-        return False, err_b, unp_b
-
-    if reg_a == reg_b:
-        return True, None, False
-
-    if not connection_tags_verified:
+        )
+        if not deleted:
+            has_unterminated = True
+            break
+    if has_unterminated:
         return (
             False,
-            f"connection belonging between wl_registry#{reg_a} and wl_registry#{reg_b} cannot be established from trace: "
-            "wl_display numeric ID does not prove a shared connection in unified WAYLAND_DEBUG",
+            f"multiple active creations of wl_registry#{reg_id} observed in trace without termination: "
+            "connection belonging cannot be established in unified WAYLAND_DEBUG",
             True,
         )
+    return (
+        False,
+        f"multiple generations of wl_registry#{reg_id} observed in trace: "
+        "registry generation cannot be proven in unified WAYLAND_DEBUG",
+        True,
+    )
 
-    assert creat_a is not None and creat_b is not None
 
+def _check_single_registry_origin(
+    calls: list[TraceCall], reg_id: int, *, is_cross: bool
+) -> tuple[bool, str | None, bool, TraceCall | None]:
+    """Verify origin, lifetime, and usage order of a single registry ID."""
+    disp1_creations, other_disp_creations = _find_registry_creations(calls, reg_id)
+
+    if other_disp_creations and not disp1_creations:
+        disp_info = f"{other_disp_creations[0].interface}#{other_disp_creations[0].object_id}"
+        return (
+            False,
+            f"wl_registry#{reg_id} was not created by wl_display#1 (observed: {disp_info}.get_registry)",
+            False,
+            None,
+        )
+
+    if not disp1_creations:
+        if is_cross:
+            return False, f"wl_registry#{reg_id} was not created by wl_display on this connection", False, None
+        return (
+            False,
+            f"creation of wl_registry#{reg_id} by wl_display#1 was not observed in trace: "
+            "registry origin cannot be proven",
+            True,
+            None,
+        )
+
+    if len(disp1_creations) > 1:
+        ok_gen, err_gen, unp_gen = _check_registry_generations(calls, reg_id, disp1_creations)
+        return ok_gen, err_gen, unp_gen, None
+
+    creation_call = disp1_creations[0]
+    if any(
+        c.interface == "wl_registry"
+        and c.object_id == reg_id
+        and c.index < creation_call.index
+        for c in calls
+    ):
+        return (
+            False,
+            f"wl_registry#{reg_id} was used before its creation at index {creation_call.index}",
+            False,
+            None,
+        )
+
+    return True, None, False, creation_call
+
+
+def _validate_cross_registry_tags(
+    reg_a: int, creat_a: TraceCall, reg_b: int, creat_b: TraceCall
+) -> tuple[bool, str | None, bool]:
+    """Verify that creation calls for two distinct registries share connection ID and socket fd."""
     if creat_a.conn_id is None or creat_a.fd is None:
         return (
             False,
@@ -572,7 +560,6 @@ def _verify_registry_connection_link(
             f"creation of wl_registry#{reg_b} lacks verified connection or fd tag",
             True,
         )
-
     if creat_a.conn_id != creat_b.conn_id:
         return (
             False,
@@ -585,10 +572,13 @@ def _verify_registry_connection_link(
             f"wl_registry#{reg_a} (fd#{creat_a.fd}) and wl_registry#{reg_b} (fd#{creat_b.fd}) have different socket file descriptors",
             True,
         )
+    return True, None, False
 
-    expected_conn = creat_a.conn_id
-    expected_fd = creat_a.fd
 
+def _validate_connection_call_consistency(
+    calls: list[TraceCall], reg_a: int, reg_b: int, expected_conn: int, expected_fd: int
+) -> tuple[bool, str | None, bool]:
+    """Verify that all calls on the registries, display, and entire trace match the expected connection."""
     for c in calls:
         if (
             (c.interface == "wl_registry" and c.object_id in (reg_a, reg_b))
@@ -616,6 +606,50 @@ def _verify_registry_connection_link(
             )
 
     return True, None, False
+
+
+def _verify_registry_connection_link(
+    calls: list[TraceCall],
+    reg_a: int,
+    reg_b: int,
+    manager_global_id: int,
+    *,
+    connection_tags_verified: bool = False,
+) -> tuple[bool, str | None, bool]:
+    """Verify that two registry IDs belong to the same proven connection.
+
+    Returns (is_ok, reason, is_unproven_connection).
+    """
+    is_cross = (reg_a != reg_b)
+    ok_a, err_a, unp_a, creat_a = _check_single_registry_origin(calls, reg_a, is_cross=is_cross)
+    if not ok_a:
+        return False, err_a, unp_a
+
+    ok_b, err_b, unp_b, creat_b = _check_single_registry_origin(calls, reg_b, is_cross=is_cross)
+    if not ok_b:
+        return False, err_b, unp_b
+
+    if reg_a == reg_b:
+        return True, None, False
+
+    if not connection_tags_verified:
+        return (
+            False,
+            f"connection belonging between wl_registry#{reg_a} and wl_registry#{reg_b} cannot be established from trace: "
+            "wl_display numeric ID does not prove a shared connection in unified WAYLAND_DEBUG",
+            True,
+        )
+
+    assert creat_a is not None and creat_b is not None
+
+    ok_tags, err_tags, unp_tags = _validate_cross_registry_tags(reg_a, creat_a, reg_b, creat_b)
+    if not ok_tags:
+        return False, err_tags, unp_tags
+
+    assert creat_a.conn_id is not None and creat_a.fd is not None
+    return _validate_connection_call_consistency(
+        calls, reg_a, reg_b, creat_a.conn_id, creat_a.fd
+    )
 
 
 def _used_before_creation(
