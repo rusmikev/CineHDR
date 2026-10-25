@@ -26,6 +26,8 @@ from parse_wayland_color_trace import (
     TRACE_SCHEMA,
     UNKNOWN_SCOPE,
     TraceValidationError,
+    _calls,
+    _verify_registry_connection_link,
     create_evidence_report,
     create_trace_only_failure_evidence,
     create_trace_only_report,
@@ -3925,8 +3927,8 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["matched"]["manager"]["id"], 3)
             self.assertEqual(data["matched"]["registry_global"]["registry_id"], 2)
 
-    def test_trace_only_synthetic_distinct_registries_unproven_connection_returns_unknown(self):
-        """Hermetic CLI test: compositor and manager on distinct registries return UNKNOWN due to unproven connection link."""
+    def test_trace_only_synthetic_distinct_registries_proven_connection_passes(self):
+        """Positive test: compositor and manager on distinct registries on one verified connection return PASS."""
         trace = """
 [ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
 [ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
@@ -3962,10 +3964,263 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
                 "--app-id", "mpv",
                 "--output", str(out_path),
             ])
+            self.assertEqual(status, 0)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "PASS")
+            self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
+            self.assertEqual(data["matched"]["manager"]["id"], 3)
+            self.assertEqual(data["matched"]["registry_global"]["registry_id"], 52)
+
+    def test_trace_only_synthetic_distinct_registries_untagged_returns_unknown(self):
+        """Negative control: distinct registries in untagged trace cannot prove shared connection and return UNKNOWN."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0008] -> wl_display#1.get_registry(new id wl_registry#52)
+[ 1042.0009] wl_registry#52.global(4, "wp_color_manager_v1", 2)
+[ 1042.0010] -> wl_registry#52.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        # Direct composite_window evaluation without connection tags must return UNKNOWN
+        data_direct = validate_composite_window_trace(trace, expected_app_id="mpv", trace_only=False)
+        self.assertEqual(data_direct["status"], "UNKNOWN")
+        self.assertIn(
+            "connection belonging between wl_registry#2 and wl_registry#52 cannot be established from trace: "
+            "wl_display numeric ID does not prove a shared connection in unified WAYLAND_DEBUG",
+            data_direct["reason"],
+        )
+
+        # In --trace-only mode, untagged trace also returns UNKNOWN
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
             self.assertEqual(status, 1)
             data = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertEqual(data["status"], "UNKNOWN")
-            self.assertIn("connection belonging between wl_registry#2 and wl_registry#52 cannot be established", data["reason"])
+
+    def test_trace_only_synthetic_distinct_registries_different_connections_rejected(self):
+        """Negative control: distinct registries on different connections with matching numeric IDs are rejected."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0008] -> wl_display#1.get_registry(new id wl_registry#52)
+[ 1042.0009] wl_registry#52.global(4, "wp_color_manager_v1", 2)
+[ 1042.0010] -> wl_registry#52.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        lines = []
+        for line in trace.splitlines():
+            if any(k in line for k in ("wl_registry#52", "wp_color_manager_v1#3", "wp_image_description", "wp_color_management_surface_v1#23")):
+                lines.append(f"[conn#2 fd#10] {line}")
+            else:
+                lines.append(f"[conn#1 fd#9] {line}")
+        trace_multi_conn = "\n".join(lines)
+
+        # 1. Direct unit check on _verify_registry_connection_link:
+        calls = _calls(trace_multi_conn)
+        ok, reason, is_unproven = _verify_registry_connection_link(
+            calls, reg_a=2, reg_b=52, manager_global_id=4, connection_tags_verified=True
+        )
+        self.assertFalse(ok)
+        self.assertTrue(is_unproven)
+        self.assertIn("belong to different connections", reason)
+
+        # 2. CLI --trace-only rejects multi-connection split:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_multi_conn, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertNotEqual(data["status"], "PASS")
+
+    def test_trace_only_synthetic_distinct_registries_incomplete_tags_rejected(self):
+        """Negative control: distinct registries with missing socket fd or untracked tag return UNKNOWN."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0008] -> wl_display#1.get_registry(new id wl_registry#52)
+[ 1042.0009] wl_registry#52.global(4, "wp_color_manager_v1", 2)
+[ 1042.0010] -> wl_registry#52.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        lines_missing_fd = []
+        for line in _tag_trace(trace).splitlines():
+            if "get_registry(new id wl_registry#52)" in line:
+                lines_missing_fd.append(line.replace("[conn#1 fd#9]", "[conn#1]"))
+            else:
+                lines_missing_fd.append(line)
+        trace_missing_fd = "\n".join(lines_missing_fd)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_missing_fd, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertIn("missing socket fd", data["reason"])
+
+    def test_trace_only_synthetic_distinct_registries_fd_change_rejected(self):
+        """Negative control: distinct registries with inconsistent fd within same conn_id return UNKNOWN."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0008] -> wl_display#1.get_registry(new id wl_registry#52)
+[ 1042.0009] wl_registry#52.global(4, "wp_color_manager_v1", 2)
+[ 1042.0010] -> wl_registry#52.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        lines_fd_change = []
+        for line in _tag_trace(trace).splitlines():
+            if "get_registry(new id wl_registry#52)" in line:
+                lines_fd_change.append(line.replace("[conn#1 fd#9]", "[conn#1 fd#10]"))
+            else:
+                lines_fd_change.append(line)
+        trace_fd_change = "\n".join(lines_fd_change)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(trace_fd_change, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertIn("inconsistent socket fd", data["reason"])
+
+    def test_trace_only_synthetic_distinct_registries_unknown_origin_rejected(self):
+        """Negative control: distinct registry without proven get_registry creation returns UNKNOWN."""
+        trace = """
+[ 1042.0001] -> wl_display#1.get_registry(new id wl_registry#2)
+[ 1042.0002] wl_registry#2.global(4, "wp_color_manager_v1", 2)
+[ 1042.0003] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[ 1042.0004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0005] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.0006] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.0007] -> xdg_toplevel#68.set_app_id("mpv")
+[ 1042.0009] wl_registry#52.global(4, "wp_color_manager_v1", 2)
+[ 1042.0010] -> wl_registry#52.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.0016] wp_color_manager_v1#3.supported_intent(0)
+[ 1042.0017] wp_color_manager_v1#3.done()
+[ 1042.0018] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.0019] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.0020] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[ 1042.0021] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.0022] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.0023] wp_image_description_v1#31.ready(101)
+[ 1042.0024] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0025] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.0026] -> wl_surface#61.commit()
+""".strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "mpv-wayland.log"
+            out_path = root / "mpv-l3p.json"
+            trace_path.write_text(_tag_trace(trace), encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertIn("wl_registry#52 was not created by wl_display on this connection", data["error"])
 
     def test_trace_only_synthetic_concurrent_manager_id_collision_rejected(self):
         """Hermetic CLI test: concurrent active lifetime collision on manager ID without intervening destroy/delete fails with status=FAIL."""
@@ -4194,16 +4449,20 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["status"], "FAIL")
             self.assertIn("foreign registry", data["error"])
 
-        # 3. Registry created with wl_display#1 but distinct from compositor registry returns UNKNOWN
-        trace_display1 = trace_unlinked.replace(
+        # 3. Registry created with wl_display#1 in untagged trace cannot prove shared connection
+        raw_display1 = trace_unlinked.replace(
             '[ 1042.0014] wl_registry#99.global(4, "wp_color_manager_v1", 2)',
             '[ 1042.0013] -> wl_display#1.get_registry(new id wl_registry#99)\n[ 1042.0014] wl_registry#99.global(4, "wp_color_manager_v1", 2)'
         )
+        data_untagged = validate_composite_window_trace(raw_display1, expected_app_id="mpv", trace_only=False)
+        self.assertEqual(data_untagged["status"], "UNKNOWN")
+        self.assertIn("connection belonging between wl_registry#2 and wl_registry#99 cannot be established", data_untagged["reason"])
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             trace_path = root / "mpv-wayland.log"
             out_path = root / "mpv-l3p.json"
-            trace_path.write_text(_tag_trace(trace_display1), encoding="utf-8")
+            trace_path.write_text(raw_display1, encoding="utf-8")
 
             status = main([
                 "--trace-only",
@@ -4214,7 +4473,6 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(status, 1)
             data = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertEqual(data["status"], "UNKNOWN")
-            self.assertIn("connection belonging between wl_registry#2 and wl_registry#99 cannot be established", data["reason"])
 
     def test_trace_only_synthetic_missing_registry_creation_returns_unknown(self):
         """Mutation 1: trace omitting wl_display#1.get_registry returns UNKNOWN."""

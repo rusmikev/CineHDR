@@ -452,12 +452,14 @@ def _verify_registry_connection_link(
     reg_a: int,
     reg_b: int,
     manager_global_id: int,
+    *,
+    connection_tags_verified: bool = False,
 ) -> tuple[bool, str | None, bool]:
     """Verify that two registry IDs belong to the same proven connection.
 
     Returns (is_ok, reason, is_unproven_connection).
     """
-    def _check_registry(reg_id: int, is_cross_registry_pair: bool) -> tuple[bool, str | None, bool]:
+    def _check_registry(reg_id: int, is_cross_registry_pair: bool) -> tuple[bool, str | None, bool, TraceCall | None]:
         disp1_creations: list[TraceCall] = []
         other_disp_creations: list[TraceCall] = []
         for c in calls:
@@ -475,16 +477,18 @@ def _verify_registry_connection_link(
                 False,
                 f"wl_registry#{reg_id} was not created by wl_display#1 (observed: {disp_info}.get_registry)",
                 False,
+                None,
             )
 
         if not disp1_creations:
             if is_cross_registry_pair:
-                return False, f"wl_registry#{reg_id} was not created by wl_display on this connection", False
+                return False, f"wl_registry#{reg_id} was not created by wl_display on this connection", False, None
             return (
                 False,
                 f"creation of wl_registry#{reg_id} by wl_display#1 was not observed in trace: "
                 "registry origin cannot be proven",
                 True,
+                None,
             )
 
         if len(disp1_creations) > 1:
@@ -508,12 +512,14 @@ def _verify_registry_connection_link(
                     f"multiple active creations of wl_registry#{reg_id} observed in trace without termination: "
                     "connection belonging cannot be established in unified WAYLAND_DEBUG",
                     True,
+                    None,
                 )
             return (
                 False,
                 f"multiple generations of wl_registry#{reg_id} observed in trace: "
                 "registry generation cannot be proven in unified WAYLAND_DEBUG",
                 True,
+                None,
             )
 
         creation_call = disp1_creations[0]
@@ -527,28 +533,89 @@ def _verify_registry_connection_link(
                 False,
                 f"wl_registry#{reg_id} was used before its creation at index {creation_call.index}",
                 False,
+                None,
             )
 
-        return True, None, False
+        return True, None, False, creation_call
 
     is_cross = (reg_a != reg_b)
-    ok_a, err_a, unp_a = _check_registry(reg_a, is_cross)
+    ok_a, err_a, unp_a, creat_a = _check_registry(reg_a, is_cross)
     if not ok_a:
         return False, err_a, unp_a
 
-    ok_b, err_b, unp_b = _check_registry(reg_b, is_cross)
+    ok_b, err_b, unp_b, creat_b = _check_registry(reg_b, is_cross)
     if not ok_b:
         return False, err_b, unp_b
 
     if reg_a == reg_b:
         return True, None, False
 
-    return (
-        False,
-        f"connection belonging between wl_registry#{reg_a} and wl_registry#{reg_b} cannot be established from trace: "
-        "wl_display numeric ID does not prove a shared connection in unified WAYLAND_DEBUG",
-        True,
-    )
+    if not connection_tags_verified:
+        return (
+            False,
+            f"connection belonging between wl_registry#{reg_a} and wl_registry#{reg_b} cannot be established from trace: "
+            "wl_display numeric ID does not prove a shared connection in unified WAYLAND_DEBUG",
+            True,
+        )
+
+    assert creat_a is not None and creat_b is not None
+
+    if creat_a.conn_id is None or creat_a.fd is None:
+        return (
+            False,
+            f"creation of wl_registry#{reg_a} lacks verified connection or fd tag",
+            True,
+        )
+    if creat_b.conn_id is None or creat_b.fd is None:
+        return (
+            False,
+            f"creation of wl_registry#{reg_b} lacks verified connection or fd tag",
+            True,
+        )
+
+    if creat_a.conn_id != creat_b.conn_id:
+        return (
+            False,
+            f"wl_registry#{reg_a} (conn#{creat_a.conn_id}) and wl_registry#{reg_b} (conn#{creat_b.conn_id}) belong to different connections",
+            True,
+        )
+    if creat_a.fd != creat_b.fd:
+        return (
+            False,
+            f"wl_registry#{reg_a} (fd#{creat_a.fd}) and wl_registry#{reg_b} (fd#{creat_b.fd}) have different socket file descriptors",
+            True,
+        )
+
+    expected_conn = creat_a.conn_id
+    expected_fd = creat_a.fd
+
+    for c in calls:
+        if (
+            (c.interface == "wl_registry" and c.object_id in (reg_a, reg_b))
+            or (c.interface == "wl_display" and c.object_id == 1)
+        ):
+            if c.conn_id is None or c.fd is None:
+                return (
+                    False,
+                    f"call {c.interface}#{c.object_id}.{c.method} at index {c.index} lacks verified connection or fd tag",
+                    True,
+                )
+            if c.conn_id != expected_conn or c.fd != expected_fd:
+                return (
+                    False,
+                    f"call {c.interface}#{c.object_id}.{c.method} at index {c.index} observed with inconsistent connection (conn#{c.conn_id} fd#{c.fd} vs conn#{expected_conn} fd#{expected_fd})",
+                    True,
+                )
+
+    for c in calls:
+        if c.conn_id is not None and (c.conn_id != expected_conn or (c.fd is not None and c.fd != expected_fd)):
+            return (
+                False,
+                f"trace contains calls from multiple connections (conn#{c.conn_id} fd#{c.fd} vs conn#{expected_conn} fd#{expected_fd}): connection belonging cannot be established",
+                True,
+            )
+
+    return True, None, False
 
 
 def _used_before_creation(
@@ -2161,7 +2228,11 @@ def validate_composite_window_trace(
                 )
                 if comp_bind is not None:
                     link_ok, link_err, is_unproven = _verify_registry_connection_link(
-                        calls, comp_bind.object_id, bind.object_id, global_id
+                        calls,
+                        comp_bind.object_id,
+                        bind.object_id,
+                        global_id,
+                        connection_tags_verified=(selected_conn is not None),
                     )
                     if not link_ok:
                         if is_unproven:
@@ -2261,7 +2332,11 @@ def validate_composite_window_trace(
                 )
                 if wm_bind is not None:
                     link_ok, link_err, is_unproven = _verify_registry_connection_link(
-                        calls, wm_bind.object_id, bind.object_id, global_id
+                        calls,
+                        wm_bind.object_id,
+                        bind.object_id,
+                        global_id,
+                        connection_tags_verified=(selected_conn is not None),
                     )
                     if not link_ok:
                         if is_unproven:
@@ -2306,7 +2381,11 @@ def validate_composite_window_trace(
 
             if trace_only:
                 link_ok, link_err, is_unproven = _verify_registry_connection_link(
-                    calls, bind.object_id, bind.object_id, global_id
+                    calls,
+                    bind.object_id,
+                    bind.object_id,
+                    global_id,
+                    connection_tags_verified=(selected_conn is not None),
                 )
                 if not link_ok:
                     if is_unproven:

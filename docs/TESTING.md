@@ -22,7 +22,7 @@
 | Сценарий | Уровень | GNOME-AMD | GNOME-Intel | GNOME-NVIDIA | KDE-AMD | KDE-NVIDIA |
 |---|---|---|---|---|---|---|
 | SDR play (управление, seek, выход) | L2/L3 | PASS 2026-10-24 a24fe81 (L2) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
-| Эталон mpv подтверждён по выходному пути (API/контекст + L3p его поверхности) | L3/L3p | UNCLEAR 2026-10-24 6e0bbbe | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| Эталон mpv подтверждён по выходному пути (API/контекст + L3p его поверхности) | L3/L3p | PASS 2026-10-25 (RADV/waylandvk HDR10; L3p trace ac297a0, conn#4 fd#11, surface#5, effective_buffer#65) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HDR10 `auto` — протокольная трасса | L3p | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HDR10 `auto` — визуальная приёмка на паттерне | L4 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HLG `auto` — протокольная трасса | L3p | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
