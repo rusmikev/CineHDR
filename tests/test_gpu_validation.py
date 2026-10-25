@@ -1608,7 +1608,7 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertIn("published target", detail)
 
     def test_transition_verifies_mpv_target_properties_on_hdr_sdr_hdr_playlist(self):
-        """P1.5 playlist HDR->SDR->HDR: switch-media rejects stale mpv target-trc/target-prim on SDR or unconfigured targets on HDR."""
+        """P1.5 playlist HDR->SDR->HDR: switch-media rejects stale mpv targets on SDR or unconfigured on HDR."""
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.video_area = SimpleNamespace(
             render_backend_active="opengl-next",
@@ -1616,7 +1616,7 @@ class PublicationEvidenceTests(unittest.TestCase):
         )
         session._transition_context_generation = 1
 
-        sdr_after = {
+        base = {
             "time_pos": 8.0,
             "playlist_pos": 0,
             "render_frame_generation": 21,
@@ -1632,67 +1632,48 @@ class PublicationEvidenceTests(unittest.TestCase):
             "target_prim": "auto",
             "target_peak": "auto",
         }
+        sdr_after = dict(base)
         hdr_after = {
+            **base,
             "time_pos": 12.0,
             "playlist_pos": 1,
             "render_frame_generation": 22,
-            "render_context_generation": 1,
             "source_hdr": True,
             "hdr_output_active": True,
             "render_target_format": "GL_RGBA16F",
             "render_target_depth": 16,
             "render_color_state": "rec2100-pq",
-            "dovi_profile": None,
-            "hwdec": "vaapi-copy",
             "target_trc": "pq",
             "target_prim": "bt.2020",
-            "target_peak": "auto",
         }
+
+        sdr_step = ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr"))
+        hdr_step = ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr"))
 
         # Positive control: clean SDR return and HDR return
         session._pending_render_frame_generation = 20
-        status_sdr, detail_sdr = session._verify_step(
-            ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr")),
-            sdr_after,
-        )
+        status_sdr, detail_sdr = session._verify_step(sdr_step, sdr_after)
         self.assertEqual(status_sdr, "PASS")
         self.assertIn("target=auto/auto/auto", detail_sdr)
 
         session._pending_render_frame_generation = 21
-        status_hdr, detail_hdr = session._verify_step(
-            ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr")),
-            hdr_after,
-        )
+        status_hdr, detail_hdr = session._verify_step(hdr_step, hdr_after)
         self.assertEqual(status_hdr, "PASS")
         self.assertIn("target=pq/bt.2020/auto", detail_hdr)
 
-        # Negative control 1: SDR step with stale HDR target-trc or target-prim
-        for stale_sdr in (
-            {**sdr_after, "target_trc": "pq"},
-            {**sdr_after, "target_prim": "bt.2020"},
-            {**sdr_after, "target_peak": "unknown"},
-        ):
-            with self.subTest(stale_sdr=stale_sdr):
+        # Negative control 1: SDR step with stale HDR target-trc, target-prim, or unknown peak
+        for stale in ({"target_trc": "pq"}, {"target_prim": "bt.2020"}, {"target_peak": "unknown"}):
+            with self.subTest(stale_sdr=stale):
                 session._pending_render_frame_generation = 20
-                st, det = session._verify_step(
-                    ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr")),
-                    stale_sdr,
-                )
+                st, det = session._verify_step(sdr_step, {**sdr_after, **stale})
                 self.assertEqual(st, "FAIL")
                 self.assertIn("did not reset for SDR output state", det)
 
-        # Negative control 2: HDR step with unconfigured SDR target-trc or target-prim
-        for bad_hdr in (
-            {**hdr_after, "target_trc": "auto"},
-            {**hdr_after, "target_prim": "auto"},
-            {**hdr_after, "target_peak": "unknown"},
-        ):
-            with self.subTest(bad_hdr=bad_hdr):
+        # Negative control 2: HDR step with unconfigured SDR target-trc, target-prim, or unknown peak
+        for bad in ({"target_trc": "auto"}, {"target_prim": "auto"}, {"target_peak": "unknown"}):
+            with self.subTest(bad_hdr=bad):
                 session._pending_render_frame_generation = 21
-                st, det = session._verify_step(
-                    ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr")),
-                    bad_hdr,
-                )
+                st, det = session._verify_step(hdr_step, {**hdr_after, **bad})
                 self.assertEqual(st, "FAIL")
                 self.assertIn("did not match HDR output state", det)
 
