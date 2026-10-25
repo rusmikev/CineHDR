@@ -401,21 +401,20 @@ def _is_valid_manager_generation(
 
 def _has_active_id_collision(
     calls: list[TraceCall],
-    creations: dict[tuple[str, int], list[int]],
-    interface: str,
+    creations_by_id: dict[int, list[tuple[str, int]]],
     object_id: int,
-) -> bool:
-    """Check if object_id was created multiple times concurrently without intervening destroy or delete_id."""
-    creation_indices = creations.get((interface, object_id), [])
-    if len(creation_indices) <= 1:
-        return False
-    for i in range(len(creation_indices) - 1):
-        c1 = creation_indices[i]
-        c2 = creation_indices[i + 1]
+) -> tuple[bool, str | None]:
+    """Check if object_id has concurrent active lifetimes across any interfaces."""
+    cre_list = creations_by_id.get(object_id, [])
+    if len(cre_list) <= 1:
+        return False, None
+    sorted_cres = sorted(cre_list, key=lambda x: x[1])
+    for i in range(len(sorted_cres) - 1):
+        if1, c1 = sorted_cres[i]
+        if2, c2 = sorted_cres[i + 1]
         destroyed = any(
-            c.interface == interface
-            and c.object_id == object_id
-            and c.method in ("destroy", "destroy_registry")
+            c.object_id == object_id
+            and c.method in ("destroy", "destroy_registry", "release")
             and c1 < c.index < c2
             for c in calls
         )
@@ -427,8 +426,11 @@ def _has_active_id_collision(
             for c in calls
         )
         if not destroyed and not deleted:
-            return True
-    return False
+            return (
+                True,
+                f"concurrent active lifetime collision detected for object #{object_id} ({if1} and {if2})",
+            )
+    return False, None
 
 
 def _verify_registry_connection_link(
@@ -1630,27 +1632,34 @@ def validate_composite_window_trace(
         raise TraceValidationError("wp_color_manager_v1 was not advertised by the registry")
 
     creations: dict[tuple[str, int], list[int]] = {}
+    creations_by_id: dict[int, list[tuple[str, int]]] = {}
     for call in calls:
         match = NEW_ID_RE.search(call.args)
         if match is not None:
             interface = match["interface"]
         else:
             match = UNKNOWN_NEW_ID_RE.search(call.args)
-            interface = {
-                ("wl_display", "get_registry"): "wl_registry",
-                ("wl_compositor", "create_surface"): "wl_surface",
-                ("wp_color_manager_v1", "get_surface"): "wp_color_management_surface_v1",
-                ("wp_color_manager_v1", "create_parametric_creator"): "wp_image_description_creator_params_v1",
-                ("wp_color_manager_v1", "create_icc_creator"): "wp_image_description_creator_icc_v1",
-                ("wp_color_manager_v1", "create_windows_scrgb"): "wp_image_description_v1",
-                ("wp_image_description_creator_params_v1", "create"): "wp_image_description_v1",
-                ("wp_image_description_creator_icc_v1", "create"): "wp_image_description_v1",
-                ("wp_color_management_surface_v1", "get_image_description"): "wp_image_description_v1",
-                ("wp_color_management_output_v1", "get_image_description"): "wp_image_description_v1",
-                ("wp_color_management_surface_feedback_v1", "get_preferred_parametric"): "wp_image_description_v1",
-            }.get((call.interface, call.method))
+            if call.interface == "wl_registry" and call.method == "bind":
+                m_b = BIND_RE.match(call.args)
+                interface = "wp_color_manager_v1" if m_b else "unknown"
+            else:
+                interface = {
+                    ("wl_display", "get_registry"): "wl_registry",
+                    ("wl_compositor", "create_surface"): "wl_surface",
+                    ("wp_color_manager_v1", "get_surface"): "wp_color_management_surface_v1",
+                    ("wp_color_manager_v1", "create_parametric_creator"): "wp_image_description_creator_params_v1",
+                    ("wp_color_manager_v1", "create_icc_creator"): "wp_image_description_creator_icc_v1",
+                    ("wp_color_manager_v1", "create_windows_scrgb"): "wp_image_description_v1",
+                    ("wp_image_description_creator_params_v1", "create"): "wp_image_description_v1",
+                    ("wp_image_description_creator_icc_v1", "create"): "wp_image_description_v1",
+                    ("wp_color_management_surface_v1", "get_image_description"): "wp_image_description_v1",
+                    ("wp_color_management_output_v1", "get_image_description"): "wp_image_description_v1",
+                    ("wp_color_management_surface_feedback_v1", "get_preferred_parametric"): "wp_image_description_v1",
+                }.get((call.interface, call.method), "unknown")
         if match is not None and interface is not None:
-            creations.setdefault((interface, int(match["object_id"])), []).append(call.index)
+            obj_id = int(match["object_id"])
+            creations.setdefault((interface, obj_id), []).append(call.index)
+            creations_by_id.setdefault(obj_id, []).append((interface, call.index))
 
     bindings: list[tuple[TraceCall, TraceCall, int, int, int, int]] = []
     manager_bind_counts: dict[int, int] = {}
@@ -1790,14 +1799,15 @@ def validate_composite_window_trace(
                 continue
             has_get_surface_window = True
 
-            if _has_active_id_collision(calls, creations, "wl_surface", wl_surface_id):
-                raise TraceValidationError(
-                    f"concurrent active lifetime collision detected for wl_surface#{wl_surface_id}"
-                )
-            if _has_active_id_collision(calls, creations, "wp_color_management_surface_v1", color_surface_id):
-                raise TraceValidationError(
-                    f"concurrent active lifetime collision detected for wp_color_management_surface_v1#{color_surface_id}"
-                )
+            has_col, col_err = _has_active_id_collision(calls, creations_by_id, wl_surface_id)
+            if has_col:
+                raise TraceValidationError(col_err)
+            has_col, col_err = _has_active_id_collision(calls, creations_by_id, color_surface_id)
+            if has_col:
+                raise TraceValidationError(col_err)
+            has_col, col_err = _has_active_id_collision(calls, creations_by_id, manager_id)
+            if has_col:
+                raise TraceValidationError(col_err)
 
             wl_surface_creations = creations.get(("wl_surface", wl_surface_id), [])
             if (
