@@ -437,44 +437,63 @@ def _verify_registry_connection_link(
     reg_a: int,
     reg_b: int,
     manager_global_id: int,
-) -> tuple[bool, str | None]:
-    """Verify that two registry IDs belong to the same connection and share consistent globals."""
-    if reg_a == reg_b:
+) -> tuple[bool, str | None, bool]:
+    """Verify that two registry IDs belong to the same proven connection.
+
+    Returns (is_ok, reason, is_unproven_connection).
+    """
+    def _is_created_by_display(reg_id: int) -> tuple[bool, str | None]:
+        if reg_id == 2:
+            return True, None
+        reg_creation = next(
+            (
+                c
+                for c in calls
+                if c.interface == "wl_display"
+                and c.object_id == 1
+                and c.method == "get_registry"
+                and (m := (NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args))) is not None
+                and int(m.group("object_id")) == reg_id
+            ),
+            None,
+        )
+        if reg_creation is None:
+            invalid_disp = next(
+                (
+                    c
+                    for c in calls
+                    if c.interface == "wl_display"
+                    and c.method == "get_registry"
+                    and (m := (NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args))) is not None
+                    and int(m.group("object_id")) == reg_id
+                ),
+                None,
+            )
+            if invalid_disp is not None:
+                return (
+                    False,
+                    f"wl_registry#{reg_id} was not created by wl_display#1 (observed: wl_display#{invalid_disp.object_id}.get_registry)",
+                )
+            return False, f"wl_registry#{reg_id} was not created by wl_display on this connection"
         return True, None
 
-    def _is_registry_created(reg_id: int) -> bool:
-        if reg_id == 2:
-            return True
-        return any(
-            c.interface == "wl_display"
-            and c.method == "get_registry"
-            and (m := (NEW_ID_RE.search(c.args) or UNKNOWN_NEW_ID_RE.search(c.args))) is not None
-            and int(m.group("object_id")) == reg_id
-            for c in calls
-        )
+    ok_a, err_a = _is_created_by_display(reg_a)
+    if not ok_a:
+        return False, err_a, False
 
-    if not _is_registry_created(reg_a):
-        return False, f"wl_registry#{reg_a} was not created by wl_display on this connection"
-    if not _is_registry_created(reg_b):
-        return False, f"wl_registry#{reg_b} was not created by wl_display on this connection"
+    ok_b, err_b = _is_created_by_display(reg_b)
+    if not ok_b:
+        return False, err_b, False
 
-    def _has_manager_global(reg_id: int) -> bool:
-        return any(
-            c.interface == "wl_registry"
-            and c.object_id == reg_id
-            and c.method == "global"
-            and (m := GLOBAL_RE.match(c.args)) is not None
-            and int(m.group("global_id")) == manager_global_id
-            for c in calls
-        )
+    if reg_a == reg_b:
+        return True, None, False
 
-    if not _has_manager_global(reg_a) or not _has_manager_global(reg_b):
-        return (
-            False,
-            f"inconsistent global advertisement for wp_color_manager_v1 between wl_registry#{reg_a} and wl_registry#{reg_b}",
-        )
-
-    return True, None
+    return (
+        False,
+        f"connection belonging between wl_registry#{reg_a} and wl_registry#{reg_b} cannot be established from trace: "
+        "wl_display numeric ID does not prove a shared connection in unified WAYLAND_DEBUG",
+        True,
+    )
 
 
 def _used_before_creation(
@@ -1789,10 +1808,44 @@ def validate_composite_window_trace(
                     None,
                 )
                 if comp_bind is not None:
-                    link_ok, link_err = _verify_registry_connection_link(
+                    link_ok, link_err, is_unproven = _verify_registry_connection_link(
                         calls, comp_bind.object_id, bind.object_id, global_id
                     )
                     if not link_ok:
+                        if is_unproven:
+                            candidates_unknown.append(
+                                {
+                                    "schema": TRACE_SCHEMA,
+                                    "revision": PRIMARY_COMPOSITE_REVISION,
+                                    "status": "UNKNOWN",
+                                    "oracle": "primary_composite_window",
+                                    "scope": UNKNOWN_SCOPE,
+                                    "reason": link_err,
+                                    "matched": {
+                                        "registry_global": {
+                                            "id": global_id,
+                                            "advertised_version": advertised_version,
+                                            "registry_id": bind.object_id,
+                                            "event_index": global_call.index,
+                                        },
+                                        "manager": {
+                                            "id": manager_id,
+                                            "bound_version": bound_version,
+                                            "bind_index": bind.index,
+                                            "perceptual_intent_index": perceptual.index,
+                                            "done_index": done.index,
+                                        },
+                                        "surface": {
+                                            "wl_surface_id": wl_surface_id,
+                                            "color_management_surface_id": color_surface_id,
+                                            "get_surface_index": get_surface.index,
+                                            "app_id": toplevel_surfaces.get(wl_surface_id, expected_app_id),
+                                            "role": "composite_toplevel_window",
+                                        },
+                                    },
+                                }
+                            )
+                            continue
                         order_error = (
                             f"wl_surface#{wl_surface_id} was created by wl_compositor#{comp_id} "
                             f"bound from foreign registry wl_registry#{comp_bind.object_id}: {link_err}"
@@ -1827,10 +1880,44 @@ def validate_composite_window_trace(
                     None,
                 )
                 if wm_bind is not None:
-                    link_ok, link_err = _verify_registry_connection_link(
+                    link_ok, link_err, is_unproven = _verify_registry_connection_link(
                         calls, wm_bind.object_id, bind.object_id, global_id
                     )
                     if not link_ok:
+                        if is_unproven:
+                            candidates_unknown.append(
+                                {
+                                    "schema": TRACE_SCHEMA,
+                                    "revision": PRIMARY_COMPOSITE_REVISION,
+                                    "status": "UNKNOWN",
+                                    "oracle": "primary_composite_window",
+                                    "scope": UNKNOWN_SCOPE,
+                                    "reason": link_err,
+                                    "matched": {
+                                        "registry_global": {
+                                            "id": global_id,
+                                            "advertised_version": advertised_version,
+                                            "registry_id": bind.object_id,
+                                            "event_index": global_call.index,
+                                        },
+                                        "manager": {
+                                            "id": manager_id,
+                                            "bound_version": bound_version,
+                                            "bind_index": bind.index,
+                                            "perceptual_intent_index": perceptual.index,
+                                            "done_index": done.index,
+                                        },
+                                        "surface": {
+                                            "wl_surface_id": wl_surface_id,
+                                            "color_management_surface_id": color_surface_id,
+                                            "get_surface_index": get_surface.index,
+                                            "app_id": toplevel_surfaces.get(wl_surface_id, expected_app_id),
+                                            "role": "composite_toplevel_window",
+                                        },
+                                    },
+                                }
+                            )
+                            continue
                         order_error = (
                             f"xdg_wm_base#{wm_id} for wl_surface#{wl_surface_id} was bound "
                             f"from foreign registry wl_registry#{wm_bind.object_id}: {link_err}"
@@ -2596,6 +2683,19 @@ def create_trace_only_report(
 
     trace_text = trace_path.read_text(encoding="utf-8", errors="replace")
     evidence = validate_composite_window_trace(trace_text, expected_app_id=target_app_id)
+
+    if evidence.get("status") == "UNKNOWN":
+        evidence.update(
+            {
+                "trace_only": True,
+                "protocol_evidence_level": "L3p",
+                "expected_app_id": target_app_id,
+                "observed_app_id": target_app_id,
+                "trace": _input_reference(trace_path),
+                "scope": TRACE_ONLY_UNKNOWN_SCOPE,
+            }
+        )
+        return evidence
 
     # Fail-closed autonomous video surface proof (L3p):
     # PASS requires a verified non-zero wl_buffer active at the chosen HDR commit_index
