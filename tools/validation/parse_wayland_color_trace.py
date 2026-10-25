@@ -345,48 +345,47 @@ def _is_valid_manager_generation(
         prior_death = prior_destroy if prior_destroy is not None else prior_delete
 
     next_binds = [c for c in all_manager_binds if c.index > bind.index]
-    mgr_end_index = len(calls)
-    if next_binds:
-        next_bind = next_binds[0]
-        mgr_destroy = next(
-            (
-                c.index
-                for c in calls
-                if c.interface == "wp_color_manager_v1"
-                and c.object_id == manager_id
-                and c.method == "destroy"
-                and bind.index < c.index < next_bind.index
-            ),
-            None,
-        )
-        mgr_delete = next(
-            (
-                c.index
-                for c in calls
-                if c.interface == "wl_display"
-                and c.method == "delete_id"
-                and c.args == str(manager_id)
-                and bind.index < c.index < next_bind.index
-            ),
-            None,
-        )
-        if mgr_destroy is None and mgr_delete is None:
-            return False, 0
+    next_boundary = next_binds[0].index if next_binds else len(calls)
+
+    mgr_destroy = next(
+        (
+            c.index
+            for c in calls
+            if c.interface == "wp_color_manager_v1"
+            and c.object_id == manager_id
+            and c.method == "destroy"
+            and bind.index < c.index < next_boundary
+        ),
+        None,
+    )
+    mgr_delete = next(
+        (
+            c.index
+            for c in calls
+            if c.interface == "wl_display"
+            and c.method == "delete_id"
+            and c.args == str(manager_id)
+            and bind.index < c.index < next_boundary
+        ),
+        None,
+    )
+
+    if next_binds and mgr_destroy is None and mgr_delete is None:
+        return False, 0
+
+    if mgr_destroy is not None or mgr_delete is not None:
         mgr_end_index = min(idx for idx in (mgr_destroy, mgr_delete) if idx is not None)
     else:
-        mgr_destroy = next(
-            (
-                c.index
-                for c in calls
-                if c.interface == "wp_color_manager_v1"
-                and c.object_id == manager_id
-                and c.method == "destroy"
-                and c.index > bind.index
-            ),
-            None,
-        )
-        if mgr_destroy is not None:
-            mgr_end_index = mgr_destroy
+        mgr_end_index = next_boundary
+
+    # Any call to wp_color_manager_v1#manager_id after its termination and before next bind is invalid
+    if any(
+        c.interface == "wp_color_manager_v1"
+        and c.object_id == manager_id
+        and mgr_end_index < c.index < next_boundary
+        for c in calls
+    ):
+        return False, 0
 
     start_boundary = prior_death if prior_death is not None else -1
     if any(
@@ -615,6 +614,26 @@ def validate_trace(trace: str) -> dict[str, Any]:
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
         valid_gen, mgr_end_index = _is_valid_manager_generation(bindings, bind, manager_id, calls)
         if not valid_gen:
+            first_delete_after_bind = next(
+                (
+                    cd.index
+                    for cd in calls
+                    if cd.interface == "wl_display"
+                    and cd.method == "delete_id"
+                    and cd.args == str(manager_id)
+                    and cd.index > bind.index
+                ),
+                None,
+            )
+            if first_delete_after_bind is not None and any(
+                c.interface == "wp_color_manager_v1"
+                and c.object_id == manager_id
+                and c.index > first_delete_after_bind
+                for c in calls
+            ):
+                raise TraceValidationError(
+                    f"wp_color_manager_v1#{manager_id} was used after delete_id without a new bind"
+                )
             continue
         perceptual = next(
             (
@@ -1693,6 +1712,26 @@ def validate_composite_window_trace(
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
         valid_gen, mgr_end_index = _is_valid_manager_generation(bindings, bind, manager_id, calls)
         if not valid_gen:
+            first_delete_after_bind = next(
+                (
+                    cd.index
+                    for cd in calls
+                    if cd.interface == "wl_display"
+                    and cd.method == "delete_id"
+                    and cd.args == str(manager_id)
+                    and cd.index > bind.index
+                ),
+                None,
+            )
+            if first_delete_after_bind is not None and any(
+                c.interface == "wp_color_manager_v1"
+                and c.object_id == manager_id
+                and c.index > first_delete_after_bind
+                for c in calls
+            ):
+                raise TraceValidationError(
+                    f"wp_color_manager_v1#{manager_id} was used after delete_id without a new bind"
+                )
             continue
         perceptual = next(
             (
@@ -2283,6 +2322,26 @@ def validate_multiphase_trace(
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
         valid_gen, mgr_end_index = _is_valid_manager_generation(bindings, bind, manager_id, calls)
         if not valid_gen:
+            first_delete_after_bind = next(
+                (
+                    cd.index
+                    for cd in calls
+                    if cd.interface == "wl_display"
+                    and cd.method == "delete_id"
+                    and cd.args == str(manager_id)
+                    and cd.index > bind.index
+                ),
+                None,
+            )
+            if first_delete_after_bind is not None and any(
+                c.interface == "wp_color_manager_v1"
+                and c.object_id == manager_id
+                and c.index > first_delete_after_bind
+                for c in calls
+            ):
+                raise TraceValidationError(
+                    f"wp_color_manager_v1#{manager_id} was used after delete_id without a new bind"
+                )
             continue
         perceptual = next(
             (
