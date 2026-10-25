@@ -2017,12 +2017,21 @@ class GpuValidationSession:
             self._pending_context_generation = int(
                 getattr(self.video_area, "render_context_generation", 0)
             )
+            self._pending_render_frame_generation = int(
+                getattr(self.video_area, "render_frame_generation", 0)
+            )
             self._pending_context = self.video_area.mpv_ctx
             hdr_controller = self.video_area.hdr_controller
             self._pending_hdr_state = bool(hdr_controller.is_hdr_content)
+            self._pending_hdr_output_active = bool(
+                getattr(hdr_controller, "is_hdr_active", self._pending_hdr_state)
+            )
             self._pending_render_target = (
                 self.video_area.render_target_format,
                 self.video_area.render_target_depth,
+            )
+            self._pending_render_color_state = getattr(
+                self.video_area, "render_color_state", None
             )
             gl_area.unrealize()
             self.lifecycle_timer_id = GLib.timeout_add(
@@ -2392,11 +2401,29 @@ class GpuValidationSession:
                 return "FAIL", "Gtk.GLArea did not become realized again"
             if not getattr(self.video_area, "_first_frame_logged", False):
                 return "FAIL", "no video frame rendered after context recreation"
+            pending_frame_gen = getattr(self, "_pending_render_frame_generation", None)
+            actual_frame_gen = after.get(
+                "render_frame_generation",
+                getattr(self.video_area, "render_frame_generation", None),
+            )
+            if (
+                pending_frame_gen is not None
+                and actual_frame_gen is not None
+                and int(actual_frame_gen) <= int(pending_frame_gen)
+            ):
+                return "FAIL", "no new video frame was published after context recreation"
             hdr_controller = self.video_area.hdr_controller
             if getattr(hdr_controller, "_disconnected", False):
                 return "FAIL", "HDR property observers were disconnected"
             if bool(hdr_controller.is_hdr_content) != self._pending_hdr_state:
                 return "FAIL", "HDR content state changed across context recreation"
+            pending_hdr_active = getattr(self, "_pending_hdr_output_active", None)
+            if (
+                pending_hdr_active is not None
+                and hasattr(hdr_controller, "is_hdr_active")
+                and bool(hdr_controller.is_hdr_active) != pending_hdr_active
+            ):
+                return "FAIL", "HDR output active state changed across context recreation"
             render_target = (
                 self.video_area.render_target_format,
                 self.video_area.render_target_depth,
@@ -2405,6 +2432,16 @@ class GpuValidationSession:
                 return "FAIL", (
                     "render target changed from "
                     f"{self._pending_render_target} to {render_target}"
+                )
+            pending_color_state = getattr(self, "_pending_render_color_state", None)
+            actual_color_state = after.get(
+                "render_color_state",
+                getattr(self.video_area, "render_color_state", None),
+            )
+            if pending_color_state is not None and actual_color_state != pending_color_state:
+                return "FAIL", (
+                    "published color state changed from "
+                    f"{pending_color_state} to {actual_color_state}"
                 )
             return "PASS", (
                 "context generation advanced "
@@ -2456,6 +2493,31 @@ class GpuValidationSession:
                 return "FAIL", "renderer context changed during a media transition"
             if not expected_hdr and after["dovi_profile"] is not None:
                 return "FAIL", "Dolby Vision metadata remained attached to SDR"
+            trc = str(after.get("target_trc", "unknown")).strip().lower()
+            prim = str(after.get("target_prim", "unknown")).strip().lower()
+            peak = str(after.get("target_peak", "unknown")).strip().lower()
+            if expected_hdr:
+                if (
+                    trc not in ("pq", "hlg")
+                    or prim not in ("bt.2020", "bt.2100")
+                    or peak in ("", "none", "unknown")
+                ):
+                    return "FAIL", (
+                        f"mpv target properties ({after.get('target_trc')}/"
+                        f"{after.get('target_prim')}/{after.get('target_peak')}) "
+                        "did not match HDR output state"
+                    )
+            else:
+                if (
+                    trc not in ("auto", "srgb", "bt.1886")
+                    or prim not in ("auto", "bt.709")
+                    or peak in ("", "none", "unknown")
+                ):
+                    return "FAIL", (
+                        f"mpv target properties ({after.get('target_trc')}/"
+                        f"{after.get('target_prim')}/{after.get('target_peak')}) "
+                        "did not reset for SDR output state"
+                    )
             return "PASS", (
                 f"playlist {expected_index}: {expected_signal.upper()} source → "
                 f"{expected_target[0]}/{expected_target[1]}-bit, "
