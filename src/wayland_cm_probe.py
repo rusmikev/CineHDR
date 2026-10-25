@@ -115,13 +115,17 @@ def invalidate():
 def _load_libwayland() -> Optional[ctypes.CDLL]:
     for name in ("libwayland-client.so.0", "libwayland-client.so"):
         try:
-            return ctypes.CDLL(name)
+            ctypes.CDLL(name, mode=ctypes.RTLD_GLOBAL)
+            # Resolve functions through the process scope so LD_PRELOAD
+            # interposers also cover ctypes calls on GTK's wl_display.
+            return ctypes.CDLL(None)
         except OSError:
             continue
     found = ctypes.util.find_library("wayland-client")
     if found:
         try:
-            return ctypes.CDLL(found)
+            ctypes.CDLL(found, mode=ctypes.RTLD_GLOBAL)
+            return ctypes.CDLL(None)
         except OSError:
             pass
     return None
