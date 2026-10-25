@@ -525,15 +525,147 @@ class TestApplyHDRSettings(unittest.TestCase):
             self.assertFalse(check_hdr_support())
         mock_display.is_rgba.return_value = True
 
-        # Scenario 7: Display is Wayland but 0 dmabuf formats
+        # Scenario 7: Display is Wayland with 0 dmabuf formats — must NOT block GLTexture HDR
         mock_dmabuf = MagicMock()
         mock_dmabuf.get_n_formats.return_value = 0
         mock_display.get_dmabuf_formats.return_value = mock_dmabuf
+        invalidate_hdr_support_cache()
         with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}), \
              patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
              patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display):
-            self.assertFalse(check_hdr_support())
+            self.assertTrue(check_hdr_support())
         mock_dmabuf.get_n_formats.return_value = 10
+
+    @patch("src.hdr_detection.Gdk.Display")
+    @patch("src.hdr_detection.Gdk.ColorState", create=True)
+    def test_zero_dmabuf_formats_does_not_block_gltexture_hdr_with_negative_controls(
+        self, mock_colorstate, mock_display_class
+    ):
+        """P3.1: Sufficient CM/GTK/monitor caps + 0 dmabuf formats must allow HDR via GLTexture,
+        while preserving negative controls for missing CM, missing TF, and SDR monitor."""
+        from src.hdr_detection import (
+            check_hdr_support,
+            get_monitor_hdr_state,
+            hdr_output_allowed,
+            invalidate_hdr_support_cache,
+        )
+        from src.hdr_controller import HdrController
+        from src.gtk_cm_policy import (
+            CmCaps,
+            INTENT_PERCEPTUAL,
+            FEAT_PARAMETRIC,
+            PRIM_SRGB,
+            PRIM_BT2020,
+            TF_SRGB,
+            TF_PQ,
+        )
+        from src.wayland_output_hdr import OutputHdrInfo
+
+        mock_colorstate.get_rec2100_pq = MagicMock()
+        mock_display = MagicMock()
+        mock_display.__class__.__name__ = "GdkWaylandDisplay"
+        mock_display.is_composited.return_value = True
+        mock_display.is_rgba.return_value = True
+        mock_dmabuf = MagicMock()
+        mock_dmabuf.get_n_formats.return_value = 0
+        mock_display.get_dmabuf_formats.return_value = mock_dmabuf
+
+        valid_caps = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC]),
+            tfs=frozenset([TF_SRGB, TF_PQ]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        hdr_monitor = {"DP-1": OutputHdrInfo(connector="DP-1", hdr=True, tf=TF_PQ)}
+        sdr_monitor = {"DP-1": OutputHdrInfo(connector="DP-1", hdr=False, tf=TF_SRGB)}
+
+        # Positive case: 0 dmabuf formats + valid CM/GTK/caps + HDR monitor -> HDR allowed & active
+        invalidate_hdr_support_cache()
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}, clear=False), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=hdr_monitor), \
+             patch("src.hdr_controller.hdr_output_allowed", wraps=hdr_output_allowed), \
+             patch("src.hdr_controller.get_monitor_hdr_state", wraps=get_monitor_hdr_state):
+            self.assertTrue(check_hdr_support())
+            allowed, reason = hdr_output_allowed("DP-1")
+            self.assertTrue(allowed, f"Expected allowed, got: {reason}")
+            self.assertEqual(reason, "allowed")
+
+            mock_mpv, props = self._make_mock_mpv()
+            controller = HdrController(mock_mpv)
+            controller.set_output_hint("DP-1")
+            controller._hdr_mode = "auto"
+            controller._hdr_enabled = True
+            controller._is_hdr_content = True
+            controller.apply_hdr_settings()
+            self.assertTrue(controller.is_hdr_active)
+            self.assertEqual(props.get("target-trc"), "pq")
+            self.assertEqual(props.get("target-prim"), "bt.2020")
+            self.assertIsNotNone(controller.committed_output_state)
+            self.assertTrue(controller.committed_output_state.is_hdr)
+            self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA16F")
+            self.assertEqual(controller.committed_output_state.gdk_color_state, "rec2100-pq")
+
+        # Negative control 1: Missing compositor color-management protocol
+        invalidate_hdr_support_cache()
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}, clear=False), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=False), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=hdr_monitor), \
+             patch("src.hdr_controller.hdr_output_allowed", wraps=hdr_output_allowed), \
+             patch("src.hdr_controller.get_monitor_hdr_state", wraps=get_monitor_hdr_state):
+            self.assertFalse(check_hdr_support())
+            allowed, _ = hdr_output_allowed("DP-1")
+            self.assertFalse(allowed)
+
+        # Negative control 2: Missing required transfer function (no PQ or no sRGB)
+        caps_no_pq = CmCaps(
+            intents=frozenset([INTENT_PERCEPTUAL]),
+            features=frozenset([FEAT_PARAMETRIC]),
+            tfs=frozenset([TF_SRGB]),
+            primaries=frozenset([PRIM_SRGB, PRIM_BT2020]),
+        )
+        invalidate_hdr_support_cache()
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}, clear=False), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=caps_no_pq), \
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=hdr_monitor), \
+             patch("src.hdr_controller.hdr_output_allowed", wraps=hdr_output_allowed), \
+             patch("src.hdr_controller.get_monitor_hdr_state", wraps=get_monitor_hdr_state):
+            self.assertFalse(check_hdr_support())
+            allowed, _ = hdr_output_allowed("DP-1")
+            self.assertFalse(allowed)
+
+        # Negative control 3: Monitor in SDR mode blocks Auto HDR even when check_hdr_support() is True
+        invalidate_hdr_support_cache()
+        with patch.dict(os.environ, {"GDK_DEBUG": "color-mgmt"}, clear=False), \
+             patch("src.hdr_detection.Gdk.Display.get_default", return_value=mock_display), \
+             patch("src.wayland_cm_probe.probe_color_management", return_value=True), \
+             patch("src.wayland_output_hdr.get_cm_caps", return_value=valid_caps), \
+             patch("src.wayland_output_hdr.get_output_hdr_states", return_value=sdr_monitor), \
+             patch("src.hdr_controller.hdr_output_allowed", wraps=hdr_output_allowed), \
+             patch("src.hdr_controller.get_monitor_hdr_state", wraps=get_monitor_hdr_state):
+            self.assertTrue(check_hdr_support())
+            allowed, reason = hdr_output_allowed("DP-1")
+            self.assertFalse(allowed)
+            self.assertIn("SDR mode", reason)
+
+            mock_mpv, props = self._make_mock_mpv()
+            controller = HdrController(mock_mpv)
+            controller.set_output_hint("DP-1")
+            controller._hdr_mode = "auto"
+            controller._hdr_enabled = True
+            controller._is_hdr_content = True
+            controller.apply_hdr_settings()
+            self.assertFalse(controller.is_hdr_active)
+            self.assertEqual(props.get("target-trc"), "auto")
+            self.assertFalse(controller.committed_output_state.is_hdr)
+            self.assertEqual(controller.committed_output_state.fbo_format, "GL_RGBA8")
+            self.assertEqual(controller.committed_output_state.gdk_color_state, "srgb")
 
     @patch("src.hdr_controller.check_hdr_support")
     def test_apply_hdr_settings_with_support_check(self, mock_support):

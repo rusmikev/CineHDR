@@ -71,7 +71,7 @@ Phase 0 разблокирована целиком. Порядок первых
 
 | # | Задача | Исп. | Готово, когда | Статус |
 |---|---|---|---|---|
-| P3.1 | Убрать проверку `get_dmabuf_formats().get_n_formats() == 0` из `_check_hdr_support_uncached` (не относится к GL-текстурному пути; блокирует NVIDIA); оставить только там, где решается offload | A | тесты | TODO |
+| P3.1 | Убрать проверку `get_dmabuf_formats().get_n_formats() == 0` из `_check_hdr_support_uncached` (не относится к GL-текстурному пути; блокирует NVIDIA); оставить только там, где решается offload | A | тесты | IN PROGRESS (проверка `get_dmabuf_formats().get_n_formats() == 0` удалена из `_check_hdr_support_uncached`, герметичные тесты в `test_hdr.py` зелёные; аппаратная проверка на стенде NVIDIA не выполнялась) |
 | P3.2 | Intel Mesa, GNOME: SDR L2/L3; hwdec `vaapi` vs `vaapi-copy` (в продукте не форсировать `vaapi-copy`); 4K60 без пропусков; путь `set_sync`; GL errors = 0 | O → A | ячейки GNOME-Intel | TODO |
 | P3.3 | Intel + внешний HDR-монитор (если HDMI на Intel): L3p + L4 | O | ячейка или N/A | TODO |
 | P3.4 | NVIDIA PRIME во Flatpak: рабочий набор env (`__NV_PRIME_RENDER_OFFLOAD=1`, `__GLX_VENDOR_LIBRARY_NAME=nvidia`, EGL vendor) так, чтобы GTK и mpv были на одном GPU; README «advanced» | O → A | SDR PASS на NVIDIA | TODO |

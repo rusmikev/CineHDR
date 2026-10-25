@@ -170,12 +170,6 @@ def _check_hdr_support_uncached(allow_probe: bool = True) -> bool:
         if hasattr(display, "is_rgba") and not display.is_rgba():
             return False
 
-        # Check if dmabuf formats are available (indicates modern Wayland buffer sharing and protocol support)
-        if hasattr(display, "get_dmabuf_formats"):
-            dmabuf = display.get_dmabuf_formats()
-            if dmabuf is not None and hasattr(dmabuf, "get_n_formats") and dmabuf.get_n_formats() == 0:
-                return False
-
         # Ask the compositor itself: without a color-management global
         # (wp_color_manager_v1 / xx_color_manager_v4) GTK cannot hand a
         # Rec.2100 PQ surface to the compositor and will silently convert
