@@ -476,60 +476,70 @@
        3. Переменная `--env=CINEHDR_NON_UNIQUE=1` предотвращает передачу файла уже запущенному пользовательскому экземпляру CineHDR через D-Bus activation;
        4. Переменные `--env=CINEHDR_EXPERIMENTAL_COLOR_MGMT=1` и `--env=GDK_DEBUG=color-mgmt` включают Wayland Color Management в GTK.
 
-  2. **Preflight: проверка HDR10-паттерна и параметров GSettings**:
+  2. **Подготовка фикстур (HEVC Main10, закольцовывание в 60 с и верификация)**:
+     При использовании профиля `--fixture-profile hevc-main10-yuv420p10-lossless` генератор создаёт видеофайлы с расширением `.mp4` (не `.mkv`):
+     `validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-<mode>.mp4`.
+     Базовая фикстура длится 1.0 с (24 кадра). Для комфортного интерактивного воспроизведения и визуального осмотра фикстура закольцовывается в 60 с без перекодирования через `-c copy`:
      ```bash
-     EXPECTED_SHA="cdee467e93298eb5bad11c408edbe1138edf046bc845580fc97ae0f250eb4b50"
-     COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null)"
-     REPO_ROOT="$(dirname "$COMMON_DIR")"
-     CANDIDATES=(
-       "${PATTERN_PATH:-}"
-       "validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
-       "${REPO_ROOT}/validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
-       "../validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
-     )
-     RESOLVED_PATTERN=""
-     for cand in "${CANDIDATES[@]}"; do
-       if [ -n "$cand" ] && [ -r "$cand" ]; then
-         sha=$(sha256sum "$cand" | awk '{print $1}')
-         if [ "$sha" = "$EXPECTED_SHA" ]; then
-           RESOLVED_PATTERN="$(realpath "$cand")"
-           break
-         fi
-       fi
+     mkdir -p validation-reports/fixtures
+     # Генерация базовых 1-секундных фикстур:
+     python3 tests/generate_patterns.py --fixture-profile hevc-main10-yuv420p10-lossless --mode hdr --cache-dir validation-reports/fixtures
+     python3 tests/generate_patterns.py --fixture-profile hevc-main10-yuv420p10-lossless --mode hlg --cache-dir validation-reports/fixtures
+     python3 tests/generate_patterns.py --fixture-profile hevc-main10-yuv420p10-lossless --mode wcg-sdr --cache-dir validation-reports/fixtures
+
+     # Закольцовывание в 60 с (потоковая копия без пережатия):
+     for MODE in hdr hlg wcg-sdr; do
+       ffmpeg -y -stream_loop 59 \
+         -i "validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-${MODE}.mp4" \
+         -c copy \
+         "validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-${MODE}-60s.mp4"
      done
 
-     if [ -z "$RESOLVED_PATTERN" ]; then
-       echo "ОШИБКА: синтетический HDR10-паттерн с SHA-256 $EXPECTED_SHA не найден." >&2
-       echo "Укажите путь явно: export PATTERN_PATH=/path/to/cinehdr-gate2-hdr.mkv" >&2
-       exit 1
-     fi
-     echo "Используется проверенный паттерн: $RESOLVED_PATTERN"
+     # Повторная верификация закольцованных файлов через ffprobe:
+     for MODE in hdr hlg wcg-sdr; do
+       ffprobe -v error \
+         -show_entries stream=codec_name,pix_fmt,color_transfer,color_primaries \
+         -show_entries format=duration \
+         -of default=noprint_wrappers=1 \
+         "validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-${MODE}-60s.mp4"
+     done
+     # Ожидается: codec_name=hevc, pix_fmt=yuv420p10le, duration=60.000000
+     # color_transfer: smpte2084 (hdr), arib-std-b67 (hlg), bt709 / iec61966-2-1 (wcg-sdr)
+     # color_primaries: bt2020 для всех трёх режимов.
+     ```
 
-     # Фиксация настроек: graphics-offload выключен (композитный путь), hdr-mode=auto
+  3. **Preflight: сохранение настроек GSettings и фиксация параметров прогона**:
+     ```bash
+     # Сохранение исходных пользовательских настроек перед вмешательством:
+     ORIG_OFFLOAD=$(flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR graphics-offload 2>/dev/null || echo "false")
+     ORIG_MODE=$(flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR hdr-mode 2>/dev/null || echo "'auto'")
+
+     # Фиксация настроек стенда: graphics-offload выключен (композитный путь GTK), hdr-mode=auto
      flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload false
      flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode 'auto'
      ```
 
-  3. **Запуск CineHDR во Flatpak с захватом маркированной трассы**:
+  4. **Запуск CineHDR во Flatpak с захватом маркированной трассы**:
      ```bash
      mkdir -p validation-reports
      TS=$(date +%Y%m%dT%H%M%SZ)
+     TEST_FILE="validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-hdr-60s.mp4"
 
      flatpak run \
        --filesystem=/tmp/libwayland_conn_tag.so:ro \
-       --filesystem="$RESOLVED_PATTERN":ro \
+       --filesystem="$(realpath "$TEST_FILE")":ro \
        --env=LD_PRELOAD=/tmp/libwayland_conn_tag.so \
        --env=WAYLAND_DEBUG=1 \
        --env=CINEHDR_NON_UNIQUE=1 \
        --env=CINEHDR_EXPERIMENTAL_COLOR_MGMT=1 \
        --env=GDK_DEBUG=color-mgmt \
        io.github.rusmikev.CineHDR \
-       "$RESOLVED_PATTERN" \
+       "$(realpath "$TEST_FILE")" \
        2> "validation-reports/${TS}-cinehdr-tagged-wayland.log"
      ```
-     *(Во время воспроизведения паттерна оператор открывает диалог диагностики через меню «Video Output Diagnostics», нажимает кнопку «Copy Report» и сохраняет текст отчёта в файл `validation-reports/${TS}-cinehdr-copy-report.txt`, после чего закрывает окно приложения).*
+     *(Во время воспроизведения оператор открывает диалог диагностики через меню «Video Output Diagnostics», нажимает кнопку «Copy Report» и сохраняет текст отчёта в файл `validation-reports/${TS}-cinehdr-copy-report.txt`, после чего закрывает окно приложения).*
 
-  4. **Автономная валидация трассы парсером (--trace-only)**:
+  5. **Автономная валидация трассы парсером (--trace-only)**:
      ```bash
      python3 tools/validation/parse_wayland_color_trace.py \
        --trace-only \
@@ -539,18 +549,29 @@
        --output "validation-reports/${TS}-cinehdr-l3p.json"
      ```
 
-  5. **Список обязательных наблюдений для Copy Report**:
-     В сохранённом `validation-reports/${TS}-cinehdr-copy-report.txt` сверяются ключевые поля:
-     - `[Video Renderer]` → `Graphics offload`: `disabled` (подтверждает композитный путь окна GTK, без subsurface bypass);
-     - `[Video Renderer]` → `FBO format`: `rgba16f` (16-битный float буфер);
-     - `[Output & Color State]` → `HDR mode`: `auto`;
-     - `[Output & Color State]` → `HDR status`: `enabled` / `active`;
-     - `[Output & Color State]` → `Color state`: `rec2100-pq` (или BT.2020 PQ);
-     - `[Output & Color State]` → `Compositor surface submission`: `GDK texture publication` (клиентское подтверждение границы публикации);
-     - `[Video Signal]` → `Color transfer`: `smpte2084` (PQ);
-     - `[Video Signal]` → `Color primaries`: `bt.2020`.
+  6. **Специфика сценариев и критерии приёмки**:
+     - **HDR10 (Rec.2100 PQ)**:
+       - Оракул трассы: `status: PASS` (подтверждён параметрический PQ `tf=11`);
+       - Copy Report: `HDR mode: auto`, `HDR status: enabled` / `active`, `Color state: rec2100-pq`, `Color transfer: smpte2084`, `Color primaries: bt.2020`.
+     - **HLG (L3p + визуальный L4)**:
+       - Тестовый файл: `cinehdr-gate2-hevc-main10-yuv420p10-lossless-hlg-60s.mp4` либо визуальный паттерн `cinehdr-l4-hlg-bt2020-60s.mkv` (`python3 tests/generate_patterns.py --mode l4-hlg --cache-dir validation-reports/fixtures`);
+       - Оракул трассы: `status: PASS` (подтверждён HLG `tf=13`);
+       - Copy Report: `Color transfer: arib-std-b67` (HLG), `Color primaries: bt.2020`;
+       - L4 визуальный оракул: относительные градации scene-light HLG `0.05, 0.18, 0.50, 0.75, 0.88, 1.0` без выдуманных нит. Верхние градации (75%, 88%, 100%) отчётливо различимы без клиппинга; нижняя полоса 75% reference white совпадает по яркости с плашкой 75%; сопоставимый относительный контраст с эталонным mpv на том же дисплее.
+     - **Отрицательный контроль WCG-SDR (BT.2020 + BT.1886 / sRGB)**:
+       - Тестовый файл: `cinehdr-gate2-hevc-main10-yuv420p10-lossless-wcg-sdr-60s.mp4`;
+       - Цель: подтвердить, что контент с широким охватом BT.2020, но стандартным SDR-трансфером НЕ активирует HDR-режим при `hdr-mode=auto`;
+       - Оракул трассы: **ТОЛЬКО** доказанный `status: FAIL` (код завершения 1 с диагностикой `no valid HDR commits found`) в комбинации с SDR Copy Report (`HDR status: disabled` / `inactive`, `Color transfer: bt.709` / `srgb`);
+       - **ВНИМАНИЕ**: статус `UNKNOWN` (неполная трасса, сбой шима или нераспознанный app-id) **НЕ является подтверждением отрицательного контроля** и свидетельствует о невалидности эксперимента.
 
-  6. **Что возвращает владелец**:
+  7. **Восстановление исходных параметров GSettings**:
+     ```bash
+     # Обязательный возврат настроек пользователя в исходное состояние:
+     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload "$ORIG_OFFLOAD"
+     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode "$ORIG_MODE"
+     ```
+
+  8. **Что возвращает владелец**:
      - **При PASS (код выхода 0)**:
        - SHA-256 файлов `validation-reports/${TS}-cinehdr-tagged-wayland.log` и `validation-reports/${TS}-cinehdr-copy-report.txt`;
        - JSON-отчёт `validation-reports/${TS}-cinehdr-l3p.json`;
