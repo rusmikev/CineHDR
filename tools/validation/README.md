@@ -349,22 +349,68 @@
   ```
   *(Доступные значения `--oracle`: `composite_window`, `primary_composite`, `strict_multiphase`, `legacy`; флаг `--multiphase` эквивалентен `--oracle strict_multiphase`. Опция `--app-id <app_id>` позволяет переопределить ожидаемый идентификатор приложения, по умолчанию `io.github.rusmikev.CineHDR`.)*
 
-- **Команда автономной L3p-валидации сырой трассы (для эталона mpv по P1.3, без отчёта CineHDR)**:
-  ```bash
-  # 1. Захват лога эталона mpv (выполняет владелец в сессии Wayland):
-  WAYLAND_DEBUG=1 mpv --vo=gpu-next --gpu-api=vulkan --gpu-context=waylandvk \
-    --target-colorspace-hint=yes --msg-level=vo=v /path/to/pattern-hdr10.mkv \
-    2> validation-reports/<дата>-mpv-wayland.log
+- **Регламент и команды эталонного запуска mpv с маркировкой соединений (P1.3, шаг 0)**:
+  Владелец выполняет запуск нативного mpv в активной сессии Wayland (GNOME-AMD с включённым HDR) с использованием interposer-шима `wayland_conn_tagger.c`. Парсер автоматически атрибутирует соединение по `app_id="mpv"` без ручной фильтрации лога по `conn#`.
 
-  # 2. Автономная проверка L3p сырой трассы mpv парсером:
-  python3 tools/validation/parse_wayland_color_trace.py \
-    --trace-only \
-    --trace validation-reports/<дата>-mpv-wayland.log \
-    --app-id mpv \
-    --oracle composite_window \
-    --output validation-reports/<дата>-mpv-l3p.json
-  ```
-  *(В режиме `--trace-only` требуются `--trace`, `--output`, `--app-id` и оракул `composite_window` [по умолчанию или явно]. Аргументы `--publication-report` и `--backend` не требуются, не подставляются заглушками и запрещены к совместному использованию.)*
+  1. **Сборка библиотеки-перехватчика и тестового стенда**:
+     ```bash
+     gcc -Wall -Wextra -shared -fPIC -o /tmp/libwayland_conn_tag.so tools/validation/wayland_conn_tagger.c -ldl -lwayland-client
+     gcc -Wall -Wextra -o /tmp/test_conn_tagger_harness tools/validation/test_conn_tagger_harness.c -lwayland-client
+     ```
+
+  2. **Автономная самопроверка шима (без дисплея)**:
+     ```bash
+     python3 tools/validation/test_wayland_conn_tagger.py
+     ```
+     *(Убедиться, что пройдены все 3 теста: базовая маркировка двух соединений, отрицательный контроль без LD_PRELOAD и многопоточный стресс-тест атомарности вывода).*
+
+  3. **Запуск эталонного нативного mpv на подготовленном синтетическом HDR10-паттерне**:
+     ```bash
+     TS=$(date +%Y%m%dT%H%M%SZ)
+     WAYLAND_DEBUG=1 LD_PRELOAD=/tmp/libwayland_conn_tag.so \
+       mpv --vo=gpu-next --gpu-api=vulkan --gpu-context=waylandvk \
+           --target-colorspace-hint=yes --msg-level=vo=v \
+           validation-reports/fixtures/cinehdr-gate2-hdr.mkv \
+           > "validation-reports/${TS}-mpv-runtime.log" \
+           2> "validation-reports/${TS}-mpv-tagged-wayland.log"
+     ```
+     *(Паттерн: подготовленный синтетический HDR10-файл `validation-reports/fixtures/cinehdr-gate2-hdr.mkv` [Rec.2100 PQ, BT.2020, 10-бит, sha256: `cdee467e93298eb5bad11c408edbe1138edf046bc845580fc97ae0f250eb4b50`]. Окно mpv воспроизводит 1-секундный циклический паттерн; через несколько секунд окно можно закрыть, нажав `q`).*
+
+  4. **Быстрая проверка наличия меток и селекторов в логах**:
+     ```bash
+     # Проверить, что лог не пуст и содержит маркированные строки [conn#... fd#...]
+     head -n 20 "validation-reports/${TS}-mpv-tagged-wayland.log"
+     grep -c '\[conn#' "validation-reports/${TS}-mpv-tagged-wayland.log"
+
+     # Проверить в runtime-логе mpv выбор бэкенда gpu-next, Vulkan и HDR10 swapchain
+     grep -E 'gpu-next|waylandvk|VK_COLOR_SPACE|surface caps' "validation-reports/${TS}-mpv-runtime.log"
+     ```
+
+  5. **Автономная валидация маркированной трассы парсером (--trace-only)**:
+     ```bash
+     python3 tools/validation/parse_wayland_color_trace.py \
+       --trace-only \
+       --trace "validation-reports/${TS}-mpv-tagged-wayland.log" \
+       --app-id mpv \
+       --oracle composite_window \
+       --output "validation-reports/${TS}-mpv-l3p.json"
+     ```
+     *(Парсер автоматически изолирует соединение `conn#`, на котором вызван `xdg_toplevel.set_app_id("mpv")`, проверит инвариантность дескриптора сокета `fd` и выполнит протокольный аудит double-buffered HDR-описания).*
+
+  6. **Что возвращает владелец в зависимости от результата**:
+     - **При PASS (код выхода 0)**:
+       - SHA-256 файлов `validation-reports/${TS}-mpv-tagged-wayland.log` и `validation-reports/${TS}-mpv-runtime.log`;
+       - JSON-отчёт `validation-reports/${TS}-mpv-l3p.json`;
+       - Строки из `validation-reports/${TS}-mpv-runtime.log` с подтверждением `waylandvk`, устройства Vulkan и формата swapchain (`VK_COLOR_SPACE_HDR10_ST2084_EXT`);
+       - *Внимание: PASS трассы доказывает только L3p-протокольную передачу HDR-описания композитору поверхностью mpv. Он НЕ подтверждает физический HDR-вывод монитором и НЕ является закрытием L4 (визуальное сравнение L4 на ступенях паттерна проводится отдельно).*
+     - **При UNKNOWN (код выхода 1)**:
+       - SHA-256 и размер обоих логов;
+       - Значение поля `"reason"` из `validation-reports/${TS}-mpv-l3p.json` и вывод ошибки из `stderr` (например, отсутствие меток, расхождение `fd`, неоднозначность app-id или несоответствие структуры);
+       - Первые 50 строк маркированного лога и строки `xdg_toplevel.set_app_id` для анализа причин неоднозначности.
+     - **При FAIL (код выхода 1)**:
+       - SHA-256 обоих логов;
+       - Полный `validation-reports/${TS}-mpv-l3p.json` и вывод `stderr`;
+       - Зафиксированную причину протокольного отказа (например, отказ в HDR-трансфере, прикрепление SDR-описания или ошибка протокола).
 
 #### 2.6. Что результат доказывает и чего НЕ доказывает
 - **Что доказывают модульные тесты (`tools/validation/test_wayland_color_trace.py`)**:
