@@ -82,7 +82,16 @@ class TraceCall:
     object_id: int
     method: str
     args: str
+    conn_id: int | None = None
+    fd: int | None = None
 
+
+CONN_TAG_RE = re.compile(
+    r"^\s*\[conn#(?P<conn_id>\d+)(?:\s+fd#(?P<fd>\d+))?\]"
+)
+UNTRACKED_TAG_RE = re.compile(
+    r"^\s*\[conn#(?:untracked|unknown)"
+)
 
 CALL_RE = re.compile(
     # libwayland's canonical debug grammar uses ``interface#id``. Keep ``@``
@@ -159,6 +168,9 @@ def _calls(trace: str) -> list[TraceCall]:
         match = CALL_RE.search(line)
         if match is None:
             continue
+        m_tag = CONN_TAG_RE.match(line.strip())
+        conn_id = int(m_tag.group("conn_id")) if m_tag else None
+        fd = int(m_tag.group("fd")) if m_tag and m_tag.group("fd") else None
         calls.append(
             TraceCall(
                 index=index,
@@ -166,6 +178,8 @@ def _calls(trace: str) -> list[TraceCall]:
                 object_id=int(match["object_id"]),
                 method=match["method"],
                 args=match["args"].strip(),
+                conn_id=conn_id,
+                fd=fd,
             )
         )
     return calls
@@ -1712,6 +1726,138 @@ def _validate_app_id(app_id: str | None) -> str:
     return app_id
 
 
+def _unknown_composite_evidence(reason: str) -> dict[str, Any]:
+    return {
+        "schema": TRACE_SCHEMA,
+        "revision": PRIMARY_COMPOSITE_REVISION,
+        "status": "UNKNOWN",
+        "oracle": "primary_composite_window",
+        "scope": UNKNOWN_SCOPE,
+        "reason": reason,
+        "matched": {},
+    }
+
+
+def _partition_by_connection(
+    trace: str, expected_app_id: str | None = None
+) -> tuple[str, int | None, int, dict[str, Any] | None]:
+    """Inspect trace for verifiable connection tags [conn#<id> fd#<fd>].
+
+    Returns (effective_trace, selected_conn_id, total_conns, unknown_evidence_dict).
+    If connection tags are present:
+    - Rejects untracked [conn#untracked] or untagged calls in multi-connection trace as UNKNOWN.
+    - Selects the unique connection claiming expected_app_id.
+    - If no connection or multiple connections claim expected_app_id, returns UNKNOWN.
+    - Isolates lines belonging to the chosen connection.
+    If no connection tags are present:
+    - Returns (trace, None, 1, None) for legacy / untagged single-connection processing.
+    """
+    has_tagged_line = False
+    tagged_lines_by_conn: dict[int, list[str]] = {}
+    untagged_call_lines: list[str] = []
+    untracked_call_lines: list[str] = []
+
+    for line in trace.splitlines():
+        trimmed = line.strip()
+        if not trimmed:
+            continue
+        m_untracked = UNTRACKED_TAG_RE.match(trimmed)
+        if m_untracked:
+            has_tagged_line = True
+            untracked_call_lines.append(trimmed)
+            continue
+        m_tag = CONN_TAG_RE.match(trimmed)
+        if m_tag:
+            has_tagged_line = True
+            conn_id = int(m_tag.group("conn_id"))
+            tagged_lines_by_conn.setdefault(conn_id, []).append(line)
+            continue
+        if CALL_RE.search(trimmed):
+            untagged_call_lines.append(trimmed)
+
+    if not has_tagged_line:
+        return trace, None, 1, None
+
+    if untracked_call_lines:
+        return (
+            trace,
+            None,
+            len(tagged_lines_by_conn),
+            _unknown_composite_evidence(
+                f"trace contains untracked Wayland debug call without verified connection attribution: {untracked_call_lines[0]}"
+            ),
+        )
+
+    if untagged_call_lines:
+        return (
+            trace,
+            None,
+            len(tagged_lines_by_conn),
+            _unknown_composite_evidence(
+                f"trace contains untagged Wayland debug call without verified connection attribution: {untagged_call_lines[0]}"
+            ),
+        )
+
+    total_conns = len(tagged_lines_by_conn)
+    if total_conns == 0:
+        return (
+            trace,
+            None,
+            0,
+            _unknown_composite_evidence("trace contains connection tags but no valid connection calls found"),
+        )
+
+    if expected_app_id:
+        matching_conns: list[int] = []
+        for cid, lines in tagged_lines_by_conn.items():
+            conn_trace = "\n".join(lines)
+            conn_calls = _calls(conn_trace)
+            has_app_id = any(
+                c.interface == "xdg_toplevel"
+                and c.method == "set_app_id"
+                and (m := SET_APP_ID_RE.match(c.args)) is not None
+                and m["app_id"] == expected_app_id
+                for c in conn_calls
+            )
+            if has_app_id:
+                matching_conns.append(cid)
+
+        if len(matching_conns) == 0:
+            return (
+                trace,
+                None,
+                total_conns,
+                _unknown_composite_evidence(
+                    f"no connection with app-id {expected_app_id!r} observed among tagged connections: {sorted(tagged_lines_by_conn.keys())}"
+                ),
+            )
+        if len(matching_conns) > 1:
+            return (
+                trace,
+                None,
+                total_conns,
+                _unknown_composite_evidence(
+                    f"multiple conflicting connections observed with app-id {expected_app_id!r}: {sorted(matching_conns)}"
+                ),
+            )
+        selected_conn = matching_conns[0]
+    else:
+        if total_conns == 1:
+            selected_conn = next(iter(tagged_lines_by_conn.keys()))
+        else:
+            return (
+                trace,
+                None,
+                total_conns,
+                _unknown_composite_evidence(
+                    f"multiple connections observed ({sorted(tagged_lines_by_conn.keys())}) but no expected_app_id specified to disambiguate"
+                ),
+            )
+
+    effective_trace = "\n".join(tagged_lines_by_conn[selected_conn])
+    return effective_trace, selected_conn, total_conns, None
+
+
 def validate_composite_window_trace(
     trace: str,
     expected_app_id: str = DEFAULT_APP_ID,
@@ -1735,6 +1881,20 @@ def validate_composite_window_trace(
     fatal = _fatal_error(trace)
     if fatal is not None:
         raise fatal
+
+    effective_trace, selected_conn, total_conns, unknown_ev = _partition_by_connection(
+        trace, expected_app_id
+    )
+    if unknown_ev is not None:
+        return unknown_ev
+    trace = effective_trace
+
+    def _finalize(ev: dict[str, Any]) -> dict[str, Any]:
+        if selected_conn is not None:
+            ev["selected_connection_id"] = selected_conn
+            ev["total_connections_observed"] = total_conns
+            ev["connection_tags_verified"] = True
+        return ev
     calls = _calls(trace)
     calls_by_index = {call.index: call for call in calls}
     globals_ = [
@@ -2323,14 +2483,14 @@ def validate_composite_window_trace(
                 }
 
                 if color_eval["semantic_class"] == "hdr":
-                    return {
+                    return _finalize({
                         "schema": TRACE_SCHEMA,
                         "revision": PRIMARY_COMPOSITE_REVISION,
                         "status": "PASS",
                         "oracle": "primary_composite_window",
                         "scope": PRIMARY_COMPOSITE_SCOPE,
                         "matched": base_matched,
-                    }
+                    })
                 elif color_eval["semantic_class"] == "unknown":
                     candidates_unknown.append(
                         {
@@ -2373,7 +2533,7 @@ def validate_composite_window_trace(
             f"wp_color_manager_v1.get_surface was not called for {app_name} toplevel window surface"
         )
     if candidates_unknown:
-        return candidates_unknown[0]
+        return _finalize(candidates_unknown[0])
     if candidates_sdr:
         app_name = "CineHDR's" if expected_app_id == DEFAULT_APP_ID else f"{expected_app_id}'s"
         raise TraceValidationError(
@@ -2944,7 +3104,8 @@ def create_trace_only_report(
     # Fail-closed autonomous video surface proof (L3p):
     # PASS requires a verified non-zero wl_buffer active at the chosen HDR commit_index
     # per Wayland double-buffered surface state, and absence of subsurface offload ambiguity.
-    calls = _calls(trace_text)
+    effective_trace, _, _, _ = _partition_by_connection(trace_text, target_app_id)
+    calls = _calls(effective_trace)
     matched_surface = evidence.get("matched", {}).get("surface", {})
     target_surf = matched_surface.get("wl_surface_id")
     target_commit_index = matched_surface.get("commit_index")

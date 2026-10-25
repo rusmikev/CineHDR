@@ -4454,5 +4454,137 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertIn("publication_report", data_ok)
 
 
+SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE = """
+[conn#1 fd#9] [ 1042.000] -> wl_display#1.get_registry(new id wl_registry#2)
+[conn#2 fd#12] [ 1042.000] -> wl_display#1.get_registry(new id wl_registry#2)
+[conn#1 fd#9] [ 1042.001] wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[conn#2 fd#12] [ 1042.001] wl_registry#2.global(1, "wl_compositor", 6)
+[conn#1 fd#9] [ 1042.002] -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[conn#2 fd#12] [ 1042.002] -> wl_registry#2.bind(1, "wl_compositor", 6, new id [unknown]#1)
+[conn#1 fd#9] [ 1042.003] wp_color_manager_v1#3.supported_intent(0)
+[conn#1 fd#9] [ 1042.004] wp_color_manager_v1#3.done()
+[conn#2 fd#12] [ 1042.004] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[conn#1 fd#9] [ 1042.005] -> wl_compositor#1.create_surface(new id wl_surface#61)
+[conn#1 fd#9] [ 1042.006] -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[conn#2 fd#12] [ 1042.006] -> wl_display#1.sync(new id wl_callback#3)
+[conn#1 fd#9] [ 1042.007] -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[conn#1 fd#9] [ 1042.008] -> xdg_toplevel#68.set_app_id("mpv")
+[conn#2 fd#12] [ 1042.008] wl_callback#3.done(202)
+[conn#1 fd#9] [ 1042.009] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[conn#1 fd#9] [ 1042.010] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[conn#1 fd#9] [ 1042.0101] -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[conn#1 fd#9] [ 1042.0102] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[conn#1 fd#9] [ 1042.011] -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[conn#1 fd#9] [ 1042.012] wp_image_description_v1#31.ready(101)
+[conn#1 fd#9] [ 1042.013] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[conn#1 fd#9] [ 1042.0135] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[conn#1 fd#9] [ 1042.014] -> wl_surface#61.commit()
+""".strip()
+
+
+class TestTaggedConnectionTraceValidation(unittest.TestCase):
+    """Hermetic tests for parser auto-selection and validation of connection-tagged traces."""
+
+    def test_multi_connection_tagged_trace_auto_selects_and_passes(self):
+        """Positive test: parser auto-selects conn#1 by app_id and produces PASS with verified connection metadata."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "tagged.log"
+            out_path = root / "out.json"
+            trace_path.write_text(SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE, encoding="utf-8")
+
+            status = main([
+                "--trace-only",
+                "--trace", str(trace_path),
+                "--app-id", "mpv",
+                "--output", str(out_path),
+            ])
+            self.assertEqual(status, 0)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "PASS")
+            self.assertEqual(data["selected_connection_id"], 1)
+            self.assertEqual(data["total_connections_observed"], 2)
+            self.assertTrue(data["connection_tags_verified"])
+            self.assertEqual(data["matched"]["surface"]["wl_surface_id"], 61)
+            self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
+
+    def test_tagged_trace_missing_tag_returns_unknown(self):
+        """Negative control 1: removing connection tag from one line causes UNKNOWN status."""
+        tampered_lines = []
+        stripped_first = False
+        for line in SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE.splitlines():
+            if not stripped_first and line.startswith("[conn#1"):
+                # Strip the [conn#1 fd#9] prefix
+                tampered_lines.append(line.split("]", 1)[1].strip())
+                stripped_first = True
+            else:
+                tampered_lines.append(line)
+
+        tampered_trace = "\n".join(tampered_lines)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "missing_tag.log"
+            trace_path.write_text(tampered_trace, encoding="utf-8")
+
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertIn("untagged Wayland debug call without verified connection attribution", rep["reason"])
+
+    def test_tagged_trace_untracked_tag_returns_unknown(self):
+        """Negative control 2: untracked tag [conn#untracked] causes UNKNOWN status."""
+        tampered_trace = SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.014]",
+            "[conn#untracked fd#?] [ 1042.014]",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "untracked_tag.log"
+            trace_path.write_text(tampered_trace, encoding="utf-8")
+
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertIn("untracked Wayland debug call without verified connection attribution", rep["reason"])
+
+    def test_tagged_trace_tampered_commit_tag_fails(self):
+        """Negative control 3: tampering commit tag to conn#2 causes non-PASS due to missing commit on conn#1."""
+        tampered_trace = SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.014] -> wl_surface#61.commit()",
+            "[conn#2 fd#12] [ 1042.014] -> wl_surface#61.commit()",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "tampered_commit.log"
+            trace_path.write_text(tampered_trace, encoding="utf-8")
+
+            with self.assertRaises(TraceValidationError):
+                create_trace_only_report(trace_path, "mpv")
+
+    def test_tagged_trace_unmatched_app_id_returns_unknown(self):
+        """Negative control 4: app-id not observed on any connection causes UNKNOWN status."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "unmatched_app_id.log"
+            trace_path.write_text(SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE, encoding="utf-8")
+
+            rep = create_trace_only_report(trace_path, "nonexistent")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertIn("no connection with app-id 'nonexistent' observed", rep["reason"])
+
+    def test_tagged_trace_conflicting_app_ids_returns_unknown(self):
+        """Negative control 5: multiple connections claiming the same app-id causes UNKNOWN status."""
+        tampered_trace = (
+            SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE
+            + '\n[conn#2 fd#12] [ 1042.015] -> xdg_toplevel#99.set_app_id("mpv")\n'
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "conflicting_app_id.log"
+            trace_path.write_text(tampered_trace, encoding="utf-8")
+
+            rep = create_trace_only_report(trace_path, "mpv")
+            self.assertEqual(rep["status"], "UNKNOWN")
+            self.assertIn("multiple conflicting connections observed with app-id 'mpv'", rep["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

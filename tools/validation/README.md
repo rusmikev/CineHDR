@@ -200,6 +200,11 @@
          3. **Флаг `RTLD_DEEPBIND`**: если драйвер или библиотека открывает `libwayland-client` через `dlopen(..., RTLD_DEEPBIND)`, вызовы функций могут замыкаться внутри библиотеки минуя `LD_PRELOAD`;
          4. **Наследование окружения**: дочерние процессы, порождаемые `mpv` (скрипты, yt-dlp), наследуют `LD_PRELOAD` и `WAYLAND_DEBUG`, если переменные не очищены;
          5. **Перемешивание логов в `stderr`**: OSD-статусы и терминальные логи `mpv` попадают в `stderr` вместе с `WAYLAND_DEBUG`; для чистого захвата требуется перенаправление `2> wayland_tagged.log` или запуск с `--msg-level=all=warn`.
+   14. **Интеграция парсера с маркированными трассами: автоматический выбор соединения по app-id и fail-closed валидация меток (`2026-10-25`)**:
+       - **Автоматический выбор соединения**: при наличии меток `[conn#<id> fd#<fd>]` парсер автоматически определяет соединение, на котором вызван `xdg_toplevel.set_app_id(expected_app_id)`, и изолирует поток сообщений этого соединения без необходимости ручной предварительной фильтрации;
+       - **Защита от отсутствующих/неотслеживаемых меток**: если в трассе присутствуют метки, но хотя бы одна строка протокола Wayland не имеет достоверной метки соединения или содержит метку `[conn#untracked]`, парсер возвращает `status: UNKNOWN` (`reason: unverifiable/untracked Wayland debug call without verified connection attribution`);
+       - **Защита от неоднозначности и подмены**: если несколько соединений претендуют на один `app-id` или ни одно не найдено — возвращается `status: UNKNOWN`; при подмене метки коммита или описания на чужое соединение — возвращается отказ `FAIL` (невыполненный протокольный контракт);
+       - **Метаданные верификации**: в результирующий JSON-отчёт L3p добавляются поля `selected_connection_id`, `total_connections_observed` и `connection_tags_verified: true`.
 
 #### 2.2. Проверяемые источники
 - Коммит `074c38cf577183e57c36f64b9e40c78bcfd870a9` (`fix: bypass KWin/GTK color management deadlock via linear extended and graceful SDR fallback`).
@@ -309,6 +314,13 @@
 - **Маркировка соединений Wayland в многопоточном/мульти-очередном клиенте (2026-10-25)**:
   - `TestWaylandConnTagger.test_tagged_multi_connection_execution` (`tools/validation/test_wayland_conn_tagger.py`)
   - `TestWaylandConnTagger.test_untagged_execution_negative_control` (`tools/validation/test_wayland_conn_tagger.py`)
+- **Автоматический выбор и строгая валидация маркированных соединений в парсере (2026-10-25)**:
+  - `TestTaggedConnectionTraceValidation.test_multi_connection_tagged_trace_auto_selects_and_passes` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTaggedConnectionTraceValidation.test_tagged_trace_missing_tag_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTaggedConnectionTraceValidation.test_tagged_trace_untracked_tag_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTaggedConnectionTraceValidation.test_tagged_trace_tampered_commit_tag_fails` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTaggedConnectionTraceValidation.test_tagged_trace_unmatched_app_id_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTaggedConnectionTraceValidation.test_tagged_trace_conflicting_app_ids_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
 - **Предусловия для юнит-тестов парсера**: стандартный Python 3 (без GPU и без запущенного композитора Wayland).
