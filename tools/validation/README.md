@@ -160,6 +160,11 @@
       - В `validate_composite_window_trace` глобальный подсчёт `manager_bind_counts[id] != 1` заменён на строгий поколенческий учёт `_is_valid_manager_generation`: клиенты со сложной многопоточной архитектурой WSI (например, Mesa Vulkan WSI) могут создавать вспомогательные query-очереди, последовательно выполняя `bind` → `destroy` менеджера цвета и получая событие `delete_id`, после чего тот же ID перевыделяется основной display-очереди из нового `wl_registry`. Повторное использование того же ID разрешено строго при условии полного завершения предыдущего поколения (`destroy` или `delete_id`) до нового `bind` и отсутствия вызовов менеджера до его создания. Одновременное существование активных объектов с одинаковым ID строго бракуется проверкой `_has_active_id_collision` (`status: FAIL`);
       - Проверка принадлежности реестров к одному Wayland-соединению (`_verify_registry_connection_link`): если `wl_compositor` и `wp_color_manager_v1` связаны через разные `wl_registry` (например, `wl_registry#2` и `wl_registry#52`), парсер проверяет, что оба реестра созданы вызовом `wl_display#1.get_registry` в рамках одного соединения и объявляют одинаковый глобальный ID для `wp_color_manager_v1`. Инородные реестры без подтверждённой связи с `wl_display` отклоняются (`status: FAIL`);
       - В `create_trace_only_report` проверка `subsurfaces` сделана селективной: наличие объявленных, но неактивных дочерних подповерхностей (без эффективного или ожидающего ненулевого буфера в момент коммита, например пустых OSD-слоёв mpv) не вызывает ложного отказа; статус `UNKNOWN` возвращается только если на дочерней подповерхности обнаружен эффективный ненулевой буфер, создающий неоднозначность разделения видеоповерхности и интерфейса.
+   11. **Устранение ложных PASS в --trace-only: связь реестров, завершение по delete_id, межинтерфейсные коллизии ID и снимок иерархии subsurfaces на момент коммита (`2026-10-25`)**:
+       - **Связь реестров**: численный ID `wl_display#1` в объединённом выводе `WAYLAND_DEBUG` не доказывает общее соединение при наличии нескольких реестров (`wl_registry`). Если принадлежность разных реестров к одному соединению невозможно строго доказать из трассы, возвращается честный статус `UNKNOWN` вместо ложного `PASS`;
+       - **Жизненный цикл объектов**: приход события `wl_display#1.delete_id` завершает поколение объекта даже при отсутствии последующего `bind`. Вызовы на удалённом объекте без нового `bind` отбраковываются с ошибкой протокола (`status: FAIL`);
+       - **Межинтерфейсные коллизии ID**: создание объекта с тем же численным ID при активном объекте другого интерфейса (например, `wl_surface#3` во время активности `wp_color_manager_v1#3`) выявляется кросс-интерфейсной проверкой коллизий активных жизненных циклов (`_has_active_id_collision`) и бракуется (`status: FAIL`);
+       - **Временной срез иерархии подповерхностей (subsurfaces)**: принадлежность подповерхностей окну (`subsurfaces`) и состояние их буферов вычисляются функцией `_surface_hierarchy_at_commit` строго на момент выбранного HDR `commit_index`. Переподчинение подповерхности другому родителю или её уничтожение после этого коммита не искажает историческое состояние в момент HDR-публикации (`status: UNKNOWN`).
 
 #### 2.2. Проверяемые источники
 - Коммит `074c38cf577183e57c36f64b9e40c78bcfd870a9` (`fix: bypass KWin/GTK color management deadlock via linear extended and graceful SDR fallback`).
@@ -253,12 +258,16 @@
 - **Распознавание параметрического HDR-описания ext_linear с проверенными set_luminances в composite_window (C2a, AGENTS §8)**:
   - `TestGtkCmPolicy.test_composite_window_ext_linear_luminances_positive` (`tools/validation/test_wayland_color_trace.py`)
   - `TestGtkCmPolicy.test_composite_window_ext_linear_luminances_negative_and_fallback_controls` (`tools/validation/test_wayland_color_trace.py`)
-- **Поколенческий учёт ID объектов wp_color_manager_v1, связность мульти-реестров и селективная активность subsurfaces (2026-10-24)**:
+- **Поколенческий учёт ID объектов wp_color_manager_v1, связность мульти-реестров и селективная активность subsurfaces (2026-10-24 — 2026-10-25)**:
   - `TestTraceOnlyCli.test_trace_only_synthetic_subsurface_detected_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
   - `TestTraceOnlyCli.test_trace_only_synthetic_declared_unused_subsurface_passes` (`tools/validation/test_wayland_color_trace.py`)
-  - `TestTraceOnlyCli.test_trace_only_synthetic_reused_manager_id_and_multiple_registries_passes` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTraceOnlyCli.test_trace_only_synthetic_subsurface_reparented_after_commit_rejected` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTraceOnlyCli.test_trace_only_synthetic_reused_manager_id_same_registry_passes` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTraceOnlyCli.test_trace_only_synthetic_distinct_registries_unproven_connection_returns_unknown` (`tools/validation/test_wayland_color_trace.py`)
   - `TestTraceOnlyCli.test_trace_only_synthetic_concurrent_manager_id_collision_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `TestTraceOnlyCli.test_trace_only_synthetic_concurrent_surface_id_collision_rejected` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTraceOnlyCli.test_trace_only_synthetic_manager_delete_id_before_use_rejected` (`tools/validation/test_wayland_color_trace.py`)
+  - `TestTraceOnlyCli.test_trace_only_synthetic_concurrent_cross_interface_id_collision_rejected` (`tools/validation/test_wayland_color_trace.py`)
   - `TestTraceOnlyCli.test_trace_only_synthetic_foreign_registry_unlinked_rejected` (`tools/validation/test_wayland_color_trace.py`)
 
 #### 2.5. Команда воспроизведения и предусловия
