@@ -413,6 +413,86 @@ class TestFixtureMathAndLayout(unittest.TestCase):
                     spec, cache_dir, media, metadata_path, raw_paths, "ffmpeg", "ffprobe"
                 ))
 
+    def test_wcg_sdr_spec_and_invariants(self) -> None:
+        """P1.3: WCG-SDR fixture has BT.2020 primaries + SDR transfer (iec61966-2-1) and is not HDR."""
+        from src.hdr_detection import is_hdr_content
+
+        spec = generate_patterns.fixture_spec("wcg-sdr")
+        sdr_spec = generate_patterns.fixture_spec("sdr")
+        self.assertEqual(spec.mode, "wcg-sdr")
+        self.assertEqual(spec.pixel_format, "gbrp10le")
+        self.assertEqual(spec.color_range, "pc")
+        self.assertEqual(spec.color_space, "gbr")
+        self.assertEqual(spec.color_primaries, "bt2020")
+        self.assertEqual(spec.color_transfer, "iec61966-2-1")
+        self.assertNotEqual(spec.color_transfer, "bt1886")
+        self.assertEqual(spec.target_primaries, "bt.709")
+        self.assertEqual(spec.target_transfer, "srgb")
+        self.assertEqual(spec.target_peak_nits, 100.0)
+        self.assertEqual(spec.sample_bits, 10)
+        self.assertEqual(spec.patches, sdr_spec.patches)
+        self.assertEqual(generate_patterns.raw_frame(spec), generate_patterns.raw_frame(sdr_spec))
+        self.assertEqual(generate_patterns.yuv_matrix(spec), "bt2020nc")
+        self.assertIn("primariesin=bt2020:transferin=iec61966-2-1", generate_patterns.yuv_conversion_filter(spec))
+        self.assertIn("matrix=bt2020nc", generate_patterns.yuv_conversion_filter(spec))
+
+        # WCG-SDR video-params must NOT be classified as HDR content
+        self.assertFalse(
+            is_hdr_content({
+                "primaries": "bt.2020",
+                "gamma": "srgb",
+                "colormatrix": "bt.2020-ncl",
+                "sig-peak": 1.0,
+            })
+        )
+
+    def test_generate_patterns_cli_modes_preserve_all_and_support_wcg_sdr(self) -> None:
+        """--mode all preserves ('hdr', 'hlg', 'sdr'); --mode wcg-sdr generates only wcg-sdr."""
+        called_modes: list[str] = []
+
+        def fake_ensure_fixture(mode: str, cache_dir: Path, **kwargs) -> dict:
+            called_modes.append(mode)
+            return fixture_provenance(mode)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(generate_patterns, "ensure_fixture", side_effect=fake_ensure_fixture), \
+                 contextlib.redirect_stdout(io.StringIO()) as out_all:
+                rc = generate_patterns.main(["--cache-dir", tmp, "--mode", "all"])
+            self.assertEqual(rc, 0)
+            self.assertEqual(called_modes, ["hdr", "hlg", "sdr"])
+            payload_all = json.loads(out_all.getvalue())
+            self.assertEqual([f["mode"] for f in payload_all["fixtures"]], ["hdr", "hlg", "sdr"])
+
+            called_modes.clear()
+            with mock.patch.object(generate_patterns, "ensure_fixture", side_effect=fake_ensure_fixture), \
+                 contextlib.redirect_stdout(io.StringIO()) as out_wcg:
+                rc_wcg = generate_patterns.main(["--cache-dir", tmp, "--mode", "wcg-sdr"])
+            self.assertEqual(rc_wcg, 0)
+            self.assertEqual(called_modes, ["wcg-sdr"])
+            payload_wcg = json.loads(out_wcg.getvalue())
+            self.assertEqual([f["mode"] for f in payload_wcg["fixtures"]], ["wcg-sdr"])
+            self.assertEqual(payload_wcg["fixtures"][0]["stream"]["color_primaries"], "bt2020")
+            self.assertEqual(payload_wcg["fixtures"][0]["stream"]["color_transfer"], "iec61966-2-1")
+
+    def test_wcg_sdr_live_ffmpeg_ffprobe_generation_outside_git(self) -> None:
+        """When local ffmpeg/ffprobe are present, generate a temporary WCG-SDR fixture outside Git and verify ffprobe."""
+        import shutil
+        if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+            self.skipTest("ffmpeg/ffprobe not installed locally")
+        with tempfile.TemporaryDirectory(prefix="cinehdr-wcg-sdr-") as tmp:
+            cache_dir = Path(tmp)
+            result = generate_patterns.ensure_fixture("wcg-sdr", cache_dir)
+            media_path = Path(result["path"])
+            self.assertTrue(media_path.is_file())
+            stream = generate_patterns.ffprobe_stream(media_path, "ffprobe")
+            self.assertEqual(stream["codec_name"], "ffv1")
+            self.assertEqual(stream["pix_fmt"], "gbrp10le")
+            self.assertEqual(stream["color_range"], "pc")
+            self.assertEqual(stream["color_space"], "gbr")
+            self.assertEqual(stream["color_primaries"], "bt2020")
+            self.assertEqual(stream["color_transfer"], "iec61966-2-1")
+            self.assertEqual(stream["nb_read_frames"], str(generate_patterns.FRAME_COUNT))
+
 
 class TestProbeContract(unittest.TestCase):
     def test_parser_rejects_missing_or_nonobject_json(self) -> None:

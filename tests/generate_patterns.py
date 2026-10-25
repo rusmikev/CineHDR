@@ -219,7 +219,35 @@ def fixture_spec(mode: str) -> FixtureSpec:
                 ("neutral_gradient", (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
             )),
         )
-    raise FixtureError(f"unsupported fixture mode: {mode!r}; expected hdr, hlg, or sdr")
+    if mode == "wcg-sdr":
+        return FixtureSpec(
+            mode="wcg-sdr",
+            # WCG-SDR (P1.3): BT.2020 primaries + SDR transfer (iec61966-2-1 / sRGB)
+            # must remain SDR and never trigger HDR. ISO/IEC 23091-2 (H.273) and
+            # FFmpeg/ffprobe do not define a separate "bt1886" transfer code;
+            # iec61966-2-1 is confirmed verbatim by ffprobe in both Matroska/FFV1
+            # and MP4/HEVC and matches the linear_to_srgb() pixel encoding.
+            pixel_format="gbrp10le",
+            color_range="pc",
+            color_space="gbr",
+            color_primaries="bt2020",
+            color_transfer="iec61966-2-1",
+            target_primaries="bt.709",
+            target_transfer="srgb",
+            target_peak_nits=100.0,
+            sample_bits=10,
+            patches=_patches((
+                ("black", (0.0, 0.0, 0.0), None),
+                ("near_black", (1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0), None),
+                ("reference_white", (1.0, 1.0, 1.0), None),
+                ("peak_white", (1.0, 1.0, 1.0), None),
+                ("red_primary", (1.0, 0.0, 0.0), None),
+                ("green_primary", (0.0, 1.0, 0.0), None),
+                ("blue_primary", (0.0, 0.0, 1.0), None),
+                ("neutral_gradient", (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+            )),
+        )
+    raise FixtureError(f"unsupported fixture mode: {mode!r}; expected hdr, hlg, sdr, or wcg-sdr")
 
 
 def patch_centers(*, readback_origin: str = "top-left") -> dict[str, tuple[int, int]]:
@@ -301,7 +329,7 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def yuv_matrix(spec: FixtureSpec) -> str:
-    return "bt2020nc" if spec.mode in ("hdr", "hlg") else "bt709"
+    return "bt2020nc" if spec.color_primaries == "bt2020" else "bt709"
 
 
 def yuv_conversion_filter(spec: FixtureSpec) -> str:
@@ -977,16 +1005,16 @@ def ensure_fixture(
     return {**metadata, "path": str(media), "metadata_path": str(metadata_path)}
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Create disposable CineHDR Gate 2 RGB/FFV1 or HEVC Main10 fixtures"
     )
     parser.add_argument("--cache-dir", type=Path, required=True)
-    parser.add_argument("--mode", choices=("hdr", "hlg", "sdr", "all"), default="all")
+    parser.add_argument("--mode", choices=("hdr", "hlg", "sdr", "wcg-sdr", "all"), default="all")
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     parser.add_argument("--fixture-profile", choices=FIXTURE_PROFILES, default=DEFAULT_FIXTURE_PROFILE)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     modes = ("hdr", "hlg", "sdr") if args.mode == "all" else (args.mode,)
     try:
         generated = [
