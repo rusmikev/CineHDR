@@ -1179,6 +1179,11 @@ class TestGtkCmPolicy(unittest.TestCase):
             _classify_named_color_metadata(PRIM_NAMED_BT2020, TF_NAMED_BT1886),
             ("custom_p6_tf1", "sdr"),
         )
+        # Custom / WCG-SDR: BT.2020 + sRGB (iec61966-2-1) -> custom_p6_tf9, sdr
+        self.assertEqual(
+            _classify_named_color_metadata(PRIM_NAMED_BT2020, TF_NAMED_SRGB),
+            ("custom_p6_tf9", "sdr"),
+        )
         # sRGB + PQ -> custom_p1_tf11, hdr
         self.assertEqual(
             _classify_named_color_metadata(PRIM_NAMED_SRGB, TF_NAMED_ST2084_PQ),
@@ -2076,8 +2081,8 @@ class TestGtkCmPolicy(unittest.TestCase):
         self.assertIn("only SDR color descriptions were committed", str(cm.exception))
 
     def test_composite_window_rejects_wcg_sdr_transfer(self):
-        """WCG-SDR (BT.2020 primaries + BT.1886 transfer) fails with SDR error."""
-        trace = """
+        """WCG-SDR (BT.2020 primaries + BT.1886 or sRGB transfer) fails with SDR error."""
+        base_wcg_trace = """
 [ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
 [ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
 [ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
@@ -2089,15 +2094,17 @@ class TestGtkCmPolicy(unittest.TestCase):
 [ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
 [ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
 [ 1042.011]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
-[ 1042.012]  -> wp_image_description_creator_params_v1#50.set_tf_named(1)
+[ 1042.012]  -> wp_image_description_creator_params_v1#50.set_tf_named({tf})
 [ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
 [ 1042.014]  wp_image_description_v1#31.ready(101)
 [ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
 [ 1042.016]  -> wl_surface#61.commit()
         """.strip()
-        with self.assertRaises(TraceValidationError) as cm:
-            validate_composite_window_trace(trace)
-        self.assertIn("only SDR color descriptions were committed", str(cm.exception))
+        for tf_val in (1, 9):
+            with self.subTest(wcg_sdr_tf=tf_val):
+                with self.assertRaises(TraceValidationError) as cm:
+                    validate_composite_window_trace(base_wcg_trace.format(tf=tf_val))
+                self.assertIn("only SDR color descriptions were committed", str(cm.exception))
 
     def test_composite_window_unrevealed_or_unknown_transfer_returns_unknown(self):
         """Unrevealed transfer function or unparsed creator returns UNKNOWN with reason."""
@@ -4590,6 +4597,66 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertTrue(data.get("trace_only"))
             self.assertEqual(data.get("protocol_evidence_level"), "L3p")
             self.assertIn("only SDR color descriptions were committed", data["error"])
+
+    @staticmethod
+    def _make_replaced_before_commit_trace(first_tf: int, second_tf: int) -> str:
+        """Build a tagged L3p trace where desc #31 (prim=6, first_tf) is replaced before commit by desc #32 (prim=6, second_tf)."""
+        lines = SYNTHETIC_MPV_HDR_TRACE.splitlines()
+        replacement = [
+            "[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)",
+            f"[ 1042.0101] -> wp_image_description_creator_params_v1#50.set_tf_named({first_tf})",
+            "[ 1042.0102] -> wp_image_description_creator_params_v1#50.set_primaries_named(6)",
+            "[ 1042.011]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)",
+            "[ 1042.012]  wp_image_description_v1#31.ready(101)",
+            "[ 1042.0121] -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#52)",
+            f"[ 1042.0122] -> wp_image_description_creator_params_v1#52.set_tf_named({second_tf})",
+            "[ 1042.0123] -> wp_image_description_creator_params_v1#52.set_primaries_named(6)",
+            "[ 1042.0124] -> wp_image_description_creator_params_v1#52.create(new id wp_image_description_v1#32)",
+            "[ 1042.0125] wp_image_description_v1#32.ready(102)",
+            "[ 1042.013]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)",
+            "[ 1042.0132] -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#32, 0)",
+        ]
+        return _tag_trace("\n".join(lines[:10] + replacement + lines[16:]))
+
+    def test_trace_only_hlg_positive_and_wcg_sdr_negative_effective_commit_controls(self):
+        """P1.3 L3p: verify positive HLG (tf=13) and negative WCG-SDR (prim=6, tf=9/1) on the target surface's effective commit."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "trace.log"
+            out_path = root / "l3p.json"
+
+            # 1. Positive HLG controls: direct HLG (tf=13) and pending WCG-SDR (tf=9) replaced before commit by HLG (tf=13)
+            for label, trace_str, exp_id in (
+                ("direct_hlg", SYNTHETIC_TAGGED_MPV_HDR_TRACE.replace("set_tf_named(11)", "set_tf_named(13)"), 31),
+                ("wcg_sdr_replaced_by_hlg_at_commit", self._make_replaced_before_commit_trace(9, 13), 32),
+            ):
+                with self.subTest(control=label):
+                    trace_path.write_text(trace_str, encoding="utf-8")
+                    status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "mpv", "--output", str(out_path)])
+                    self.assertEqual(status, 0)
+                    data = json.loads(out_path.read_text(encoding="utf-8"))
+                    self.assertEqual(data["status"], "PASS")
+                    self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
+                    self.assertEqual(data["matched"]["image_description"]["id"], exp_id)
+                    self.assertEqual(data["matched"]["image_description"]["primaries_named"], 6)
+                    self.assertEqual(data["matched"]["image_description"]["tf_named"], 13)
+                    self.assertEqual(data["matched"]["image_description"]["color_type"], "rec2100_hlg")
+                    self.assertEqual(data["matched"]["image_description"]["semantic_class"], "hdr")
+
+            # 2. Negative WCG-SDR controls: direct WCG-SDR (tf=9 sRGB, tf=1 BT.1886) and pending HLG (tf=13) replaced before commit by WCG-SDR (tf=9)
+            for label, trace_str in (
+                ("direct_wcg_sdr_srgb_tf9", SYNTHETIC_TAGGED_MPV_HDR_TRACE.replace("set_tf_named(11)", "set_tf_named(9)")),
+                ("direct_wcg_sdr_bt1886_tf1", SYNTHETIC_TAGGED_MPV_HDR_TRACE.replace("set_tf_named(11)", "set_tf_named(1)")),
+                ("hlg_replaced_by_wcg_sdr_at_commit", self._make_replaced_before_commit_trace(13, 9)),
+            ):
+                with self.subTest(control=label):
+                    trace_path.write_text(trace_str, encoding="utf-8")
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "mpv", "--output", str(out_path)])
+                    self.assertEqual(status, 1)
+                    data = json.loads(out_path.read_text(encoding="utf-8"))
+                    self.assertEqual(data["status"], "FAIL")
+                    self.assertIn("only SDR color descriptions were committed", data["error"])
 
     def test_trace_only_synthetic_incomplete_or_ambiguous_returns_unknown(self):
         """Hermetic CLI test: ambiguous or unverified transfer (ext_linear tf=5 without luminances) returns status=UNKNOWN and non-zero exit."""
