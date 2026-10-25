@@ -1259,22 +1259,9 @@ def l4_hdr10_metadata_path(cache_dir: Path) -> Path:
     return cache_dir / "cinehdr-l4-hdr10-pq-bt2020-60s.json"
 
 
-def ensure_l4_hdr10_pattern(
-    cache_dir: Path,
-    *,
-    ffmpeg: str = "ffmpeg",
-    ffprobe: str = "ffprobe",
-) -> dict[str, Any]:
-    """Generate and verify a 60s 1920x1080 HDR10 PQ/BT.2020 L4 visual pattern outside Git."""
-
-    if shutil.which(ffmpeg) is None or shutil.which(ffprobe) is None:
-        raise FixtureError("ffmpeg and ffprobe are required to create the L4 HDR10 pattern")
-    cache_dir = cache_dir.expanduser().resolve()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    media = l4_hdr10_media_path(cache_dir)
-    metadata_path = l4_hdr10_metadata_path(cache_dir)
-    patches = l4_hdr10_patches()
-
+def _l4_hdr10_encode_and_decode_frame0(
+    ffmpeg: str, cache_dir: Path, media: Path
+) -> bytes:
     frame_bytes = l4_hdr10_raw_frame(L4_HDR10_WIDTH, L4_HDR10_HEIGHT)
     with tempfile.NamedTemporaryFile(
         mode="wb", prefix="cinehdr-l4-hdr10-", suffix=".raw", dir=cache_dir, delete=False
@@ -1321,12 +1308,19 @@ def ensure_l4_hdr10_pattern(
         raise FixtureError(
             f"decoded L4 frame size {len(decoded_frame)} != expected {expected_frame_size}"
         )
+    return decoded_frame
 
+
+def _l4_hdr10_verify_decoded_patches(
+    decoded_frame: bytes, patches: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     decoded_samples: list[dict[str, Any]] = []
     for patch in patches:
         cx = patch["sample_center"]["x"]
         cy = patch["sample_center"]["y"]
-        actual_rgb = list(sample_gbrp10le_frame(decoded_frame, L4_HDR10_WIDTH, L4_HDR10_HEIGHT, cx, cy))
+        actual_rgb = list(
+            sample_gbrp10le_frame(decoded_frame, L4_HDR10_WIDTH, L4_HDR10_HEIGHT, cx, cy)
+        )
         if actual_rgb != patch["expected_rgb_10bit"]:
             raise FixtureError(
                 f"decoded L4 patch {patch['name']} at ({cx}, {cy}) = {actual_rgb}, "
@@ -1340,7 +1334,12 @@ def ensure_l4_hdr10_pattern(
             "expected_rgb_10bit": patch["expected_rgb_10bit"],
             "decoded_rgb_10bit": actual_rgb,
         })
+    return decoded_samples
 
+
+def _l4_hdr10_probe_and_validate_stream(
+    ffprobe: str, media: Path
+) -> tuple[dict[str, Any], float]:
     probe_completed = _run_checked([
         ffprobe, "-v", "error", "-select_streams", "v:0", "-count_frames",
         "-show_entries", (
@@ -1370,6 +1369,28 @@ def ensure_l4_hdr10_pattern(
             raise FixtureError(f"L4 stream field {key}={stream.get(key)!r}, expected {exp_val!r}")
     if abs(format_duration - float(L4_HDR10_DURATION_SECONDS)) > 0.05:
         raise FixtureError(f"L4 duration {format_duration}s != expected {L4_HDR10_DURATION_SECONDS}s")
+    return stream, format_duration
+
+
+def ensure_l4_hdr10_pattern(
+    cache_dir: Path,
+    *,
+    ffmpeg: str = "ffmpeg",
+    ffprobe: str = "ffprobe",
+) -> dict[str, Any]:
+    """Generate and verify a 60s 1920x1080 HDR10 PQ/BT.2020 L4 visual pattern outside Git."""
+
+    if shutil.which(ffmpeg) is None or shutil.which(ffprobe) is None:
+        raise FixtureError("ffmpeg and ffprobe are required to create the L4 HDR10 pattern")
+    cache_dir = cache_dir.expanduser().resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    media = l4_hdr10_media_path(cache_dir)
+    metadata_path = l4_hdr10_metadata_path(cache_dir)
+    patches = l4_hdr10_patches()
+
+    decoded_frame = _l4_hdr10_encode_and_decode_frame0(ffmpeg, cache_dir, media)
+    decoded_samples = _l4_hdr10_verify_decoded_patches(decoded_frame, patches)
+    stream, format_duration = _l4_hdr10_probe_and_validate_stream(ffprobe, media)
 
     metadata = {
         "schema": L4_HDR10_SCHEMA,
