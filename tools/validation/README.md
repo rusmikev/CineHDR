@@ -364,19 +364,51 @@
      ```
      *(Убедиться, что пройдены все 3 теста: базовая маркировка двух соединений, отрицательный контроль без LD_PRELOAD и многопоточный стресс-тест атомарности вывода).*
 
-  3. **Запуск эталонного нативного mpv на подготовленном синтетическом HDR10-паттерне**:
+  3. **Preflight: определение и проверка синтетического HDR10-паттерна**:
+     Перед запуском проверяется наличие и целостность подготовленного эталонного файла (без привязки к конкретному каталогу рабочей копии):
      ```bash
+     EXPECTED_SHA="cdee467e93298eb5bad11c408edbe1138edf046bc845580fc97ae0f250eb4b50"
+     COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null)"
+     REPO_ROOT="$(dirname "$COMMON_DIR")"
+     CANDIDATES=(
+       "${PATTERN_PATH:-}"
+       "validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
+       "${REPO_ROOT}/validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
+       "../validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
+     )
+     RESOLVED_PATTERN=""
+     for cand in "${CANDIDATES[@]}"; do
+       if [ -n "$cand" ] && [ -r "$cand" ]; then
+         sha=$(sha256sum "$cand" | awk '{print $1}')
+         if [ "$sha" = "$EXPECTED_SHA" ]; then
+           RESOLVED_PATTERN="$cand"
+           break
+         fi
+       fi
+     done
+
+     if [ -z "$RESOLVED_PATTERN" ]; then
+       echo "ОШИБКА: синтетический HDR10-паттерн с SHA-256 $EXPECTED_SHA не найден." >&2
+       echo "Укажите путь явно: export PATTERN_PATH=/path/to/cinehdr-gate2-hdr.mkv" >&2
+       exit 1
+     fi
+     echo "Используется проверенный паттерн: $RESOLVED_PATTERN"
+     ```
+
+  4. **Запуск эталонного нативного mpv в цикле (--loop-file=inf)**:
+     ```bash
+     mkdir -p validation-reports
      TS=$(date +%Y%m%dT%H%M%SZ)
      WAYLAND_DEBUG=1 LD_PRELOAD=/tmp/libwayland_conn_tag.so \
        mpv --vo=gpu-next --gpu-api=vulkan --gpu-context=waylandvk \
-           --target-colorspace-hint=yes --msg-level=vo=v \
-           validation-reports/fixtures/cinehdr-gate2-hdr.mkv \
-           > "validation-reports/${TS}-mpv-runtime.log" \
+           --target-colorspace-hint=yes --loop-file=inf --msg-level=vo=v \
+           --log-file="validation-reports/${TS}-mpv-runtime.log" \
+           "$RESOLVED_PATTERN" \
            2> "validation-reports/${TS}-mpv-tagged-wayland.log"
      ```
-     *(Паттерн: подготовленный синтетический HDR10-файл `validation-reports/fixtures/cinehdr-gate2-hdr.mkv` [Rec.2100 PQ, BT.2020, 10-бит, sha256: `cdee467e93298eb5bad11c408edbe1138edf046bc845580fc97ae0f250eb4b50`]. Окно mpv воспроизводит 1-секундный циклический паттерн; через несколько секунд окно можно закрыть, нажав `q`).*
+     *(Паттерн: проверенный синтетический HDR10-файл `cinehdr-gate2-hdr.mkv` [Rec.2100 PQ, BT.2020, 10-бит, sha256: `cdee467e93298eb5bad11c408edbe1138edf046bc845580fc97ae0f250eb4b50`]. Параметр `--loop-file=inf` зацикливает 1-секундный паттерн, позволяя оператору спокойно убедиться в открытии окна и появлении видео, после чего окно закрывается клавишей `q`).*
 
-  4. **Быстрая проверка наличия меток и селекторов в логах**:
+  5. **Быстрая проверка наличия меток и селекторов в логах**:
      ```bash
      # Проверить, что лог не пуст и содержит маркированные строки [conn#... fd#...]
      head -n 20 "validation-reports/${TS}-mpv-tagged-wayland.log"
@@ -386,7 +418,7 @@
      grep -E 'gpu-next|waylandvk|VK_COLOR_SPACE|surface caps' "validation-reports/${TS}-mpv-runtime.log"
      ```
 
-  5. **Автономная валидация маркированной трассы парсером (--trace-only)**:
+  6. **Автономная валидация маркированной трассы парсером (--trace-only)**:
      ```bash
      python3 tools/validation/parse_wayland_color_trace.py \
        --trace-only \
@@ -397,7 +429,7 @@
      ```
      *(Парсер автоматически изолирует соединение `conn#`, на котором вызван `xdg_toplevel.set_app_id("mpv")`, проверит инвариантность дескриптора сокета `fd` и выполнит протокольный аудит double-buffered HDR-описания).*
 
-  6. **Что возвращает владелец в зависимости от результата**:
+  7. **Что возвращает владелец в зависимости от результата**:
      - **При PASS (код выхода 0)**:
        - SHA-256 файлов `validation-reports/${TS}-mpv-tagged-wayland.log` и `validation-reports/${TS}-mpv-runtime.log`;
        - JSON-отчёт `validation-reports/${TS}-mpv-l3p.json`;
