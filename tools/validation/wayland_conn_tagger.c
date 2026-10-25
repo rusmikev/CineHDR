@@ -34,6 +34,11 @@
  *    libwayland's internal wl_closure_print to prefix each message with:
  *    [conn#<id> fd#<fd>]
  *
+ * Atomicity:
+ * To avoid race conditions between parallel threads where prefix and message writes
+ * could interleave (producing double tags and untagged lines), stream output is
+ * locked using flockfile(stream)/funlockfile(stream) and emitted atomically.
+ *
  * If a Wayland closure is emitted outside any tracked connection context, it is
  * explicitly prefixed with [conn#untracked fd#?], enabling fail-closed rejection.
  */
@@ -269,6 +274,8 @@ int wl_display_roundtrip(struct wl_display *display) {
  * Stderr Formatting Interception
  * wl_closure_print writes via open_memstream + fprintf(stderr, "%s", buffer).
  * On fortified glibc, fprintf is emitted as __fprintf_chk.
+ * All stderr writes are wrapped in flockfile/funlockfile to ensure atomic
+ * emission of the [conn#... fd#...] tag and the message without thread race.
  * ========================================================================= */
 
 static bool is_wayland_debug_line(const char *buf) {
@@ -287,18 +294,21 @@ static bool is_wayland_debug_line(const char *buf) {
     return paren != NULL;
 }
 
-static void emit_tag_if_needed(FILE *stream, const char *msg) {
-    if (stream != stderr) return;
-    if (!is_wayland_debug_line(msg)) return;
+static void format_and_print_atomic(FILE *stream, const char *msg) {
+    static int (*real_fputs)(const char *, FILE *) = NULL;
+    if (!real_fputs) real_fputs = (int (*)(const char *, FILE *))dlsym(RTLD_NEXT, "fputs");
 
-    static int (*real_fprintf)(FILE *, const char *, ...) = NULL;
-    if (!real_fprintf) real_fprintf = (int (*)(FILE *, const char *, ...))dlsym(RTLD_NEXT, "fprintf");
-
-    if (current_conn_id > 0) {
-        real_fprintf(stderr, "[conn#%d fd#%d] ", current_conn_id, current_conn_fd);
+    char tag_buf[64];
+    if (current_conn_id > 0 && current_conn_fd >= 0) {
+        snprintf(tag_buf, sizeof(tag_buf), "[conn#%d fd#%d] ", current_conn_id, current_conn_fd);
     } else {
-        real_fprintf(stderr, "[conn#untracked fd#?] ");
+        snprintf(tag_buf, sizeof(tag_buf), "[conn#untracked fd#?] ");
     }
+
+    flockfile(stream);
+    real_fputs(tag_buf, stream);
+    real_fputs(msg, stream);
+    funlockfile(stream);
 }
 
 int __fprintf_chk(FILE *stream, int flag, const char *format, ...) {
@@ -307,18 +317,25 @@ int __fprintf_chk(FILE *stream, int flag, const char *format, ...) {
 
     va_list ap;
     va_start(ap, format);
-    if (!in_format_hook) {
+    int ret = 0;
+    if (!in_format_hook && stream == stderr && strcmp(format, "%s") == 0) {
         in_format_hook = true;
-        if (strcmp(format, "%s") == 0) {
-            va_list ap_peek;
-            va_copy(ap_peek, ap);
-            const char *s = va_arg(ap_peek, const char *);
-            emit_tag_if_needed(stream, s);
+        va_list ap_peek;
+        va_copy(ap_peek, ap);
+        const char *s = va_arg(ap_peek, const char *);
+        if (is_wayland_debug_line(s)) {
+            format_and_print_atomic(stream, s);
             va_end(ap_peek);
+            in_format_hook = false;
+            va_end(ap);
+            return (int)strlen(s);
         }
+        va_end(ap_peek);
         in_format_hook = false;
     }
-    int ret = real_vfprintf(stream, format, ap);
+    flockfile(stream);
+    ret = real_vfprintf(stream, format, ap);
+    funlockfile(stream);
     va_end(ap);
     (void)flag;
     return ret;
@@ -328,19 +345,25 @@ int __vfprintf_chk(FILE *stream, int flag, const char *format, va_list ap) {
     static int (*real_vfprintf)(FILE *, const char *, va_list) = NULL;
     if (!real_vfprintf) real_vfprintf = (int (*)(FILE *, const char *, va_list))dlsym(RTLD_NEXT, "vfprintf");
 
-    if (!in_format_hook) {
+    if (!in_format_hook && stream == stderr && strcmp(format, "%s") == 0) {
         in_format_hook = true;
-        if (strcmp(format, "%s") == 0) {
-            va_list ap_peek;
-            va_copy(ap_peek, ap);
-            const char *s = va_arg(ap_peek, const char *);
-            emit_tag_if_needed(stream, s);
+        va_list ap_peek;
+        va_copy(ap_peek, ap);
+        const char *s = va_arg(ap_peek, const char *);
+        if (is_wayland_debug_line(s)) {
+            format_and_print_atomic(stream, s);
             va_end(ap_peek);
+            in_format_hook = false;
+            return (int)strlen(s);
         }
+        va_end(ap_peek);
         in_format_hook = false;
     }
+    flockfile(stream);
+    int ret = real_vfprintf(stream, format, ap);
+    funlockfile(stream);
     (void)flag;
-    return real_vfprintf(stream, format, ap);
+    return ret;
 }
 
 int fprintf(FILE *stream, const char *format, ...) {
@@ -349,18 +372,25 @@ int fprintf(FILE *stream, const char *format, ...) {
 
     va_list ap;
     va_start(ap, format);
-    if (!in_format_hook) {
+    int ret = 0;
+    if (!in_format_hook && stream == stderr && strcmp(format, "%s") == 0) {
         in_format_hook = true;
-        if (strcmp(format, "%s") == 0) {
-            va_list ap_peek;
-            va_copy(ap_peek, ap);
-            const char *s = va_arg(ap_peek, const char *);
-            emit_tag_if_needed(stream, s);
+        va_list ap_peek;
+        va_copy(ap_peek, ap);
+        const char *s = va_arg(ap_peek, const char *);
+        if (is_wayland_debug_line(s)) {
+            format_and_print_atomic(stream, s);
             va_end(ap_peek);
+            in_format_hook = false;
+            va_end(ap);
+            return (int)strlen(s);
         }
+        va_end(ap_peek);
         in_format_hook = false;
     }
-    int ret = real_vfprintf(stream, format, ap);
+    flockfile(stream);
+    ret = real_vfprintf(stream, format, ap);
+    funlockfile(stream);
     va_end(ap);
     return ret;
 }
@@ -369,28 +399,38 @@ int vfprintf(FILE *stream, const char *format, va_list ap) {
     static int (*real_vfprintf)(FILE *, const char *, va_list) = NULL;
     if (!real_vfprintf) real_vfprintf = (int (*)(FILE *, const char *, va_list))dlsym(RTLD_NEXT, "vfprintf");
 
-    if (!in_format_hook) {
+    if (!in_format_hook && stream == stderr && strcmp(format, "%s") == 0) {
         in_format_hook = true;
-        if (strcmp(format, "%s") == 0) {
-            va_list ap_peek;
-            va_copy(ap_peek, ap);
-            const char *s = va_arg(ap_peek, const char *);
-            emit_tag_if_needed(stream, s);
+        va_list ap_peek;
+        va_copy(ap_peek, ap);
+        const char *s = va_arg(ap_peek, const char *);
+        if (is_wayland_debug_line(s)) {
+            format_and_print_atomic(stream, s);
             va_end(ap_peek);
+            in_format_hook = false;
+            return (int)strlen(s);
         }
+        va_end(ap_peek);
         in_format_hook = false;
     }
-    return real_vfprintf(stream, format, ap);
+    flockfile(stream);
+    int ret = real_vfprintf(stream, format, ap);
+    funlockfile(stream);
+    return ret;
 }
 
 int fputs(const char *s, FILE *stream) {
     static int (*real_fputs)(const char *, FILE *) = NULL;
     if (!real_fputs) real_fputs = (int (*)(const char *, FILE *))dlsym(RTLD_NEXT, "fputs");
 
-    if (!in_format_hook) {
+    if (!in_format_hook && stream == stderr && is_wayland_debug_line(s)) {
         in_format_hook = true;
-        emit_tag_if_needed(stream, s);
+        format_and_print_atomic(stream, s);
         in_format_hook = false;
+        return (int)strlen(s);
     }
-    return real_fputs(s, stream);
+    flockfile(stream);
+    int ret = real_fputs(s, stream);
+    funlockfile(stream);
+    return ret;
 }
