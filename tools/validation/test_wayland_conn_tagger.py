@@ -2,11 +2,21 @@
 """Autonomous unit test for Wayland connection tagging interposer."""
 
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+
+try:
+    from tools.validation.parse_wayland_color_trace import create_trace_only_report
+except ImportError:
+    _THIS_DIR = str(Path(__file__).resolve().parent)
+    if _THIS_DIR not in sys.path:
+        sys.path.insert(0, _THIS_DIR)
+    from parse_wayland_color_trace import create_trace_only_report
 
 TAGGED_LINE_RE = re.compile(
     r"^\[conn#(?P<conn_id>\d+)\s+fd#(?P<fd>\d+)\]\s+(?:\{[^\}]+\}\s+)?(?P<call>.*)$"
@@ -711,9 +721,6 @@ assert wl.wl_display_connect(None) == 0x1111
             trace_file = os.path.join(self.work_dir, "partial_fallback_trace.log")
             with open(trace_file, "w", encoding="utf-8") as f:
                 f.write(proc_py.stderr)
-
-            from pathlib import Path
-            from parse_wayland_color_trace import create_trace_only_report
 
             report = create_trace_only_report(
                 Path(trace_file),
