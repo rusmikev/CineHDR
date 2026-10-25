@@ -25,7 +25,7 @@
 | Эталон mpv подтверждён по выходному пути (API/контекст + L3p его поверхности) | L3/L3p | PASS 2026-10-25 4fe5462 (RADV/waylandvk HDR10; parser 04c1252; L3p trace ac297a0, conn#4 fd#11, surface#5, effective_buffer#65) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HDR10 `auto` — протокольная трасса | L3p | PASS 2026-10-25 c9741d3 (installed Flatpak db3d2ad, composite toplevel; trace d20eb02, verified conn#1, surface#58, Rec.2100 PQ, effective buffer#79; 0 untracked lines; L4 unverified) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HDR10 `auto` — визуальная приёмка на паттерне | L4 | UNCLEAR 2026-10-25 db3d2ad (владелец различил ступени 600/800/1000 нит в CineHDR Auto и эталонном mpv; runtime-лог mpv подтвердил waylandvk/HDR10 swapchain; одинаковые условия fullscreen и монитора ожидают подтверждения; яркость панели не измерялась) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
-| HLG `auto` — протокольная трасса | L3p | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| HLG `auto` — протокольная трасса | L3p | PASS 2026-10-25 774e61d (GNOME Platform 50; исходники worktree поверх установленного Flatpak; trace 5ee3b22, verified conn#1 fd#8, composite surface#57, Rec.2100 PQ, effective buffer#74; 0 untracked; L4 не проверен) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | HLG `auto` — визуальная приёмка на паттерне | L4 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | WCG-SDR остаётся SDR | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | DoVi Profile 8 | L3p/L4 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
