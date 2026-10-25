@@ -635,7 +635,12 @@ void *wl_proxy_marshal_array_flags(void *p, uint32_t op, const void *i, uint32_t
 int wl_display_dispatch_queue(void *d, void *q) { (void)d; (void)q; return 0; }
 int wl_display_dispatch(void *d) { (void)d; return 0; }
 int wl_display_dispatch_queue_pending(void *d, void *q) { (void)d; (void)q; return 0; }
-int wl_display_dispatch_pending(void *d) { (void)d; return 0; }
+int wl_display_dispatch_pending(void *d) {
+    (void)d;
+    const char *volatile msg = "[100.001] wl_registry#2.global(1)\\n";
+    fprintf(stderr, "%s", msg);
+    return 0;
+}
 int wl_display_dispatch_queue_pending_single(void *d, void *q) { (void)d; (void)q; return 0; }
 int wl_display_dispatch_pending_single(void *d) { (void)d; return 0; }
 int wl_display_roundtrip_queue(void *d, void *q) { (void)d; (void)q; return 0; }
@@ -732,6 +737,49 @@ assert wl.wl_display_connect(None) == 0x1111
         for tagger_so in (self.so_path, nosep_so):
             with self.subTest(tagger_so=os.path.basename(tagger_so)):
                 self._verify_missing_symbol_for_tagger(tagger_so, partial_so)
+
+    def test_probe_loader_interposes_ctypes_with_missing_optional_symbols(self):
+        """The product's ctypes probe uses the interposer even on older libwayland."""
+        partial_so = self._build_partial_wayland_so()
+        env = dict(os.environ)
+        env["LD_PRELOAD"] = f"{self.so_path}:{partial_so}"
+        env["LD_BIND_NOW"] = "1"
+        env["WAYLAND_DEBUG"] = "1"
+        repo_root = str(Path(__file__).resolve().parents[2])
+        env["PYTHONPATH"] = repo_root
+        env["CINEHDR_TAGGER_SO"] = self.so_path
+        script = """
+import ctypes
+import os
+from src.wayland_cm_probe import _load_libwayland
+
+raw = ctypes.CDLL("libwayland-client.so.0")
+assert not hasattr(raw, "wl_display_dispatch_timeout")
+lib = _load_libwayland()
+assert lib is not None
+tagger = ctypes.CDLL(os.environ['CINEHDR_TAGGER_SO'])
+addr = lambda fn: ctypes.cast(fn, ctypes.c_void_p).value
+assert addr(lib.wl_display_dispatch_pending) == addr(tagger.wl_display_dispatch_pending)
+assert addr(raw.wl_display_dispatch_pending) != addr(tagger.wl_display_dispatch_pending)
+lib.wl_display_connect.restype = ctypes.c_void_p
+lib.wl_display_connect.argtypes = [ctypes.c_char_p]
+lib.wl_display_dispatch_pending.argtypes = [ctypes.c_void_p]
+display = lib.wl_display_connect(None)
+assert display == 0x1111
+assert lib.wl_display_dispatch_pending(ctypes.c_void_p(display)) == 0
+"""
+        proc = subprocess.run(
+            ["python3", "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(
+            "[conn#1 fd#9] [100.001] wl_registry#2.global(1)",
+            proc.stderr,
+        )
 
     def test_as_needed_and_noseparate_code_build_ctypes_resolution(self):
         """Regression test for defect 1 & 3: -Wl,--as-needed and -Wl,-z,noseparate-code build."""
