@@ -61,13 +61,15 @@ L4_HDR10_NITS_STEPS: tuple[int, ...] = (100, 203, 400, 600, 800, 1000)
 
 L4_HLG_MODE = "l4-hlg"
 L4_HLG_SCHEMA = "cinehdr.l4.hlg.pattern.v1"
-L4_HLG_GENERATOR_REVISION = "ffv1-l4-hlg-bt2020-60s-v1"
+L4_HLG_GENERATOR_REVISION = "ffv1-l4-hlg-bt2020-60s-v2"
 L4_HLG_WIDTH = 1920
 L4_HLG_HEIGHT = 1080
 L4_HLG_FPS = 24
 L4_HLG_DURATION_SECONDS = 60
 L4_HLG_FRAME_COUNT = L4_HLG_FPS * L4_HLG_DURATION_SECONDS
 L4_HLG_LEVEL_STEPS: tuple[float, ...] = (0.05, 0.18, 0.50, 0.75, 0.88, 1.0)
+L4_HLG_REFERENCE_WHITE_SIGNAL = 0.75
+L4_HLG_REFERENCE_WHITE_10BIT = round(L4_HLG_REFERENCE_WHITE_SIGNAL * 1023)
 L4_HLG_VISUAL_ORACLE = {
     "oracle_id": "hlg-relative-scene-light-contrast-v1",
     "description": (
@@ -75,14 +77,14 @@ L4_HLG_VISUAL_ORACLE = {
         "conditions: (1) all 6 relative scene-light columns (5%, 18%, 50%, 75%, 88%, 100%) "
         "must be distinguishable; (2) upper highlight gradations (75% reference white, 88% highlight, "
         "100% peak) must show clear separation without highlight clipping into a single solid block; "
-        "(3) column 4 (75%) must match the bottom reference strip while columns 5 and 6 must be "
-        "distinctly brighter than the strip; (4) relative contrast and gradation steps must be "
+        "(3) the bottom 75% HLG-signal reference-white strip must lie between the 18% and 50% "
+        "scene-light columns; (4) relative contrast and gradation steps must be "
         "comparable when compared against reference mpv on the same physical display."
     ),
     "transfer": "arib-std-b67",
     "color_primaries": "bt2020",
-    "reference_white_level": 0.75,
-    "reference_white_10bit": 969,
+    "reference_white_hlg_signal": L4_HLG_REFERENCE_WHITE_SIGNAL,
+    "reference_white_10bit": L4_HLG_REFERENCE_WHITE_10BIT,
     "upper_gradations_distinguishable": True,
 }
 
@@ -1550,7 +1552,7 @@ def l4_hlg_raw_frame(
     plane_bytes = width * height * 2
     planes = [bytearray(plane_bytes) for _ in range(3)]
     patches = l4_hlg_patches(width=width, height=height)
-    ref_75_code = l4_hlg_code_10bit(0.75)
+    ref_75_code = L4_HLG_REFERENCE_WHITE_10BIT
     ref_75_pixel = ref_75_code.to_bytes(2, "little")
     scale = max(min(width // 320, height // 180), 1)
     label_top_y = max(int(height * 0.05), 4)

@@ -642,7 +642,7 @@ class TestFixtureMathAndLayout(unittest.TestCase):
             rb = patch["reference_75_strip_bounds"]
             ref_y = (rb["y0"] + rb["y1"]) // 2
             ref_rgb = generate_patterns.sample_gbrp10le_frame(frame, 600, 360, cx, ref_y)
-            self.assertEqual(list(ref_rgb), [969, 969, 969])
+            self.assertEqual(list(ref_rgb), [767, 767, 767])
 
         with tempfile.TemporaryDirectory() as tmp:
             fake_l4 = {
@@ -662,7 +662,7 @@ class TestFixtureMathAndLayout(unittest.TestCase):
             self.assertEqual(payload["schema"], generate_patterns.L4_HLG_SCHEMA)
             self.assertEqual(payload["mode"], "l4-hlg")
             self.assertEqual(
-                payload["fixtures"][0]["visual_oracle"]["reference_white_level"], 0.75
+                payload["fixtures"][0]["visual_oracle"]["reference_white_hlg_signal"], 0.75
             )
 
     def test_l4_hlg_pattern_live_encode_decode_and_metadata(self) -> None:

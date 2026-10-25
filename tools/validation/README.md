@@ -553,16 +553,16 @@
   6. **Специфика сценариев и критерии приёмки**:
      - **HDR10 (Rec.2100 PQ)**:
        - Оракул трассы: `status: PASS` (подтверждён параметрический PQ `tf=11`);
-       - Copy Report: `HDR mode: auto`, `HDR status: enabled` / `active`, `Color state: rec2100-pq`, `Color transfer: smpte2084`, `Color primaries: bt.2020`.
+       - Copy Report: `Auto gate: allowed`, `HDR Status: Active`, `Gdk.ColorState: Rec.2100 PQ`, `Transfer Characteristics: pq`, `Color Primaries: bt.2020`.
      - **HLG (L3p + визуальный L4)**:
        - Тестовый файл: `cinehdr-gate2-hevc-main10-yuv420p10-lossless-hlg-60s.mp4` либо визуальный паттерн `cinehdr-l4-hlg-bt2020-60s.mkv` (`python3 tests/generate_patterns.py --mode l4-hlg --cache-dir validation-reports/fixtures`);
-       - Оракул трассы: `status: PASS` (подтверждён HLG `tf=13`);
-       - Copy Report: `Color transfer: arib-std-b67` (HLG), `Color primaries: bt.2020`;
-       - L4 визуальный оракул: относительные градации scene-light HLG `0.05, 0.18, 0.50, 0.75, 0.88, 1.0` без выдуманных нит. Верхние градации (75%, 88%, 100%) отчётливо различимы без клиппинга; нижняя полоса 75% reference white совпадает по яркости с плашкой 75%; сопоставимый относительный контраст с эталонным mpv на том же дисплее.
+       - Оракул трассы CineHDR: `status: PASS` с выходным PQ `tf=11`; входной HLG преобразуется в PQ-текстуру. Для эталонного mpv нативное HLG-описание может использовать `tf=13`, что оценивается отдельно;
+       - Copy Report: `Transfer Characteristics: hlg` (вход), `Color Primaries: bt.2020`, `Gdk.ColorState: Rec.2100 PQ` (выход);
+       - L4 визуальный оракул: относительные градации scene-light HLG `0.05, 0.18, 0.50, 0.75, 0.88, 1.0` без выдуманных нит. Верхние градации (75%, 88%, 100%) отчётливо различимы без клиппинга. Нижняя полоса — HLG reference white при **75% кодового сигнала** (10-битный код 767), между плашками 18% и 50% scene-light; сопоставимый относительный контраст с эталонным mpv на том же дисплее.
      - **Отрицательный контроль WCG-SDR (BT.2020 + BT.1886 / sRGB)**:
        - Тестовый файл: `cinehdr-gate2-hevc-main10-yuv420p10-lossless-wcg-sdr-60s.mp4`;
        - Цель: подтвердить, что контент с широким охватом BT.2020, но стандартным SDR-трансфером НЕ активирует HDR-режим при `hdr-mode=auto`;
-       - Оракул трассы: **ТОЛЬКО** доказанный `status: FAIL` (код завершения 1 с диагностикой `no valid HDR commits found`) в комбинации с SDR Copy Report (`HDR status: disabled` / `inactive`, `Color transfer: bt.709` / `srgb`);
+       - Оракул трассы: **ТОЛЬКО** доказанный `status: FAIL` (код завершения 1, `error: only SDR color descriptions were committed ...`) в комбинации с SDR Copy Report (`HDR Status: Disabled`, `Gdk.ColorState: sRGB`, SDR-трансфер источника). Общий отказ `no valid HDR commits found` или отсутствие CM-событий не доказывает корректный отрицательный контроль;
        - **ВНИМАНИЕ**: статус `UNKNOWN` (неполная трасса, сбой шима или нераспознанный app-id) **НЕ является подтверждением отрицательного контроля** и свидетельствует о невалидности эксперимента.
 
   7. **Восстановление исходных параметров GSettings**:
