@@ -444,6 +444,114 @@
        - Полный `validation-reports/${TS}-mpv-l3p.json` и вывод `stderr`;
        - Зафиксированную причину протокольного отказа (например, отказ в HDR-трансфере, прикрепление SDR-описания или ошибка протокола).
 
+- **Регламент и команды протокольного захвата L3p для CineHDR в Flatpak (GNOME-AMD, P1.3, шаг 1)**:
+  Владелец выполняет запуск CineHDR в установленной Flatpak-песочнице (`io.github.rusmikev.CineHDR`) на стенде GNOME-AMD с включённым HDR. Ожидаемый рендер-путь — композитный toplevel (`graphics-offload` выключен, режим `hdr-mode=auto`). Парсер автоматически атрибутирует соединение по `--app-id io.github.rusmikev.CineHDR`.
+
+  1. **Преодоление границы Flatpak-песочницы для `wayland_conn_tagger`**:
+     - **Совместимость библиотек**: перехватчик `wayland_conn_tagger.c` компилируется под хостовым `gcc` (при glibc ≥ 2.34, совместимом с Flatpak Platform 50) либо герметично внутри SDK-рантайма:
+       ```bash
+       # Вариант A (хостовый компилятор):
+       gcc -Wall -Wextra -shared -fPIC -o /tmp/libwayland_conn_tag.so tools/validation/wayland_conn_tagger.c -ldl -lwayland-client
+
+       # Вариант B (герметичная сборка внутри Flatpak Sdk 50):
+       flatpak run --user --filesystem="$(pwd)":ro --filesystem=/tmp:rw --command=gcc org.gnome.Sdk//50 \
+         -Wall -Wextra -shared -fPIC -o /tmp/libwayland_conn_tag.so "$(pwd)/tools/validation/wayland_conn_tagger.c" -ldl -lwayland-client
+       ```
+     - **Автономная самопроверка шима**:
+       ```bash
+       python3 tools/validation/test_wayland_conn_tagger.py
+       ```
+     - **Проброс файлов и окружения в sandbox**:
+       1. Путь `/tmp` внутри песочницы изолирован (tmpfs). Файл перехватчика пробрасывается явно через флаг `--filesystem=/tmp/libwayland_conn_tag.so:ro`;
+       2. Переменные `LD_PRELOAD` и `WAYLAND_DEBUG` не наследуются из хостовой среды и передаются через аргументы `--env=LD_PRELOAD=/tmp/libwayland_conn_tag.so` и `--env=WAYLAND_DEBUG=1`;
+       3. Переменная `--env=CINEHDR_NON_UNIQUE=1` предотвращает передачу файла уже запущенному пользовательскому экземпляру CineHDR через D-Bus activation;
+       4. Переменные `--env=CINEHDR_EXPERIMENTAL_COLOR_MGMT=1` и `--env=GDK_DEBUG=color-mgmt` включают Wayland Color Management в GTK.
+
+  2. **Preflight: проверка HDR10-паттерна и параметров GSettings**:
+     ```bash
+     EXPECTED_SHA="cdee467e93298eb5bad11c408edbe1138edf046bc845580fc97ae0f250eb4b50"
+     COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null)"
+     REPO_ROOT="$(dirname "$COMMON_DIR")"
+     CANDIDATES=(
+       "${PATTERN_PATH:-}"
+       "validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
+       "${REPO_ROOT}/validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
+       "../validation-reports/fixtures/cinehdr-gate2-hdr.mkv"
+     )
+     RESOLVED_PATTERN=""
+     for cand in "${CANDIDATES[@]}"; do
+       if [ -n "$cand" ] && [ -r "$cand" ]; then
+         sha=$(sha256sum "$cand" | awk '{print $1}')
+         if [ "$sha" = "$EXPECTED_SHA" ]; then
+           RESOLVED_PATTERN="$(realpath "$cand")"
+           break
+         fi
+       fi
+     done
+
+     if [ -z "$RESOLVED_PATTERN" ]; then
+       echo "ОШИБКА: синтетический HDR10-паттерн с SHA-256 $EXPECTED_SHA не найден." >&2
+       echo "Укажите путь явно: export PATTERN_PATH=/path/to/cinehdr-gate2-hdr.mkv" >&2
+       exit 1
+     fi
+     echo "Используется проверенный паттерн: $RESOLVED_PATTERN"
+
+     # Фиксация настроек: graphics-offload выключен (композитный путь), hdr-mode=auto
+     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload false
+     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode 'auto'
+     ```
+
+  3. **Запуск CineHDR во Flatpak с захватом маркированной трассы**:
+     ```bash
+     mkdir -p validation-reports
+     TS=$(date +%Y%m%dT%H%M%SZ)
+
+     flatpak run \
+       --filesystem=/tmp/libwayland_conn_tag.so:ro \
+       --filesystem="$RESOLVED_PATTERN":ro \
+       --env=LD_PRELOAD=/tmp/libwayland_conn_tag.so \
+       --env=WAYLAND_DEBUG=1 \
+       --env=CINEHDR_NON_UNIQUE=1 \
+       --env=CINEHDR_EXPERIMENTAL_COLOR_MGMT=1 \
+       --env=GDK_DEBUG=color-mgmt \
+       io.github.rusmikev.CineHDR \
+       "$RESOLVED_PATTERN" \
+       2> "validation-reports/${TS}-cinehdr-tagged-wayland.log"
+     ```
+     *(Во время воспроизведения паттерна оператор открывает диалог диагностики через меню «Video Output Diagnostics», нажимает кнопку «Copy Report» и сохраняет текст отчёта в файл `validation-reports/${TS}-cinehdr-copy-report.txt`, после чего закрывает окно приложения).*
+
+  4. **Автономная валидация трассы парсером (--trace-only)**:
+     ```bash
+     python3 tools/validation/parse_wayland_color_trace.py \
+       --trace-only \
+       --trace "validation-reports/${TS}-cinehdr-tagged-wayland.log" \
+       --app-id io.github.rusmikev.CineHDR \
+       --oracle composite_window \
+       --output "validation-reports/${TS}-cinehdr-l3p.json"
+     ```
+
+  5. **Список обязательных наблюдений для Copy Report**:
+     В сохранённом `validation-reports/${TS}-cinehdr-copy-report.txt` сверяются ключевые поля:
+     - `[Video Renderer]` → `Graphics offload`: `disabled` (подтверждает композитный путь окна GTK, без subsurface bypass);
+     - `[Video Renderer]` → `FBO format`: `rgba16f` (16-битный float буфер);
+     - `[Output & Color State]` → `HDR mode`: `auto`;
+     - `[Output & Color State]` → `HDR status`: `enabled` / `active`;
+     - `[Output & Color State]` → `Color state`: `rec2100-pq` (или BT.2020 PQ);
+     - `[Output & Color State]` → `Compositor surface submission`: `GDK texture publication` (клиентское подтверждение границы публикации);
+     - `[Video Signal]` → `Color transfer`: `smpte2084` (PQ);
+     - `[Video Signal]` → `Color primaries`: `bt.2020`.
+
+  6. **Что возвращает владелец**:
+     - **При PASS (код выхода 0)**:
+       - SHA-256 файлов `validation-reports/${TS}-cinehdr-tagged-wayland.log` и `validation-reports/${TS}-cinehdr-copy-report.txt`;
+       - JSON-отчёт `validation-reports/${TS}-cinehdr-l3p.json`;
+       - Содержимое `validation-reports/${TS}-cinehdr-copy-report.txt`;
+       - *Внимание: PASS трассы доказывает только L3p-протокольную передачу HDR-описания композитору поверхностью CineHDR. Он НЕ подтверждает физический HDR-вывод монитором и НЕ является закрытием L4 (визуальное сравнение L4 на ступенях паттерна проводится отдельно).*
+     - **При UNKNOWN / FAIL (код выхода 1)**:
+       - SHA-256 и размер обоих логов;
+       - Значение поля `"reason"` из `validation-reports/${TS}-cinehdr-l3p.json` и вывод ошибки из `stderr`;
+       - Первые 50 строк маркированного лога и строки `xdg_toplevel.set_app_id` для анализа причин.
+
 #### 2.6. Что результат доказывает и чего НЕ доказывает
 - **Что доказывают модульные тесты (`tools/validation/test_wayland_color_trace.py`)**:
   - Корректность грамматики и конечного автомата парсера на синтетических трассах (и сохранённом логе `wayland-trace-Z4GghM`), а также логику capability-гейта `gtk_color_managed()` на моках `CmCaps`.
