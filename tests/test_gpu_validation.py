@@ -1677,6 +1677,90 @@ class PublicationEvidenceTests(unittest.TestCase):
                 self.assertEqual(st, "FAIL")
                 self.assertIn("did not match HDR output state", det)
 
+    def test_transition_accepts_actual_controller_target_properties_matrix(self):
+        """P1.5: transition verifies controller presets (400/600/1000/1600 nits), HLG, and SDR fallback."""
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.video_area = SimpleNamespace(
+            render_backend_active="opengl-next",
+            render_session_status="active",
+        )
+        session._transition_context_generation = 1
+        base = {
+            "time_pos": 8.0,
+            "playlist_pos": 0,
+            "render_frame_generation": 21,
+            "render_context_generation": 1,
+            "source_hdr": False,
+            "hdr_output_active": False,
+            "render_target_format": "GL_RGBA8",
+            "render_target_depth": 8,
+            "render_color_state": "srgb",
+            "dovi_profile": None,
+            "hwdec": "vaapi-copy",
+            "target_trc": "auto",
+            "target_prim": "auto",
+            "target_peak": "auto",
+        }
+        sdr_step = ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr"))
+        hdr_step = ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr"))
+
+        # 1. User presets in HDR mode: int and str numeric values (200, 400, 600, 1000, 1600) + HLG/BT.2100
+        for peak_val in (200, 400, 600, 1000, 1600, "400", "1000", "auto"):
+            for trc, prim in (("pq", "bt.2020"), ("hlg", "bt.2020"), ("pq", "bt.2100")):
+                with self.subTest(peak_val=peak_val, trc=trc, prim=prim):
+                    session._pending_render_frame_generation = 20
+                    hdr_state = {
+                        **base,
+                        "time_pos": 12.0,
+                        "playlist_pos": 1,
+                        "render_frame_generation": 21,
+                        "source_hdr": True,
+                        "hdr_output_active": True,
+                        "render_target_format": "GL_RGBA16F",
+                        "render_target_depth": 16,
+                        "render_color_state": "rec2100-pq",
+                        "target_trc": trc,
+                        "target_prim": prim,
+                        "target_peak": peak_val,
+                    }
+                    st, det = session._verify_step(hdr_step, hdr_state)
+                    self.assertEqual(st, "PASS")
+                    self.assertIn(f"target={trc}/{prim}/{peak_val}", det)
+
+        # 2. SDR fallback (after force-sdr return or auto SDR): trc=auto/srgb/bt.1886, prim=auto/bt.709
+        for trc in ("auto", "srgb", "bt.1886"):
+            for prim in ("auto", "bt.709"):
+                with self.subTest(sdr_trc=trc, sdr_prim=prim):
+                    session._pending_render_frame_generation = 20
+                    sdr_state = {
+                        **base,
+                        "target_trc": trc,
+                        "target_prim": prim,
+                        "target_peak": "auto",
+                    }
+                    st, det = session._verify_step(sdr_step, sdr_state)
+                    self.assertEqual(st, "PASS")
+                    self.assertIn(f"target={trc}/{prim}/auto", det)
+
+        # 3. Negative controls: peak is None, empty, or unknown
+        for empty_peak in (None, "", "   ", "none", "unknown"):
+            with self.subTest(empty_peak=empty_peak):
+                session._pending_render_frame_generation = 20
+                st, det = session._verify_step(hdr_step, {
+                    **base,
+                    "playlist_pos": 1,
+                    "render_frame_generation": 21,
+                    "source_hdr": True,
+                    "hdr_output_active": True,
+                    "render_target_format": "GL_RGBA16F",
+                    "render_target_depth": 16,
+                    "render_color_state": "rec2100-pq",
+                    "target_trc": "pq",
+                    "target_prim": "bt.2020",
+                    "target_peak": empty_peak,
+                })
+                self.assertEqual(st, "FAIL")
+
     def test_counter_growth_survives_mpv_counter_reset(self):
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.baseline = {"decoder_drops": 10}
