@@ -2822,6 +2822,8 @@ def validate_composite_window_trace(
     if candidates_hdr:
         confirmed_hdr = next((c for c in candidates_hdr if c["effective_buffer"] is not None), None)
         selected_hdr = confirmed_hdr if confirmed_hdr is not None else candidates_hdr[0]
+        for internal_key in ("effective_buffer", "commit_index", "wl_surface_id"):
+            selected_hdr.pop(internal_key)
         return _finalize(selected_hdr)
 
     # 2. Unknown semantics must remain uncredited as proven SDR-only

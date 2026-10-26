@@ -3669,6 +3669,8 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(rep["expected_app_id"], "mpv")
             self.assertEqual(rep["observed_app_id"], "mpv")
             self.assertEqual(rep["matched"]["surface"]["effective_buffer_id"], 99)
+            for internal_key in ("effective_buffer", "commit_index", "wl_surface_id"):
+                self.assertNotIn(internal_key, rep)
 
             # Rejection on invalid oracle
             with self.assertRaises(TraceValidationError):
@@ -3753,6 +3755,8 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["matched"]["surface"]["app_id"], "mpv")
             self.assertEqual(data["matched"]["surface"]["wl_surface_id"], 61)
             self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 99)
+            for internal_key in ("effective_buffer", "commit_index", "wl_surface_id"):
+                self.assertNotIn(internal_key, data)
             self.assertEqual(data["matched"]["image_description"]["tf_named"], 11)
             self.assertEqual(data["matched"]["image_description"]["primaries_named"], 6)
             self.assertIn("L3p protocol evidence", data["scope"])
