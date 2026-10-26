@@ -2818,12 +2818,44 @@ def validate_composite_window_trace(
             f"wp_color_manager_v1.get_surface was not called for {app_name} toplevel window surface"
         )
 
-    # 1. Any confirmed HDR commit must prevent SDR-only classification
+    # 1. Any confirmed HDR commit must prevent SDR-only classification.
+    # When multiple HDR commits exist, evaluate full L3p criteria across candidates
+    # so an early commit with active subsurface ambiguity does not mask a later
+    # proven unambiguous commit on the same target window surface.
     if candidates_hdr:
-        confirmed_hdr = next((c for c in candidates_hdr if c["effective_buffer"] is not None), None)
-        selected_hdr = confirmed_hdr if confirmed_hdr is not None else candidates_hdr[0]
+        proven_hdr = []
+        for hdr_cand in candidates_hdr:
+            s_id = hdr_cand["wl_surface_id"]
+            c_idx = hdr_cand["commit_index"]
+            eff_buf = hdr_cand["effective_buffer"]
+            if eff_buf is None:
+                continue
+
+            toplevels_at_c, subsurfaces_at_c = _surface_hierarchy_at_commit(calls, c_idx)
+            app_subsurfaces = [
+                child for child in subsurfaces_at_c
+                if _find_toplevel_ancestor(child, subsurfaces_at_c, toplevels_at_c)[0] == s_id
+            ]
+            has_subsurface_ambiguity = False
+            if app_subsurfaces:
+                for child in sorted(app_subsurfaces):
+                    child_curr, child_pend, child_attached = _buffer_state_at_commit(
+                        calls, child, c_idx
+                    )
+                    if child_curr is not None or (child_attached and child_pend is not None):
+                        has_subsurface_ambiguity = True
+                        break
+            if not has_subsurface_ambiguity:
+                proven_hdr.append(hdr_cand)
+
+        if proven_hdr:
+            selected_hdr = proven_hdr[0]
+        else:
+            confirmed_hdr = next((c for c in candidates_hdr if c["effective_buffer"] is not None), None)
+            selected_hdr = confirmed_hdr if confirmed_hdr is not None else candidates_hdr[0]
+
         for internal_key in ("effective_buffer", "commit_index", "wl_surface_id"):
-            selected_hdr.pop(internal_key)
+            selected_hdr.pop(internal_key, None)
         return _finalize(selected_hdr)
 
     # 2. Unknown semantics must remain uncredited as proven SDR-only
