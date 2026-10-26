@@ -2391,7 +2391,10 @@ class GpuValidationSession:
             return "PASS", "fullscreen state confirmed by GTK"
         elif step.action == "context-cycle":
             generation = int(
-                getattr(self.video_area, "render_context_generation", 0)
+                after.get(
+                    "render_context_generation",
+                    getattr(self.video_area, "render_context_generation", 0),
+                )
             )
             if generation <= self._pending_context_generation:
                 return "FAIL", "libmpv render context was not recreated"
@@ -2415,18 +2418,35 @@ class GpuValidationSession:
             hdr_controller = self.video_area.hdr_controller
             if getattr(hdr_controller, "_disconnected", False):
                 return "FAIL", "HDR property observers were disconnected"
-            if bool(hdr_controller.is_hdr_content) != self._pending_hdr_state:
+            after_source_hdr = after.get("source_hdr")
+            actual_source_hdr = (
+                bool(after_source_hdr)
+                if after_source_hdr is not None
+                else bool(hdr_controller.is_hdr_content)
+            )
+            if actual_source_hdr != self._pending_hdr_state:
                 return "FAIL", "HDR content state changed across context recreation"
             pending_hdr_active = getattr(self, "_pending_hdr_output_active", None)
+            after_hdr_active = after.get("hdr_output_active")
+            actual_hdr_active = (
+                bool(after_hdr_active)
+                if after_hdr_active is not None
+                else bool(getattr(hdr_controller, "is_hdr_active", actual_source_hdr))
+            )
             if (
                 pending_hdr_active is not None
-                and hasattr(hdr_controller, "is_hdr_active")
-                and bool(hdr_controller.is_hdr_active) != pending_hdr_active
+                and actual_hdr_active != pending_hdr_active
             ):
                 return "FAIL", "HDR output active state changed across context recreation"
             render_target = (
-                self.video_area.render_target_format,
-                self.video_area.render_target_depth,
+                after.get(
+                    "render_target_format",
+                    getattr(self.video_area, "render_target_format", None),
+                ),
+                after.get(
+                    "render_target_depth",
+                    getattr(self.video_area, "render_target_depth", None),
+                ),
             )
             if render_target != self._pending_render_target:
                 return "FAIL", (
@@ -2511,7 +2531,7 @@ class GpuValidationSession:
                 if (
                     trc not in ("auto", "srgb", "bt.1886")
                     or prim not in ("auto", "bt.709")
-                    or peak in ("", "none", "unknown")
+                    or peak not in ("auto",)
                 ):
                     return "FAIL", (
                         f"mpv target properties ({after.get('target_trc')}/"
