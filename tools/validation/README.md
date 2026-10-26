@@ -538,71 +538,81 @@
      done
      ```
 
-  3. **Preflight: сохранение настроек GSettings, fail-fast и гарантированный trap восстановления**:
-     > [!IMPORTANT]
-     > **Безопасность конфигурации стенда**:
-     > 1. Чтение исходных настроек выполняется в режиме fail-fast: при сбое чтения `graphics-offload` или `hdr-mode` выполнение немедленно прекращается без подстановки вымышленных значений (`false` / `auto`) и без записи в пользовательские параметры.
-     > 2. Восстановление исходных параметров гарантируется через shell-обработчик `trap ... EXIT INT TERM`, срабатывающий при завершении, любой ошибке или прерывании по Ctrl-C.
-     > 3. Автоматизированные тесты и агенты разработки не должны вызывать команды, модифицирующие реальные GSettings владельца.
+  3. **Запуск с временными GSettings, захватом трассы и автоматическим восстановлением**:
+     Запускайте **весь блок одной командой** из корня worktree. Он создаёт отдельный процесс Bash:
+     обработчики действуют только внутри него, а пользовательский терминал остаётся открытым.
+     Поменяйте только `MODE=hdr` на `hlg` или `wcg-sdr`, если проверяете другой сценарий.
+     При неудаче чтения исходных настроек запись не начинается. `SIGKILL` и выключение питания
+     обработчик перехватить не может; исходные значения печатаются до изменения.
 
      ```bash
-     # Шаг 3.1: Fail-fast чтение исходных настроек пользователя (без fallback-подстановок):
-     ORIG_OFFLOAD=$(flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR graphics-offload) || {
-       echo "FAIL-FAST: не удалось прочитать текущее значение graphics-offload из GSettings. Выполнение остановлено без изменения настроек." >&2
-       exit 1
-     }
-     ORIG_MODE=$(flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR hdr-mode) || {
-       echo "FAIL-FAST: не удалось прочитать текущее значение hdr-mode из GSettings. Выполнение остановлено без изменения настроек." >&2
-       exit 1
-     }
-     echo "Исходные настройки зафиксированы: graphics-offload=$ORIG_OFFLOAD, hdr-mode=$ORIG_MODE"
+     bash <<'CINEHDR_VALIDATION'
+     set -euo pipefail
+     APP=io.github.rusmikev.CineHDR
+     SCHEMA=io.github.rusmikev.CineHDR
+     MODE=hdr
 
-     # Шаг 3.2: Установка обработчика восстановления (гарантирует возврат при штатном выходе, ошибке или Ctrl-C):
+     ORIG_OFFLOAD=$(flatpak run --command=gsettings "$APP" get "$SCHEMA" graphics-offload)
+     ORIG_MODE=$(flatpak run --command=gsettings "$APP" get "$SCHEMA" hdr-mode)
+     [ -n "$ORIG_OFFLOAD" ] && [ -n "$ORIG_MODE" ] || { echo "Cannot read original GSettings" >&2; exit 1; }
+     printf 'Original GSettings: graphics-offload=%s hdr-mode=%s\n' "$ORIG_OFFLOAD" "$ORIG_MODE"
+
      restore_gsettings() {
-       local exit_code=$?
-       echo "Восстановление исходных настроек GSettings (graphics-offload=$ORIG_OFFLOAD, hdr-mode=$ORIG_MODE)..."
-       flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload "$ORIG_OFFLOAD"
-       flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode "$ORIG_MODE"
-       exit $exit_code
+       status=$?
+       trap - EXIT INT TERM
+       set +e
+       flatpak run --command=gsettings "$APP" set "$SCHEMA" graphics-offload "$ORIG_OFFLOAD"
+       offload_rc=$?
+       flatpak run --command=gsettings "$APP" set "$SCHEMA" hdr-mode "$ORIG_MODE"
+       mode_rc=$?
+       if [ "$offload_rc" -ne 0 ] || [ "$mode_rc" -ne 0 ]; then
+         echo "GSettings restoration failed; restore the printed original values manually" >&2
+         status=1
+       fi
+       exit "$status"
      }
-     trap restore_gsettings EXIT INT TERM
+     trap restore_gsettings EXIT
+     trap 'exit 130' INT
+     trap 'exit 143' TERM
 
-     # Шаг 3.3: Фиксация настроек стенда для валидации: graphics-offload=false (композитный путь GTK), hdr-mode='auto'
-     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload false || exit 1
-     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode 'auto' || exit 1
-     ```
+     flatpak run --command=gsettings "$APP" set "$SCHEMA" graphics-offload false
+     flatpak run --command=gsettings "$APP" set "$SCHEMA" hdr-mode 'auto'
 
-  4. **Запуск CineHDR во Flatpak с захватом маркированной трассы**:
-     ```bash
      mkdir -p validation-reports
      TS=$(date +%Y%m%dT%H%M%SZ)
-     TEST_FILE="validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-hdr-60s.mp4"
+     TEST_FILE="validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-${MODE}-60s.mp4"
+     [ -r "$TEST_FILE" ] || { echo "Missing fixture: $TEST_FILE" >&2; exit 1; }
+     TEST_FILE=$(realpath "$TEST_FILE")
+     echo "Run ID: $TS"
+     echo "Trace: validation-reports/${TS}-cinehdr-tagged-wayland.log"
+     echo "During playback, use Video Output Diagnostics → Copy Report; then close CineHDR."
 
      flatpak run \
        --filesystem=/tmp/libwayland_conn_tag.so:ro \
-       --filesystem="$(realpath "$TEST_FILE")":ro \
+       --filesystem="$TEST_FILE":ro \
        --env=LD_PRELOAD=/tmp/libwayland_conn_tag.so \
        --env=WAYLAND_DEBUG=1 \
        --env=CINEHDR_NON_UNIQUE=1 \
        --env=CINEHDR_EXPERIMENTAL_COLOR_MGMT=1 \
        --env=GDK_DEBUG=color-mgmt \
-       io.github.rusmikev.CineHDR \
-       "$(realpath "$TEST_FILE")" \
+       "$APP" "$TEST_FILE" \
        2> "validation-reports/${TS}-cinehdr-tagged-wayland.log"
-     ```
-     *(Во время воспроизведения оператор открывает диалог диагностики через меню «Video Output Diagnostics», нажимает кнопку «Copy Report» и сохраняет текст отчёта в файл `validation-reports/${TS}-cinehdr-copy-report.txt`, после чего закрывает окно приложения).*
 
-  5. **Автономная валидация трассы парсером (--trace-only)**:
-     ```bash
      python3 tools/validation/parse_wayland_color_trace.py \
        --trace-only \
        --trace "validation-reports/${TS}-cinehdr-tagged-wayland.log" \
-       --app-id io.github.rusmikev.CineHDR \
+       --app-id "$APP" \
        --oracle composite_window \
        --output "validation-reports/${TS}-cinehdr-l3p.json"
+     CINEHDR_VALIDATION
      ```
 
-  6. **Специфика сценариев и критерии приёмки**:
+     Сохраните скопированный отчёт диагностики в
+     `validation-reports/<TS>-cinehdr-copy-report.txt`, используя напечатанный `TS`.
+     Парсер может завершиться с кодом 1 для ожидаемого SDR-контроля; обработчик всё равно
+     восстановит настройки. Значение `PASS` или `FAIL` сверяйте по JSON и критериям ниже.
+
+  4. **Специфика сценариев и критерии приёмки**:
      - **HDR10 (Rec.2100 PQ)**:
        - Оракул трассы: `status: PASS` (подтверждён параметрический PQ `tf=11`);
        - Copy Report: `Auto gate: allowed`, `HDR Status: Active`, `Gdk.ColorState: Rec.2100 PQ`, `Transfer Characteristics: pq`, `Color Primaries: bt.2020`.
@@ -617,16 +627,16 @@
        - Оракул трассы: **ТОЛЬКО** доказанный `status: FAIL` (код завершения 1, `error: only SDR color descriptions were committed ...`) в комбинации с SDR Copy Report (`HDR Status: Disabled`, `Gdk.ColorState: sRGB`, SDR-трансфер источника). Общий отказ `no valid HDR commits found` или отсутствие CM-событий не доказывает корректный отрицательный контроль;
        - **ВНИМАНИЕ**: статус `UNKNOWN` (неполная трасса, сбой шима или нераспознанный app-id) **НЕ является подтверждением отрицательного контроля** и свидетельствует о невалидности эксперимента.
 
-  7. **Восстановление исходных параметров GSettings**:
-     При использовании скрипта с шага 3 исходные параметры `graphics-offload` и `hdr-mode` восстанавливаются автоматически через установленный `trap restore_gsettings EXIT INT TERM` как при успешном завершении, так и при ошибке любой команды или нажатии Ctrl-C.
-     Для ручного восстановления (или в случае аварийного завершения оболочки):
+  5. **Проверка восстановления GSettings**:
+     После завершения блока из шага 3 можно прочитать текущие значения командами ниже и
+     сравнить их с напечатанными исходными значениями. Если оболочка была аварийно убита
+     (`SIGKILL`) или питание пропало, восстановите именно записанные исходные значения вручную.
      ```bash
-     # Ручной вызов восстановления исходных параметров:
-     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload "$ORIG_OFFLOAD"
-     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode "$ORIG_MODE"
+     flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR graphics-offload
+     flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR hdr-mode
      ```
 
-  8. **Что возвращает владелец**:
+  6. **Что возвращает владелец**:
      - **При PASS (код выхода 0)**:
        - SHA-256 файлов `validation-reports/${TS}-cinehdr-tagged-wayland.log` и `validation-reports/${TS}-cinehdr-copy-report.txt`;
        - JSON-отчёт `validation-reports/${TS}-cinehdr-l3p.json`;
