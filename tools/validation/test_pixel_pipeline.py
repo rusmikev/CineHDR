@@ -606,9 +606,15 @@ class TestFixtureMathAndLayout(unittest.TestCase):
           - Mixing error is +202 code steps (+19.7% of full 10-bit scale).
         """
         # 1. Positive control of value (ITU-R BT.2408-4 standard reference white)
+        # Verify canonical constant and unified aliases resolve to the identical single source of truth
+        self.assertEqual(generate_patterns.HLG_REFERENCE_WHITE_SIGNAL, 0.75)
+        self.assertEqual(generate_patterns.HLG_REFERENCE_WHITE_10BIT, 767)
         self.assertEqual(generate_patterns.HLG_REFERENCE_WHITE_SIGNAL_LEVEL, 0.75)
         self.assertEqual(generate_patterns.HLG_REFERENCE_WHITE_10BIT_CODE, 767)
+        self.assertEqual(generate_patterns.L4_HLG_REFERENCE_WHITE_SIGNAL, 0.75)
         self.assertEqual(generate_patterns.L4_HLG_REFERENCE_WHITE_10BIT, 767)
+        self.assertIs(generate_patterns.HLG_REFERENCE_WHITE_SIGNAL_LEVEL, generate_patterns.HLG_REFERENCE_WHITE_SIGNAL)
+        self.assertIs(generate_patterns.L4_HLG_REFERENCE_WHITE_SIGNAL, generate_patterns.HLG_REFERENCE_WHITE_SIGNAL)
 
         scene_light_ref_white = generate_patterns.hlg_reference_white_scene_light()
         self.assertAlmostEqual(scene_light_ref_white, 0.2649626, places=6)

@@ -68,13 +68,19 @@ L4_HLG_FPS = 24
 L4_HLG_DURATION_SECONDS = 60
 L4_HLG_FRAME_COUNT = L4_HLG_FPS * L4_HLG_DURATION_SECONDS
 L4_HLG_LEVEL_STEPS: tuple[float, ...] = (0.05, 0.18, 0.50, 0.75, 0.88, 1.0)
-L4_HLG_REFERENCE_WHITE_SIGNAL = 0.75
-L4_HLG_REFERENCE_WHITE_10BIT = round(L4_HLG_REFERENCE_WHITE_SIGNAL * 1023)
 
-# HLG Reference White definitions per ITU-R BT.2408-4 Section 5.2.1:
+# Standard HLG Reference White definition per ITU-R BT.2408-4 Section 5.2.1:
 # Nominal peak signal level of 75% (E' = 0.75), yielding 10-bit code 767.
-HLG_REFERENCE_WHITE_SIGNAL_LEVEL: float = 0.75
-HLG_REFERENCE_WHITE_10BIT_CODE: int = round(HLG_REFERENCE_WHITE_SIGNAL_LEVEL * 1023)  # 767
+# This represents diffuse reference white (100% reflectance card in standard scene illumination).
+# Single canonical source of truth for all HLG 75% signal-level reference white constants.
+HLG_REFERENCE_WHITE_SIGNAL: float = 0.75
+HLG_REFERENCE_WHITE_10BIT: int = round(HLG_REFERENCE_WHITE_SIGNAL * 1023)  # 767
+
+# Unified aliases pointing to the single canonical source of truth:
+HLG_REFERENCE_WHITE_SIGNAL_LEVEL: float = HLG_REFERENCE_WHITE_SIGNAL
+HLG_REFERENCE_WHITE_10BIT_CODE: int = HLG_REFERENCE_WHITE_10BIT
+L4_HLG_REFERENCE_WHITE_SIGNAL: float = HLG_REFERENCE_WHITE_SIGNAL
+L4_HLG_REFERENCE_WHITE_10BIT: int = HLG_REFERENCE_WHITE_10BIT
 
 # Historical 1-second fixture provenance:
 # In the legacy 1s 8-patch fixture (fixture_spec("hlg")), the patch named "reference_white"
@@ -97,8 +103,8 @@ L4_HLG_VISUAL_ORACLE = {
     ),
     "transfer": "arib-std-b67",
     "color_primaries": "bt2020",
-    "reference_white_hlg_signal": L4_HLG_REFERENCE_WHITE_SIGNAL,
-    "reference_white_10bit": L4_HLG_REFERENCE_WHITE_10BIT,
+    "reference_white_hlg_signal": HLG_REFERENCE_WHITE_SIGNAL,
+    "reference_white_10bit": HLG_REFERENCE_WHITE_10BIT,
     "upper_gradations_distinguishable": True,
 }
 
@@ -355,7 +361,7 @@ def hlg_to_linear(signal: float) -> float:
 
 def hlg_reference_white_scene_light() -> float:
     """Return the relative scene light corresponding to 75% HLG signal level (ITU-R BT.2408-4)."""
-    return hlg_to_linear(HLG_REFERENCE_WHITE_SIGNAL_LEVEL)
+    return hlg_to_linear(HLG_REFERENCE_WHITE_SIGNAL)
 
 
 def linear_to_srgb(value: float) -> float:
@@ -1590,7 +1596,7 @@ def l4_hlg_raw_frame(
     plane_bytes = width * height * 2
     planes = [bytearray(plane_bytes) for _ in range(3)]
     patches = l4_hlg_patches(width=width, height=height)
-    ref_75_code = L4_HLG_REFERENCE_WHITE_10BIT
+    ref_75_code = HLG_REFERENCE_WHITE_10BIT
     ref_75_pixel = ref_75_code.to_bytes(2, "little")
     scale = max(min(width // 320, height // 180), 1)
     label_top_y = max(int(height * 0.05), 4)
