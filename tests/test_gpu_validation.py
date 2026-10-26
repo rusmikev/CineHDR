@@ -1677,8 +1677,13 @@ class PublicationEvidenceTests(unittest.TestCase):
                 self.assertEqual(st, "FAIL")
                 self.assertIn("did not match HDR output state", det)
 
-    def test_transition_accepts_actual_controller_target_properties_matrix(self):
-        """P1.5: transition verifies controller presets (400/600/1000/1600 nits), HLG, and SDR fallback."""
+    def test_transition_accepts_synthetic_target_properties_matrix(self):
+        """P1.5 synthetic matrix: transition verifies hand-crafted property dictionaries (presets, HLG, SDR fallback).
+
+        Feeds synthetic dictionaries into _verify_step without calling HdrController.
+        Real controller property propagation is tested in
+        test_transition_verifies_real_controller_target_properties.
+        """
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.video_area = SimpleNamespace(
             render_backend_active="opengl-next",
@@ -1760,6 +1765,168 @@ class PublicationEvidenceTests(unittest.TestCase):
                     "target_peak": empty_peak,
                 })
                 self.assertEqual(st, "FAIL")
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_transition_verifies_real_controller_target_properties(
+        self, _mock_mon, _mock_allowed, _mock_support
+    ):
+        """P1.5 hermetic: verify actual properties set by HdrController across transitions and feed into _verify_step.
+
+        Covers:
+          1. Auto HDR10 (PQ stream): target-trc=pq, target-prim=bt.2020, target-peak=auto
+          2. Auto HLG (ARIB STD-B67 stream): target-trc=pq, target-prim=bt.2020, target-peak=auto (CineHDR converts HLG to PQ)
+          3. User presets in HDR mode: target-peak=400, 600, 1000, 1600 (as numeric int)
+          4. force-sdr: target-trc=auto, target-prim=auto, target-peak=auto
+          5. Return to Auto SDR (BT.709 / BT.1886 stream): target-trc=auto, target-prim=auto, target-peak=auto
+
+        Remaining live gaps (require GNOME-AMD hardware validation, P1.5 remains TODO):
+          - Asynchronous mpv VO property negotiation during live playback on real GPU
+          - Double-buffered GdkGLTextureBuilder publication to GTK4 scene graph
+          - Wayland surface color description protocol submission (L3p)
+          - Physical display photon output measurement (L4)
+        """
+        from src.hdr_controller import HdrController
+
+        props = {
+            "target-trc": "auto",
+            "target-prim": "auto",
+            "target-peak": "auto",
+        }
+        observers = {}
+        mock_mpv = MagicMock()
+        mock_mpv.__setitem__ = lambda self, k, v: props.__setitem__(k, v)
+        mock_mpv.__getitem__ = lambda self, k: props.get(k)
+        mock_mpv._props = props
+
+        def fake_property_observer(name):
+            def decorator(fn):
+                observers[name] = fn
+                return fn
+            return decorator
+
+        mock_mpv.property_observer = fake_property_observer
+
+        controller = HdrController(mock_mpv)
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.video_area = SimpleNamespace(
+            render_backend_active="opengl-next",
+            render_session_status="active",
+        )
+        session._transition_context_generation = 1
+        base = {
+            "time_pos": 8.0,
+            "playlist_pos": 0,
+            "render_frame_generation": 21,
+            "render_context_generation": 1,
+            "dovi_profile": None,
+            "hwdec": "vaapi-copy",
+        }
+        sdr_step = ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr"))
+        hdr_step = ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr"))
+
+        def build_state_from_controller(playlist_pos: int, time_pos: float):
+            is_hdr = bool(controller.is_hdr_active)
+            return {
+                **base,
+                "time_pos": time_pos,
+                "playlist_pos": playlist_pos,
+                "render_frame_generation": 21,
+                "source_hdr": bool(controller.is_hdr_content),
+                "hdr_output_active": is_hdr,
+                "render_target_format": "GL_RGBA16F" if is_hdr else "GL_RGBA8",
+                "render_target_depth": 16 if is_hdr else 8,
+                "render_color_state": "rec2100-pq" if is_hdr else "srgb",
+                "target_trc": props.get("target-trc"),
+                "target_prim": props.get("target-prim"),
+                "target_peak": props.get("target-peak"),
+            }
+
+        # 1. Auto HDR10
+        controller.hdr_mode = "auto"
+        controller.hdr_target_peak = "auto"
+        hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
+        observers["video-params"]("video-params", hdr10_params)
+        controller.apply_hdr_settings()
+
+        self.assertEqual(props["target-trc"], "pq")
+        self.assertEqual(props["target-prim"], "bt.2020")
+        self.assertEqual(props["target-peak"], "auto")
+        self.assertTrue(controller.committed_output_state.is_hdr)
+        self.assertEqual(controller.committed_output_state.target_trc, "pq")
+
+        session._pending_render_frame_generation = 20
+        st, det = session._verify_step(hdr_step, build_state_from_controller(1, 12.0))
+        self.assertEqual(st, "PASS")
+        self.assertIn("target=pq/bt.2020/auto", det)
+
+        # 2. Auto HLG
+        hlg_params = {"gamma": "hlg", "primaries": "bt.2020"}
+        observers["video-params"]("video-params", hlg_params)
+        controller.apply_hdr_settings()
+
+        self.assertEqual(props["target-trc"], "pq")
+        self.assertEqual(props["target-prim"], "bt.2020")
+        self.assertEqual(props["target-peak"], "auto")
+        self.assertTrue(controller.committed_output_state.is_hdr)
+
+        session._pending_render_frame_generation = 20
+        st, det = session._verify_step(hdr_step, build_state_from_controller(1, 12.0))
+        self.assertEqual(st, "PASS")
+        self.assertIn("target=pq/bt.2020/auto", det)
+
+        # 3. User peak presets in HDR mode (400, 600, 1000, 1600 nits)
+        for preset in ("400", "600", "1000", "1600"):
+            with self.subTest(user_preset=preset):
+                controller.hdr_target_peak = preset
+                controller.apply_hdr_settings()
+
+                expected_int_peak = int(preset)
+                self.assertEqual(props["target-peak"], expected_int_peak)
+                self.assertEqual(props["target-trc"], "pq")
+                self.assertEqual(props["target-prim"], "bt.2020")
+
+                session._pending_render_frame_generation = 20
+                st, det = session._verify_step(hdr_step, build_state_from_controller(1, 12.0))
+                self.assertEqual(st, "PASS")
+                self.assertIn(f"target=pq/bt.2020/{expected_int_peak}", det)
+
+        # 4. force-sdr: restores target properties to auto even with HDR source
+        controller.hdr_mode = "force-sdr"
+        controller.apply_hdr_settings()
+
+        self.assertEqual(props["target-trc"], "auto")
+        self.assertEqual(props["target-prim"], "auto")
+        self.assertEqual(props["target-peak"], "auto")
+        self.assertFalse(controller.committed_output_state.is_hdr)
+
+        # Transition to SDR media (playlist 0) under force-sdr
+        sdr_params = {"gamma": "bt.1886", "primaries": "bt.709"}
+        observers["video-params"]("video-params", sdr_params)
+        controller.apply_hdr_settings()
+
+        session._pending_render_frame_generation = 20
+        st, det = session._verify_step(sdr_step, build_state_from_controller(0, 14.0))
+        self.assertEqual(st, "PASS")
+        self.assertIn("target=auto/auto/auto", det)
+
+        # 5. Return to Auto SDR with BT.709 content
+        controller.hdr_mode = "auto"
+        controller.hdr_target_peak = "auto"
+        observers["video-params"]("video-params", sdr_params)
+        controller.apply_hdr_settings()
+
+        self.assertEqual(props["target-trc"], "auto")
+        self.assertEqual(props["target-prim"], "auto")
+        self.assertEqual(props["target-peak"], "auto")
+        self.assertFalse(controller.committed_output_state.is_hdr)
+
+        session._pending_render_frame_generation = 20
+        st, det = session._verify_step(sdr_step, build_state_from_controller(0, 16.0))
+        self.assertEqual(st, "PASS")
+        self.assertIn("target=auto/auto/auto", det)
 
     def test_counter_growth_survives_mpv_counter_reset(self):
         session = GpuValidationSession.__new__(GpuValidationSession)

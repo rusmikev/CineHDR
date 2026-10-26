@@ -255,6 +255,76 @@ class TestApplyHDRSettings(unittest.TestCase):
         self.assertEqual(props["target-trc"], "auto")
         self.assertNotIn("hdr-compute-peak", props)
 
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    def test_controller_target_properties_transitions_and_presets(self, _mock_support):
+        """P1.5: verify target-trc/prim/peak set by controller for Auto HDR10, Auto HLG, force-sdr and peak presets."""
+        from src.hdr_controller import HdrController
+
+        mock_mpv, props = self._make_mock_mpv()
+        observers = {}
+
+        def fake_observer(name):
+            def decorator(fn):
+                observers[name] = fn
+                return fn
+            return decorator
+
+        mock_mpv.property_observer = fake_observer
+        controller = HdrController(mock_mpv)
+
+        # 1. Auto HDR10: PQ + BT.2020 -> target-trc=pq, target-prim=bt.2020, target-peak=auto
+        controller.hdr_mode = "auto"
+        controller.hdr_target_peak = "auto"
+        controller._last_video_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
+        controller._is_hdr_content = True
+        controller.apply_hdr_settings()
+
+        self.assertEqual(props["target-trc"], "pq")
+        self.assertEqual(props["target-prim"], "bt.2020")
+        self.assertEqual(props["target-peak"], "auto")
+        self.assertTrue(controller.committed_output_state.is_hdr)
+        self.assertEqual(controller.committed_output_state.target_trc, "pq")
+        self.assertEqual(controller.committed_output_state.target_prim, "bt.2020")
+        self.assertEqual(controller.committed_output_state.target_peak, "auto")
+
+        # 2. Auto HLG: gamma=hlg + BT.2020 -> target-trc=pq (CineHDR converts HLG to PQ)
+        controller._last_video_params = {"gamma": "hlg", "primaries": "bt.2020"}
+        controller._is_hdr_content = True
+        controller.apply_hdr_settings()
+
+        self.assertEqual(props["target-trc"], "pq")
+        self.assertEqual(props["target-prim"], "bt.2020")
+        self.assertEqual(props["target-peak"], "auto")
+        self.assertTrue(controller.committed_output_state.is_hdr)
+
+        # 3. User presets: 400, 600, 1000, 1600 nits
+        for preset in ("400", "600", "1000", "1600"):
+            controller.hdr_target_peak = preset
+            controller.apply_hdr_settings()
+            self.assertEqual(props["target-peak"], int(preset))
+            self.assertEqual(props["target-trc"], "pq")
+            self.assertEqual(props["target-prim"], "bt.2020")
+            self.assertEqual(controller.committed_output_state.target_peak, int(preset))
+
+        # 4. force-sdr: restores target-trc=auto, target-prim=auto, target-peak=auto
+        controller.hdr_mode = "force-sdr"
+        controller.apply_hdr_settings()
+        self.assertEqual(props["target-trc"], "auto")
+        self.assertEqual(props["target-prim"], "auto")
+        self.assertEqual(props["target-peak"], "auto")
+        self.assertFalse(controller.committed_output_state.is_hdr)
+
+        # 5. SDR stream in auto mode
+        controller.hdr_mode = "auto"
+        controller.hdr_target_peak = "auto"
+        controller._last_video_params = {"gamma": "bt.1886", "primaries": "bt.709"}
+        controller._is_hdr_content = False
+        controller.apply_hdr_settings()
+        self.assertEqual(props["target-trc"], "auto")
+        self.assertEqual(props["target-prim"], "auto")
+        self.assertEqual(props["target-peak"], "auto")
+        self.assertFalse(controller.committed_output_state.is_hdr)
+
     def test_hlg_and_pq_detection_logic(self):
         """Gamma pq/hlg/st2084 or sig-peak > 1.0 correctly identify HDR content (excluding bt.2020 solo trigger)."""
         from src.hdr_detection import is_hdr_content
