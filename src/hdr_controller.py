@@ -201,6 +201,7 @@ class HdrController(GObject.Object):
         self._is_hdr_content = False
         self._output_hint = None
         self._last_video_params = None
+        self._last_stream_peak: Optional[float] = None
         self._effective_peak_source = "auto"
         self._hdr_support_warned = False
         self._dovi_info: Optional[dict] = None
@@ -250,6 +251,7 @@ class HdrController(GObject.Object):
                     # only carries the already-mapped colorimetry (bt.2020/pq) that
                     # libplacebo writes for every single-layer DoVi frame.
                     dovi = get_dovi_info(params, self.mpv)
+                    current_stream_peak = self._stream_peak_nits()
 
                     changed = False
                     if self._is_hdr_content != is_hdr:
@@ -258,6 +260,9 @@ class HdrController(GObject.Object):
                     if self._dovi_info != dovi:
                         self._dovi_info = dovi
                         self._dovi_warned = False
+                        changed = True
+                    if getattr(self, "_last_stream_peak", None) != current_stream_peak:
+                        self._last_stream_peak = current_stream_peak
                         changed = True
                     if changed:
                         idle_add_once(self.apply_hdr_settings)
@@ -355,10 +360,16 @@ class HdrController(GObject.Object):
             # BT.2020. mpv must render into that gamut; letting it default to
             # the monitor gamut would cause GDK to convert twice and distort
             # colors.
-            # hdr-compute-peak is intentionally left untouched: mpv's default
-            # ("auto") already enables per-frame peak detection when tone
-            # mapping is active (numeric target-peak) and skips the extra GPU
-            # pass in true pass-through (target-peak=auto).
+            # mpv target-peak & hdr-compute-peak semantics (see mpv sources:
+            # video/out/gpu/video.c:446, video/out/gpu_next/libmpv_gpu_next.c:724,
+            # DOCS/man/options.rst:7466):
+            # target-peak=auto (0) sets target max_luma=0, leaving PQ nominal peak.
+            # When numeric target-peak is set, mpv/libplacebo tone-maps if src > dst.
+            # hdr-compute-peak is intentionally left untouched (video/out/gpu/video.c:486,
+            # video/out/gpu/video.c:2892, video/out/gpu_next/libmpv_gpu_next.c:605,
+            # DOCS/man/options.rst:7741): mpv's default ("auto") enables peak
+            # detection dynamically when tone mapping is active and compute shaders
+            # / SSBO are supported, and skips the extra pass in true pass-through.
             expected_trc = "pq"
             expected_prim = "bt.2020"
             expected_peak = peak_val
