@@ -496,28 +496,80 @@
          "validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-${MODE}-60s.mp4"
      done
 
-     # Повторная верификация закольцованных файлов через ffprobe:
+     # Исполняемая автоматическая верификация закольцованных файлов через ffprobe (fail-fast):
      for MODE in hdr hlg wcg-sdr; do
-       ffprobe -v error \
+       FILE="validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-${MODE}-60s.mp4"
+       [ -f "$FILE" ] || { echo "FAIL-FAST: фикстура $FILE не найдена" >&2; exit 1; }
+
+       STREAM_INFO=$(ffprobe -v error \
+         -select_streams v:0 \
          -show_entries stream=codec_name,pix_fmt,color_transfer,color_primaries \
          -show_entries format=duration \
-         -of default=noprint_wrappers=1 \
-         "validation-reports/fixtures/cinehdr-gate2-hevc-main10-yuv420p10-lossless-${MODE}-60s.mp4"
+         -of default=noprint_wrappers=1:nokey=0 \
+         "$FILE") || { echo "FAIL-FAST: ffprobe завершился с ошибкой на $FILE" >&2; exit 1; }
+
+       CODEC=$(echo "$STREAM_INFO" | awk -F= '$1=="codec_name"{print $2}')
+       PIX_FMT=$(echo "$STREAM_INFO" | awk -F= '$1=="pix_fmt"{print $2}')
+       PRIMARIES=$(echo "$STREAM_INFO" | awk -F= '$1=="color_primaries"{print $2}')
+       TRANSFER=$(echo "$STREAM_INFO" | awk -F= '$1=="color_transfer"{print $2}')
+       DURATION=$(echo "$STREAM_INFO" | awk -F= '$1=="duration"{print $2}')
+
+       [ "$CODEC" = "hevc" ] || { echo "FAIL: $FILE codec=$CODEC (ожидался hevc)" >&2; exit 1; }
+       [ "$PIX_FMT" = "yuv420p10le" ] || { echo "FAIL: $FILE pix_fmt=$PIX_FMT (ожидался yuv420p10le)" >&2; exit 1; }
+       [ "$PRIMARIES" = "bt2020" ] || { echo "FAIL: $FILE color_primaries=$PRIMARIES (ожидался bt2020)" >&2; exit 1; }
+
+       case "$MODE" in
+         hdr)
+           [ "$TRANSFER" = "smpte2084" ] || { echo "FAIL: $FILE color_transfer=$TRANSFER (ожидался smpte2084)" >&2; exit 1; }
+           ;;
+         hlg)
+           [ "$TRANSFER" = "arib-std-b67" ] || { echo "FAIL: $FILE color_transfer=$TRANSFER (ожидался arib-std-b67)" >&2; exit 1; }
+           ;;
+         wcg-sdr)
+           case "$TRANSFER" in
+             bt709|iec61966-2-1) ;;
+             *) echo "FAIL: $FILE color_transfer=$TRANSFER (ожидался bt709 или iec61966-2-1)" >&2; exit 1 ;;
+           esac
+           ;;
+       esac
+
+       awk -v dur="$DURATION" 'BEGIN { if (dur < 59.9) { print "FAIL: duration=" dur " < 60s"; exit 1 } }' || exit 1
+       echo "OK: $FILE проверен (codec=$CODEC, pix_fmt=$PIX_FMT, primaries=$PRIMARIES, transfer=$TRANSFER, duration=${DURATION}s)"
      done
-     # Ожидается: codec_name=hevc, pix_fmt=yuv420p10le, duration=60.000000
-     # color_transfer: smpte2084 (hdr), arib-std-b67 (hlg), bt709 / iec61966-2-1 (wcg-sdr)
-     # color_primaries: bt2020 для всех трёх режимов.
      ```
 
-  3. **Preflight: сохранение настроек GSettings и фиксация параметров прогона**:
-     ```bash
-     # Сохранение исходных пользовательских настроек перед вмешательством:
-     ORIG_OFFLOAD=$(flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR graphics-offload 2>/dev/null || echo "false")
-     ORIG_MODE=$(flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR hdr-mode 2>/dev/null || echo "'auto'")
+  3. **Preflight: сохранение настроек GSettings, fail-fast и гарантированный trap восстановления**:
+     > [!IMPORTANT]
+     > **Безопасность конфигурации стенда**:
+     > 1. Чтение исходных настроек выполняется в режиме fail-fast: при сбое чтения `graphics-offload` или `hdr-mode` выполнение немедленно прекращается без подстановки вымышленных значений (`false` / `auto`) и без записи в пользовательские параметры.
+     > 2. Восстановление исходных параметров гарантируется через shell-обработчик `trap ... EXIT INT TERM`, срабатывающий при завершении, любой ошибке или прерывании по Ctrl-C.
+     > 3. Автоматизированные тесты и агенты разработки не должны вызывать команды, модифицирующие реальные GSettings владельца.
 
-     # Фиксация настроек стенда: graphics-offload выключен (композитный путь GTK), hdr-mode=auto
-     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload false
-     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode 'auto'
+     ```bash
+     # Шаг 3.1: Fail-fast чтение исходных настроек пользователя (без fallback-подстановок):
+     ORIG_OFFLOAD=$(flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR graphics-offload) || {
+       echo "FAIL-FAST: не удалось прочитать текущее значение graphics-offload из GSettings. Выполнение остановлено без изменения настроек." >&2
+       exit 1
+     }
+     ORIG_MODE=$(flatpak run --command=gsettings io.github.rusmikev.CineHDR get io.github.rusmikev.CineHDR hdr-mode) || {
+       echo "FAIL-FAST: не удалось прочитать текущее значение hdr-mode из GSettings. Выполнение остановлено без изменения настроек." >&2
+       exit 1
+     }
+     echo "Исходные настройки зафиксированы: graphics-offload=$ORIG_OFFLOAD, hdr-mode=$ORIG_MODE"
+
+     # Шаг 3.2: Установка обработчика восстановления (гарантирует возврат при штатном выходе, ошибке или Ctrl-C):
+     restore_gsettings() {
+       local exit_code=$?
+       echo "Восстановление исходных настроек GSettings (graphics-offload=$ORIG_OFFLOAD, hdr-mode=$ORIG_MODE)..."
+       flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload "$ORIG_OFFLOAD"
+       flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode "$ORIG_MODE"
+       exit $exit_code
+     }
+     trap restore_gsettings EXIT INT TERM
+
+     # Шаг 3.3: Фиксация настроек стенда для валидации: graphics-offload=false (композитный путь GTK), hdr-mode='auto'
+     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload false || exit 1
+     flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode 'auto' || exit 1
      ```
 
   4. **Запуск CineHDR во Flatpak с захватом маркированной трассы**:
@@ -566,8 +618,10 @@
        - **ВНИМАНИЕ**: статус `UNKNOWN` (неполная трасса, сбой шима или нераспознанный app-id) **НЕ является подтверждением отрицательного контроля** и свидетельствует о невалидности эксперимента.
 
   7. **Восстановление исходных параметров GSettings**:
+     При использовании скрипта с шага 3 исходные параметры `graphics-offload` и `hdr-mode` восстанавливаются автоматически через установленный `trap restore_gsettings EXIT INT TERM` как при успешном завершении, так и при ошибке любой команды или нажатии Ctrl-C.
+     Для ручного восстановления (или в случае аварийного завершения оболочки):
      ```bash
-     # Обязательный возврат настроек пользователя в исходное состояние:
+     # Ручной вызов восстановления исходных параметров:
      flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR graphics-offload "$ORIG_OFFLOAD"
      flatpak run --command=gsettings io.github.rusmikev.CineHDR set io.github.rusmikev.CineHDR hdr-mode "$ORIG_MODE"
      ```
