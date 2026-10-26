@@ -2074,6 +2074,7 @@ class TestGtkCmPolicy(unittest.TestCase):
 [ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
 [ 1042.014]  wp_image_description_v1#31.ready(101)
 [ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0155] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
 [ 1042.016]  -> wl_surface#61.commit()
         """.strip()
         with self.assertRaises(TraceValidationError) as cm:
@@ -2081,7 +2082,7 @@ class TestGtkCmPolicy(unittest.TestCase):
         self.assertIn("only SDR color descriptions were committed", str(cm.exception))
 
     def test_composite_window_rejects_wcg_sdr_transfer(self):
-        """WCG-SDR (BT.2020 primaries + BT.1886 or sRGB transfer) fails with SDR error."""
+        """WCG-SDR (BT.2020 primaries + BT.1886 or sRGB transfer) fails with SDR error when buffer is effective."""
         base_wcg_trace = """
 [ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
 [ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
@@ -2098,6 +2099,7 @@ class TestGtkCmPolicy(unittest.TestCase):
 [ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
 [ 1042.014]  wp_image_description_v1#31.ready(101)
 [ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0155] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
 [ 1042.016]  -> wl_surface#61.commit()
         """.strip()
         for tf_val in (1, 9):
@@ -2105,6 +2107,149 @@ class TestGtkCmPolicy(unittest.TestCase):
                 with self.assertRaises(TraceValidationError) as cm:
                     validate_composite_window_trace(base_wcg_trace.format(tf=tf_val))
                 self.assertIn("only SDR color descriptions were committed", str(cm.exception))
+
+    def test_composite_window_sdr_without_buffer_fails_closed_buffer_error(self):
+        """Negative control: SDR color description without effective buffer does NOT qualify as proven SDR-only."""
+        trace_no_attach = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("io.github.rusmikev.CineHDR")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.012]  -> wp_image_description_creator_params_v1#50.set_tf_named(9)
+[ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.014]  wp_image_description_v1#31.ready(101)
+[ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.016]  -> wl_surface#61.commit()
+        """.strip()
+        with self.assertRaises(TraceValidationError) as cm:
+            validate_composite_window_trace(trace_no_attach)
+        self.assertIn("no non-zero wl_surface.attach observed on target window surface (wl_surface#61)", str(cm.exception))
+        self.assertNotIn("only SDR color descriptions were committed", str(cm.exception))
+
+    def test_composite_window_sdr_detached_buffer_fails_closed_buffer_error(self):
+        """Negative control: attach(nil) unmaps surface; commit has no effective buffer and cannot qualify as SDR-only."""
+        trace_detached = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("io.github.rusmikev.CineHDR")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.012]  -> wp_image_description_creator_params_v1#50.set_tf_named(9)
+[ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.014]  wp_image_description_v1#31.ready(101)
+[ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0155] -> wl_surface#61.attach(0, 0, 0)
+[ 1042.016]  -> wl_surface#61.commit()
+        """.strip()
+        with self.assertRaises(TraceValidationError) as cm:
+            validate_composite_window_trace(trace_detached)
+        self.assertIn("buffer was detached or set to null prior to commit", str(cm.exception))
+        self.assertNotIn("only SDR color descriptions were committed", str(cm.exception))
+
+    def test_composite_window_sdr_foreign_surface_attach_fails_closed_buffer_error(self):
+        """Negative control: attach on unrelated surface does not satisfy buffer requirement for window surface."""
+        trace_foreign_attach = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0055] -> wl_compositor#1.create_surface(new id wl_surface#88)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("io.github.rusmikev.CineHDR")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.012]  -> wp_image_description_creator_params_v1#50.set_tf_named(9)
+[ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.014]  wp_image_description_v1#31.ready(101)
+[ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0155] -> wl_surface#88.attach(wl_buffer#99, 0, 0)
+[ 1042.016]  -> wl_surface#61.commit()
+        """.strip()
+        with self.assertRaises(TraceValidationError) as cm:
+            validate_composite_window_trace(trace_foreign_attach)
+        self.assertIn("attach observed only on other surface(s) (wl_surface#88)", str(cm.exception))
+        self.assertNotIn("only SDR color descriptions were committed", str(cm.exception))
+
+    def test_composite_window_sdr_subsurface_ambiguity_fails_closed(self):
+        """Negative control: active subsurface buffer creates attribution ambiguity; rejected as unproven SDR-only."""
+        trace_subsurface = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.0055] -> wl_compositor#1.create_surface(new id wl_surface#71)
+[ 1042.0056] -> wl_subcompositor#2.get_subsurface(new id wl_subsurface#72, wl_surface#71, wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("io.github.rusmikev.CineHDR")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.012]  -> wp_image_description_creator_params_v1#50.set_tf_named(9)
+[ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.014]  wp_image_description_v1#31.ready(101)
+[ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0153] -> wl_surface#71.attach(wl_buffer#88, 0, 0)
+[ 1042.0154] -> wl_surface#71.commit()
+[ 1042.0155] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.016]  -> wl_surface#61.commit()
+        """.strip()
+        with self.assertRaises(TraceValidationError) as cm:
+            validate_composite_window_trace(trace_subsurface)
+        self.assertIn("has active subsurface(s) with buffers at SDR commit", str(cm.exception))
+        self.assertNotIn("only SDR color descriptions were committed", str(cm.exception))
+
+    def test_composite_window_confirmed_hdr_commit_supersedes_sdr_commit(self):
+        """Trace with both proven SDR commit and confirmed HDR commit MUST pass HDR and NOT be SDR-only."""
+        trace = """
+[ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[ 1042.004]  wp_color_manager_v1#3.done()
+[ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[ 1042.008]  -> xdg_toplevel#68.set_app_id("io.github.rusmikev.CineHDR")
+[ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[ 1042.011]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[ 1042.012]  -> wp_image_description_creator_params_v1#50.set_tf_named(9)
+[ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[ 1042.014]  wp_image_description_v1#31.ready(101)
+[ 1042.015]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[ 1042.0155] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[ 1042.016]  -> wl_surface#61.commit()
+[ 1042.017]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#52)
+[ 1042.018]  -> wp_image_description_creator_params_v1#52.set_primaries_named(6)
+[ 1042.019]  -> wp_image_description_creator_params_v1#52.set_tf_named(11)
+[ 1042.020]  -> wp_image_description_creator_params_v1#52.create(new id wp_image_description_v1#32)
+[ 1042.021]  wp_image_description_v1#32.ready(102)
+[ 1042.022]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#32, 0)
+[ 1042.0225] -> wl_surface#61.attach(wl_buffer#100, 0, 0)
+[ 1042.023]  -> wl_surface#61.commit()
+        """.strip()
+        evidence = validate_composite_window_trace(trace)
+        self.assertEqual(evidence["status"], "PASS")
+        self.assertEqual(evidence["matched"]["image_description"]["id"], 32)
+        self.assertEqual(evidence["matched"]["image_description"]["semantic_class"], "hdr")
+        self.assertEqual(evidence["matched"]["image_description"]["color_type"], "rec2100_pq")
 
     def test_composite_window_unrevealed_or_unknown_transfer_returns_unknown(self):
         """Unrevealed transfer function or unparsed creator returns UNKNOWN with reason."""
@@ -2231,6 +2376,7 @@ class TestGtkCmPolicy(unittest.TestCase):
 [ 1042.019]  wp_image_description_v1#32.ready(102)
 [ 1042.020]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
 [ 1042.021]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#32, 0)
+[ 1042.0215] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
 [ 1042.022]  -> wl_surface#61.commit()
         """.strip()
         with self.assertRaises(TraceValidationError) as cm:
@@ -2686,6 +2832,7 @@ class TestGtkCmPolicy(unittest.TestCase):
 [ 1042.016]  wp_image_description_v1#32.ready(102)
 [ 1042.017]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
 [ 1042.018]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#32, 0)
+[ 1042.0185] -> wl_surface#61.attach(wl_buffer#99, 0, 0)
 [ 1042.019]  -> wl_surface#61.commit()
 """.strip()
         with self.assertRaises(TraceValidationError) as cm_rs:
@@ -2788,6 +2935,7 @@ class TestGtkCmPolicy(unittest.TestCase):
         ])
         if intervening_lines:
             body.append(intervening_lines)
+        body.append("[ 1042.0158] -> wl_surface#61.attach(wl_buffer#99, 0, 0)")
         if commit_line:
             body.append(f"[ 1042.016]  {commit_line}")
         return "\n".join(body)
@@ -4686,6 +4834,54 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["scope"], TRACE_ONLY_UNKNOWN_SCOPE)
             self.assertNotIn("CineHDR", data["scope"])
             self.assertIn("ext_linear transfer function without luminance parsing is unverified", data["reason"])
+
+    def test_trace_only_wcg_sdr_unproven_negative_controls_fail_closed(self):
+        """P1.3 fail-closed: traces lacking buffer or connection tags must NOT qualify as proven SDR-only."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "trace.log"
+            out_path = root / "l3p.json"
+
+            # 1. Negative control: WCG-SDR trace without buffer attach
+            no_buffer_trace = SYNTHETIC_TAGGED_MPV_HDR_TRACE.replace(
+                "set_tf_named(11)", "set_tf_named(9)"
+            ).replace("-> wl_surface#61.attach(wl_buffer#99, 0, 0)\n", "")
+            trace_path.write_text(no_buffer_trace, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "mpv", "--output", str(out_path)])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertIn("no non-zero wl_surface.attach observed on target window surface (wl_surface#61)", data["error"])
+            self.assertNotIn("only SDR color descriptions were committed", data["error"])
+
+            # 2. Negative control: untagged WCG-SDR trace returns UNKNOWN
+            untagged_trace = SYNTHETIC_MPV_HDR_TRACE.replace("set_tf_named(11)", "set_tf_named(9)")
+            trace_path.write_text(untagged_trace, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "mpv", "--output", str(out_path)])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertNotIn("only SDR color descriptions were committed", data.get("error", ""))
+
+            # 3. Confirmed HDR commit supersedes SDR commit -> PASS, never SDR-only
+            hdr_and_sdr_trace = _tag_trace(SYNTHETIC_MPV_HDR_TRACE.replace("set_tf_named(11)", "set_tf_named(9)") + "\n" + """
+[ 1042.020]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#53)
+[ 1042.021]  -> wp_image_description_creator_params_v1#53.set_tf_named(11)
+[ 1042.022]  -> wp_image_description_creator_params_v1#53.set_primaries_named(6)
+[ 1042.023]  -> wp_image_description_creator_params_v1#53.create(new id wp_image_description_v1#33)
+[ 1042.024]  wp_image_description_v1#33.ready(103)
+[ 1042.025]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#33, 0)
+[ 1042.0255] -> wl_surface#61.attach(wl_buffer#100, 0, 0)
+[ 1042.026]  -> wl_surface#61.commit()
+""".strip())
+            trace_path.write_text(hdr_and_sdr_trace, encoding="utf-8")
+            status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "mpv", "--output", str(out_path)])
+            self.assertEqual(status, 0)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "PASS")
+            self.assertEqual(data["matched"]["image_description"]["color_type"], "rec2100_pq")
 
     def test_standard_mode_cli_requires_publication_report_and_backend(self):
         """Hermetic CLI test: standard mode requires --publication-report and --backend."""

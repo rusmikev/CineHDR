@@ -1085,6 +1085,113 @@ def _surface_hierarchy_at_commit(
     return toplevel_surfaces, subsurfaces
 
 
+def _buffer_state_at_commit(
+    calls: list[TraceCall],
+    target_surf: int,
+    target_commit_index: int,
+) -> tuple[int | None, int | None, bool]:
+    """Determine effective current buffer and pending buffer state at target_commit_index.
+
+    Returns (effective_current_buffer, pending_buffer, pending_attached).
+    """
+    current_buffer: int | None = None
+    pending_buffer: int | None = None
+    pending_attached = False
+
+    for call in calls:
+        if call.index > target_commit_index:
+            break
+        if call.interface == "wl_surface" and call.object_id == target_surf:
+            if call.method == "destroy":
+                current_buffer = None
+                pending_buffer = None
+                pending_attached = False
+            elif call.method == "attach":
+                match = ATTACH_RE.match(call.args)
+                if match is not None:
+                    pending_attached = True
+                    if match["buffer_id"] is not None:
+                        buf_val = int(match["buffer_id"])
+                        pending_buffer = buf_val if buf_val != 0 else None
+                    else:
+                        pending_buffer = None
+            elif call.method == "commit":
+                if pending_attached:
+                    current_buffer = pending_buffer
+                    pending_attached = False
+                    pending_buffer = None
+                if call.index == target_commit_index:
+                    return current_buffer, pending_buffer, pending_attached
+
+    return current_buffer, pending_buffer, pending_attached
+
+
+def _effective_buffer_at_commit(
+    calls: list[TraceCall],
+    target_surf: int,
+    target_commit_index: int,
+) -> int | None:
+    """Determine the effective non-zero wl_buffer active at target_commit_index per Wayland double-buffering.
+
+    wl_surface.attach updates the pending buffer state.
+    wl_surface.commit applies pending state to the current state.
+    If no attach occurred since the previous commit, the current buffer remains unchanged.
+    attach(nil, ...) or attach(0, ...) sets pending buffer to None, unmapping the surface upon commit.
+    Attaches occurring after target_commit_index have no effect on this commit.
+    """
+    return _buffer_state_at_commit(calls, target_surf, target_commit_index)[0]
+
+
+def _diagnose_missing_buffer(
+    calls: list[TraceCall],
+    target_surf: int,
+    target_commit_index: int,
+    commit_label: str = "HDR",
+) -> TraceValidationError:
+    """Diagnose why an effective buffer was not present at target_commit_index and return a descriptive error."""
+    has_post_commit_attach = any(
+        c.interface == "wl_surface"
+        and c.object_id == target_surf
+        and c.method == "attach"
+        and c.index > target_commit_index
+        for c in calls
+    )
+    if has_post_commit_attach:
+        return TraceValidationError(
+            f"no non-zero wl_buffer was effective on target window surface (wl_surface#{target_surf}) "
+            f"at {commit_label} commit (index {target_commit_index}); wl_surface.attach was observed only after this commit"
+        )
+
+    had_attach_prior = any(
+        c.interface == "wl_surface"
+        and c.object_id == target_surf
+        and c.method == "attach"
+        and c.index < target_commit_index
+        for c in calls
+    )
+    if had_attach_prior:
+        return TraceValidationError(
+            f"no non-zero wl_buffer was effective on target window surface (wl_surface#{target_surf}) "
+            f"at {commit_label} commit (index {target_commit_index}); buffer was detached or set to null prior to commit"
+        )
+
+    _, _, surface_attaches, _ = _surface_roles_and_attaches(calls)
+    other_attaches = {
+        s: [b for b in bufs if b != 0]
+        for s, bufs in surface_attaches.items()
+        if s != target_surf and any(b != 0 for b in bufs)
+    }
+    if other_attaches:
+        other_names = ", ".join(f"wl_surface#{s}" for s in sorted(other_attaches))
+        return TraceValidationError(
+            f"no non-zero wl_surface.attach observed on target window surface (wl_surface#{target_surf}); "
+            f"attach observed only on other surface(s) ({other_names})"
+        )
+    return TraceValidationError(
+        f"no non-zero wl_surface.attach observed on target window surface (wl_surface#{target_surf})"
+    )
+
+
 # wp_color_manager_v1.transfer_function named enum values
 # Source: /usr/share/wayland-protocols/staging/color-management/color-management-v1.xml:261-397
 # Package: wayland-protocols-devel-1.49-1.fc44.noarch (host system)
@@ -2147,6 +2254,7 @@ def validate_composite_window_trace(
     has_done = False
     has_get_surface_window = False
     order_error = None
+    candidates_hdr: list[dict[str, Any]] = []
     candidates_unknown: list[dict[str, Any]] = []
     candidates_sdr: list[dict[str, Any]] = []
 
@@ -2648,14 +2756,21 @@ def validate_composite_window_trace(
                 }
 
                 if color_eval["semantic_class"] == "hdr":
-                    return _finalize({
-                        "schema": TRACE_SCHEMA,
-                        "revision": PRIMARY_COMPOSITE_REVISION,
-                        "status": "PASS",
-                        "oracle": "primary_composite_window",
-                        "scope": PRIMARY_COMPOSITE_SCOPE,
-                        "matched": base_matched,
-                    })
+                    effective_buf = _effective_buffer_at_commit(calls, wl_surface_id, commit.index)
+                    base_matched["surface"]["effective_buffer_id"] = effective_buf
+                    candidates_hdr.append(
+                        {
+                            "schema": TRACE_SCHEMA,
+                            "revision": PRIMARY_COMPOSITE_REVISION,
+                            "status": "PASS",
+                            "oracle": "primary_composite_window",
+                            "scope": PRIMARY_COMPOSITE_SCOPE,
+                            "matched": base_matched,
+                            "effective_buffer": effective_buf,
+                            "commit_index": commit.index,
+                            "wl_surface_id": wl_surface_id,
+                        }
+                    )
                 elif color_eval["semantic_class"] == "unknown":
                     candidates_unknown.append(
                         {
@@ -2670,12 +2785,17 @@ def validate_composite_window_trace(
                         }
                     )
                 elif color_eval["semantic_class"] == "sdr":
+                    effective_buf = _effective_buffer_at_commit(calls, wl_surface_id, commit.index)
                     candidates_sdr.append(
                         {
                             "description_id": description_id,
                             "tf_named": color_eval["tf_named"],
                             "primaries_named": color_eval["primaries_named"],
                             "color_type": color_eval["color_type"],
+                            "commit_index": commit.index,
+                            "wl_surface_id": wl_surface_id,
+                            "effective_buffer": effective_buf,
+                            "matched": base_matched,
                         }
                     )
 
@@ -2697,13 +2817,79 @@ def validate_composite_window_trace(
         raise TraceValidationError(
             f"wp_color_manager_v1.get_surface was not called for {app_name} toplevel window surface"
         )
+
+    # 1. Any confirmed HDR commit must prevent SDR-only classification
+    if candidates_hdr:
+        confirmed_hdr = next((c for c in candidates_hdr if c["effective_buffer"] is not None), None)
+        selected_hdr = confirmed_hdr if confirmed_hdr is not None else candidates_hdr[0]
+        return _finalize(selected_hdr)
+
+    # 2. Unknown semantics must remain uncredited as proven SDR-only
     if candidates_unknown:
         return _finalize(candidates_unknown[0])
+
+    # 3. SDR commits: fail-closed verification requires confirmed connection, target window,
+    # ready SDR description, and effective non-zero buffer without subsurface ambiguity.
     if candidates_sdr:
         app_name = "CineHDR's" if expected_app_id == DEFAULT_APP_ID else f"{expected_app_id}'s"
-        raise TraceValidationError(
-            f"only SDR color descriptions were committed on {app_name} toplevel window surface"
-        )
+
+        # When trace_only is active, connection attribution must be verified
+        if trace_only and selected_conn is None:
+            return _finalize(_unknown_composite_evidence(
+                "trace-only L3p validation requires verified connection tags [conn#<id> fd#<fd>] for all Wayland calls"
+            ))
+
+        # Check for proven SDR commits: effective non-zero buffer and no active subsurfaces
+        proven_sdr = []
+        for sdr_cand in candidates_sdr:
+            s_id = sdr_cand["wl_surface_id"]
+            c_idx = sdr_cand["commit_index"]
+            eff_buf = sdr_cand["effective_buffer"]
+            if eff_buf is None:
+                continue
+
+            toplevels_at_c, subsurfaces_at_c = _surface_hierarchy_at_commit(calls, c_idx)
+            app_subsurfaces = [
+                child for child in subsurfaces_at_c
+                if _find_toplevel_ancestor(child, subsurfaces_at_c, toplevels_at_c)[0] == s_id
+            ]
+            has_subsurface_ambiguity = False
+            if app_subsurfaces:
+                for child in sorted(app_subsurfaces):
+                    if _effective_buffer_at_commit(calls, child, c_idx) is not None:
+                        has_subsurface_ambiguity = True
+                        break
+            if not has_subsurface_ambiguity:
+                proven_sdr.append(sdr_cand)
+
+        if proven_sdr:
+            raise TraceValidationError(
+                f"only SDR color descriptions were committed on {app_name} toplevel window surface"
+            )
+
+        # No proven SDR commit: fail-closed diagnosis of buffer / subsurface defect
+        first_sdr = candidates_sdr[0]
+        s_id = first_sdr["wl_surface_id"]
+        c_idx = first_sdr["commit_index"]
+        toplevels_at_c, subsurfaces_at_c = _surface_hierarchy_at_commit(calls, c_idx)
+        app_subsurfaces = [
+            child for child in subsurfaces_at_c
+            if _find_toplevel_ancestor(child, subsurfaces_at_c, toplevels_at_c)[0] == s_id
+        ]
+        subsurf_attaches = []
+        if app_subsurfaces:
+            for child in sorted(app_subsurfaces):
+                child_buf = _effective_buffer_at_commit(calls, child, c_idx)
+                if child_buf is not None:
+                    subsurf_attaches.append((child, child_buf))
+        if subsurf_attaches:
+            details = ", ".join(f"wl_surface#{s} (wl_buffer#{b})" for s, b in subsurf_attaches)
+            raise TraceValidationError(
+                f"autonomous L3p video surface attribution is ambiguous: toplevel window (wl_surface#{s_id}) "
+                f"has active subsurface(s) with buffers at SDR commit: {details}"
+            )
+
+        raise _diagnose_missing_buffer(calls, s_id, c_idx, "SDR")
     if order_error:
         raise TraceValidationError(order_error)
 
@@ -3175,63 +3361,6 @@ def create_failure_evidence(
     }
 
 
-def _buffer_state_at_commit(
-    calls: list[TraceCall],
-    target_surf: int,
-    target_commit_index: int,
-) -> tuple[int | None, int | None, bool]:
-    """Determine effective current buffer and pending buffer state at target_commit_index.
-
-    Returns (effective_current_buffer, pending_buffer, pending_attached).
-    """
-    current_buffer: int | None = None
-    pending_buffer: int | None = None
-    pending_attached = False
-
-    for call in calls:
-        if call.index > target_commit_index:
-            break
-        if call.interface == "wl_surface" and call.object_id == target_surf:
-            if call.method == "destroy":
-                current_buffer = None
-                pending_buffer = None
-                pending_attached = False
-            elif call.method == "attach":
-                match = ATTACH_RE.match(call.args)
-                if match is not None:
-                    pending_attached = True
-                    if match["buffer_id"] is not None:
-                        buf_val = int(match["buffer_id"])
-                        pending_buffer = buf_val if buf_val != 0 else None
-                    else:
-                        pending_buffer = None
-            elif call.method == "commit":
-                if pending_attached:
-                    current_buffer = pending_buffer
-                    pending_attached = False
-                    pending_buffer = None
-                if call.index == target_commit_index:
-                    return current_buffer, pending_buffer, pending_attached
-
-    return current_buffer, pending_buffer, pending_attached
-
-
-def _effective_buffer_at_commit(
-    calls: list[TraceCall],
-    target_surf: int,
-    target_commit_index: int,
-) -> int | None:
-    """Determine the effective non-zero wl_buffer active at target_commit_index per Wayland double-buffering.
-
-    wl_surface.attach updates the pending buffer state.
-    wl_surface.commit applies pending state to the current state.
-    If no attach occurred since the previous commit, the current buffer remains unchanged.
-    attach(nil, ...) or attach(0, ...) sets pending buffer to None, unmapping the surface upon commit.
-    Attaches occurring after target_commit_index have no effect on this commit.
-    """
-    return _buffer_state_at_commit(calls, target_surf, target_commit_index)[0]
-
-
 def create_trace_only_report(
     trace_path: Path,
     expected_app_id: str,
@@ -3281,47 +3410,7 @@ def create_trace_only_report(
 
     effective_buffer = _effective_buffer_at_commit(calls, target_surf, target_commit_index)
     if effective_buffer is None:
-        has_post_commit_attach = any(
-            c.interface == "wl_surface"
-            and c.object_id == target_surf
-            and c.method == "attach"
-            and c.index > target_commit_index
-            for c in calls
-        )
-        if has_post_commit_attach:
-            raise TraceValidationError(
-                f"no non-zero wl_buffer was effective on target window surface (wl_surface#{target_surf}) "
-                f"at HDR commit (index {target_commit_index}); wl_surface.attach was observed only after this commit"
-            )
-
-        had_attach_prior = any(
-            c.interface == "wl_surface"
-            and c.object_id == target_surf
-            and c.method == "attach"
-            and c.index < target_commit_index
-            for c in calls
-        )
-        if had_attach_prior:
-            raise TraceValidationError(
-                f"no non-zero wl_buffer was effective on target window surface (wl_surface#{target_surf}) "
-                f"at HDR commit (index {target_commit_index}); buffer was detached or set to null prior to commit"
-            )
-
-        _, _, surface_attaches, _ = _surface_roles_and_attaches(calls)
-        other_attaches = {
-            s: [b for b in bufs if b != 0]
-            for s, bufs in surface_attaches.items()
-            if s != target_surf and any(b != 0 for b in bufs)
-        }
-        if other_attaches:
-            other_names = ", ".join(f"wl_surface#{s}" for s in sorted(other_attaches))
-            raise TraceValidationError(
-                f"no non-zero wl_surface.attach observed on target window surface (wl_surface#{target_surf}); "
-                f"attach observed only on other surface(s) ({other_names})"
-            )
-        raise TraceValidationError(
-            f"no non-zero wl_surface.attach observed on target window surface (wl_surface#{target_surf})"
-        )
+        raise _diagnose_missing_buffer(calls, target_surf, target_commit_index, "HDR")
 
     # Check for subsurfaces belonging to target window at target_commit_index
     app_subsurfaces = [
