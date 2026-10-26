@@ -257,7 +257,12 @@ class TestApplyHDRSettings(unittest.TestCase):
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     def test_controller_target_properties_transitions_and_presets(self, _mock_support):
-        """P1.5: verify target-trc/prim/peak set by controller for Auto HDR10, Auto HLG, force-sdr and peak presets."""
+        """P1.5 test double: verify target-trc/prim/peak set by controller for Auto HDR10, Auto HLG, force-sdr and peak presets.
+
+        NOTE: mock_mpv is an explicit test double (mock), NOT the live libmpv C runtime or GPU driver.
+        This test verifies HdrController property-setting logic in Python, not live VO property negotiation
+        or display presentation on real hardware.
+        """
         from src.hdr_controller import HdrController
 
         mock_mpv, props = self._make_mock_mpv()

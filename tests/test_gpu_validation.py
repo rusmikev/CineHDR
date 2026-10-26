@@ -1766,26 +1766,14 @@ class PublicationEvidenceTests(unittest.TestCase):
                 })
                 self.assertEqual(st, "FAIL")
 
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_transition_verifies_real_controller_target_properties(
-        self, _mock_mon, _mock_allowed, _mock_support
-    ):
-        """P1.5 hermetic: verify actual properties set by HdrController across transitions and feed into _verify_step.
+    def _setup_mock_controller_session(self):
+        """Set up hermetic test double environment for HdrController and GpuValidationSession.
 
-        Covers:
-          1. Auto HDR10 (PQ stream): target-trc=pq, target-prim=bt.2020, target-peak=auto
-          2. Auto HLG (ARIB STD-B67 stream): target-trc=pq, target-prim=bt.2020, target-peak=auto (CineHDR converts HLG to PQ)
-          3. User presets in HDR mode: target-peak=400, 600, 1000, 1600 (as numeric int)
-          4. force-sdr: target-trc=auto, target-prim=auto, target-peak=auto
-          5. Return to Auto SDR (BT.709 / BT.1886 stream): target-trc=auto, target-prim=auto, target-peak=auto
-
-        Remaining live gaps (require GNOME-AMD hardware validation, P1.5 remains TODO):
-          - Asynchronous mpv VO property negotiation during live playback on real GPU
-          - Double-buffered GdkGLTextureBuilder publication to GTK4 scene graph
-          - Wayland surface color description protocol submission (L3p)
-          - Physical display photon output measurement (L4)
+        NOTE on Test Double Semantics:
+        `mock_mpv` is an explicit test double (mock), NOT the live libmpv C runtime or GPU driver.
+        This hermetic fixture validates HdrController property-writing logic and GpuValidationSession
+        transition verification in isolation. It does NOT assert live VO property negotiation on
+        real hardware or driver execution (which requires live GNOME-AMD L3/L4 validation).
         """
         from src.hdr_controller import HdrController
 
@@ -1827,9 +1815,9 @@ class PublicationEvidenceTests(unittest.TestCase):
         sdr_step = ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr"))
         hdr_step = ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr"))
 
-        def build_state_from_controller(playlist_pos: int, time_pos: float):
+        def build_state_from_controller(playlist_pos: int, time_pos: float, **overrides):
             is_hdr = bool(controller.is_hdr_active)
-            return {
+            state = {
                 **base,
                 "time_pos": time_pos,
                 "playlist_pos": playlist_pos,
@@ -1843,8 +1831,22 @@ class PublicationEvidenceTests(unittest.TestCase):
                 "target_prim": props.get("target-prim"),
                 "target_peak": props.get("target-peak"),
             }
+            state.update(overrides)
+            return state
 
-        # 1. Auto HDR10
+        return controller, session, props, observers, build_state_from_controller, hdr_step, sdr_step
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_transition_verifies_real_controller_auto_hdr10(
+        self, _mock_mon, _mock_allowed, _mock_support
+    ):
+        """P1.5 hermetic: verify Auto HDR10 target properties from HdrController and step verification."""
+        (
+            controller, session, props, observers, build_state, hdr_step, _
+        ) = self._setup_mock_controller_session()
+
         controller.hdr_mode = "auto"
         controller.hdr_target_peak = "auto"
         hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
@@ -1858,11 +1860,23 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertEqual(controller.committed_output_state.target_trc, "pq")
 
         session._pending_render_frame_generation = 20
-        st, det = session._verify_step(hdr_step, build_state_from_controller(1, 12.0))
+        st, det = session._verify_step(hdr_step, build_state(1, 12.0))
         self.assertEqual(st, "PASS")
         self.assertIn("target=pq/bt.2020/auto", det)
 
-        # 2. Auto HLG
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_transition_verifies_real_controller_auto_hlg(
+        self, _mock_mon, _mock_allowed, _mock_support
+    ):
+        """P1.5 hermetic: verify Auto HLG maps to target-trc=pq per CineHDR conversion pipeline."""
+        (
+            controller, session, props, observers, build_state, hdr_step, _
+        ) = self._setup_mock_controller_session()
+
+        controller.hdr_mode = "auto"
+        controller.hdr_target_peak = "auto"
         hlg_params = {"gamma": "hlg", "primaries": "bt.2020"}
         observers["video-params"]("video-params", hlg_params)
         controller.apply_hdr_settings()
@@ -1873,11 +1887,25 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertTrue(controller.committed_output_state.is_hdr)
 
         session._pending_render_frame_generation = 20
-        st, det = session._verify_step(hdr_step, build_state_from_controller(1, 12.0))
+        st, det = session._verify_step(hdr_step, build_state(1, 12.0))
         self.assertEqual(st, "PASS")
         self.assertIn("target=pq/bt.2020/auto", det)
 
-        # 3. User peak presets in HDR mode (400, 600, 1000, 1600 nits)
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_transition_verifies_real_controller_peak_presets(
+        self, _mock_mon, _mock_allowed, _mock_support
+    ):
+        """P1.5 hermetic: verify user peak presets (400, 600, 1000, 1600) set integer values."""
+        (
+            controller, session, props, observers, build_state, hdr_step, _
+        ) = self._setup_mock_controller_session()
+
+        controller.hdr_mode = "auto"
+        hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
+        observers["video-params"]("video-params", hdr10_params)
+
         for preset in ("400", "600", "1000", "1600"):
             with self.subTest(user_preset=preset):
                 controller.hdr_target_peak = preset
@@ -1889,12 +1917,26 @@ class PublicationEvidenceTests(unittest.TestCase):
                 self.assertEqual(props["target-prim"], "bt.2020")
 
                 session._pending_render_frame_generation = 20
-                st, det = session._verify_step(hdr_step, build_state_from_controller(1, 12.0))
+                st, det = session._verify_step(hdr_step, build_state(1, 12.0))
                 self.assertEqual(st, "PASS")
                 self.assertIn(f"target=pq/bt.2020/{expected_int_peak}", det)
 
-        # 4. force-sdr: restores target properties to auto even with HDR source
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_transition_verifies_real_controller_sdr_transitions(
+        self, _mock_mon, _mock_allowed, _mock_support
+    ):
+        """P1.5 hermetic: verify force-sdr and return to auto SDR restore auto/auto/auto."""
+        (
+            controller, session, props, observers, build_state, _, sdr_step
+        ) = self._setup_mock_controller_session()
+
+        # 1. force-sdr with HDR content
         controller.hdr_mode = "force-sdr"
+        controller.hdr_target_peak = "auto"
+        hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
+        observers["video-params"]("video-params", hdr10_params)
         controller.apply_hdr_settings()
 
         self.assertEqual(props["target-trc"], "auto")
@@ -1902,20 +1944,17 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertEqual(props["target-peak"], "auto")
         self.assertFalse(controller.committed_output_state.is_hdr)
 
-        # Transition to SDR media (playlist 0) under force-sdr
         sdr_params = {"gamma": "bt.1886", "primaries": "bt.709"}
         observers["video-params"]("video-params", sdr_params)
         controller.apply_hdr_settings()
 
         session._pending_render_frame_generation = 20
-        st, det = session._verify_step(sdr_step, build_state_from_controller(0, 14.0))
+        st, det = session._verify_step(sdr_step, build_state(0, 14.0))
         self.assertEqual(st, "PASS")
         self.assertIn("target=auto/auto/auto", det)
 
-        # 5. Return to Auto SDR with BT.709 content
+        # 2. Return to Auto SDR with BT.709 content
         controller.hdr_mode = "auto"
-        controller.hdr_target_peak = "auto"
-        observers["video-params"]("video-params", sdr_params)
         controller.apply_hdr_settings()
 
         self.assertEqual(props["target-trc"], "auto")
@@ -1924,9 +1963,74 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertFalse(controller.committed_output_state.is_hdr)
 
         session._pending_render_frame_generation = 20
-        st, det = session._verify_step(sdr_step, build_state_from_controller(0, 16.0))
+        st, det = session._verify_step(sdr_step, build_state(0, 16.0))
         self.assertEqual(st, "PASS")
         self.assertIn("target=auto/auto/auto", det)
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_transition_rejects_tampered_target_properties_negative_control(
+        self, _mock_mon, _mock_allowed, _mock_support
+    ):
+        """P1.5 negative control: tampering properties after controller setup causes _verify_step to FAIL."""
+        (
+            controller, session, _, observers, build_state, hdr_step, _
+        ) = self._setup_mock_controller_session()
+
+        controller.hdr_mode = "auto"
+        controller.hdr_target_peak = "auto"
+        hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
+        observers["video-params"]("video-params", hdr10_params)
+        controller.apply_hdr_settings()
+
+        # Baseline valid HDR state passes
+        session._pending_render_frame_generation = 20
+        valid_hdr_state = build_state(1, 12.0)
+        st, _ = session._verify_step(hdr_step, valid_hdr_state)
+        self.assertEqual(st, "PASS")
+
+        # Negative control 1: Tampered target_trc (e.g. srgb, auto, or bt.1886 instead of pq)
+        for bad_trc in ("srgb", "auto", "bt.1886"):
+            with self.subTest(bad_trc=bad_trc):
+                tampered = {**valid_hdr_state, "target_trc": bad_trc}
+                st, det = session._verify_step(hdr_step, tampered)
+                self.assertEqual(st, "FAIL")
+                self.assertIn(f"mpv target properties ({bad_trc}/bt.2020/auto)", det)
+                self.assertIn("did not match HDR output state", det)
+
+        # Negative control 2: Tampered target_prim (e.g. bt.709 or auto instead of bt.2020)
+        for bad_prim in ("bt.709", "auto", "dci-p3"):
+            with self.subTest(bad_prim=bad_prim):
+                tampered = {**valid_hdr_state, "target_prim": bad_prim}
+                st, det = session._verify_step(hdr_step, tampered)
+                self.assertEqual(st, "FAIL")
+                self.assertIn(f"mpv target properties (pq/{bad_prim}/auto)", det)
+                self.assertIn("did not match HDR output state", det)
+
+        # Negative control 3: Stale frame generation (frame_gen <= pending_frame_gen)
+        for bad_gen in (20, 19, 0):
+            with self.subTest(stale_generation=bad_gen):
+                tampered = {**valid_hdr_state, "render_frame_generation": bad_gen}
+                st, det = session._verify_step(hdr_step, tampered)
+                self.assertEqual(st, "FAIL")
+                self.assertIn("no new frame was published after the media switch", det)
+
+        # Negative control 4: Wrong color state (srgb during HDR step)
+        tampered_color = {**valid_hdr_state, "render_color_state": "srgb"}
+        st, det = session._verify_step(hdr_step, tampered_color)
+        self.assertEqual(st, "FAIL")
+        self.assertIn("published target was ('GL_RGBA16F', 16, 'srgb')", det)
+
+        # Negative control 5: Wrong render target format / depth during HDR step
+        tampered_fmt = {
+            **valid_hdr_state,
+            "render_target_format": "GL_RGBA8",
+            "render_target_depth": 8,
+        }
+        st, det = session._verify_step(hdr_step, tampered_fmt)
+        self.assertEqual(st, "FAIL")
+        self.assertIn("published target was ('GL_RGBA8', 8, 'rec2100-pq')", det)
 
     def test_counter_growth_survives_mpv_counter_reset(self):
         session = GpuValidationSession.__new__(GpuValidationSession)
