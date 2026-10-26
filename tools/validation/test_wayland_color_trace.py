@@ -4887,6 +4887,86 @@ class TestTraceOnlyCliValidation(unittest.TestCase):
             self.assertEqual(data["status"], "PASS")
             self.assertEqual(data["matched"]["image_description"]["color_type"], "rec2100_pq")
 
+    def test_trace_only_multi_hdr_commit_selection_prefers_unambiguous_proven_candidate(self):
+        """P1.3: when an early HDR commit is ambiguous due to subsurfaces, select a later proven commit on the window."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "trace.log"
+            out_path = root / "l3p.json"
+
+            # 1. Multi-HDR: Commit 1 is ambiguous (subsurface#71 has buffer#88), Commit 2 is unambiguous (subsurface unbuffered).
+            multi_hdr_trace = """
+[conn#1 fd#4] [ 1042.000]  -> wl_display#1.get_registry(new id wl_registry#2)
+[conn#1 fd#4] [ 1042.001]  wl_registry#2.global(4, "wp_color_manager_v1", 1)
+[conn#1 fd#4] [ 1042.002]  -> wl_registry#2.bind(4, "wp_color_manager_v1", 1, new id [unknown]#3)
+[conn#1 fd#4] [ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[conn#1 fd#4] [ 1042.004]  wp_color_manager_v1#3.done()
+[conn#1 fd#4] [ 1042.005]  -> wl_compositor#1.create_surface(new id wl_surface#61)
+[conn#1 fd#4] [ 1042.006]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#67, wl_surface#61)
+[conn#1 fd#4] [ 1042.007]  -> xdg_surface#67.get_toplevel(new id xdg_toplevel#68)
+[conn#1 fd#4] [ 1042.008]  -> xdg_toplevel#68.set_app_id("io.github.rusmikev.CineHDR")
+[conn#1 fd#4] [ 1042.009]  -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)
+[conn#1 fd#4] [ 1042.010]  -> wp_color_manager_v1#3.create_parametric_creator(new id wp_image_description_creator_params_v1#50)
+[conn#1 fd#4] [ 1042.011]  -> wp_image_description_creator_params_v1#50.set_tf_named(11)
+[conn#1 fd#4] [ 1042.012]  -> wp_image_description_creator_params_v1#50.set_primaries_named(6)
+[conn#1 fd#4] [ 1042.013]  -> wp_image_description_creator_params_v1#50.create(new id wp_image_description_v1#31)
+[conn#1 fd#4] [ 1042.014]  wp_image_description_v1#31.ready(101)
+[conn#1 fd#4] [ 1042.015]  -> wl_compositor#1.create_surface(new id wl_surface#71)
+[conn#1 fd#4] [ 1042.016]  -> wl_subcompositor#2.get_subsurface(new id wl_subsurface#70, wl_surface#71, wl_surface#61)
+[conn#1 fd#4] [ 1042.017]  -> wl_surface#71.attach(wl_buffer#88, 0, 0)
+[conn#1 fd#4] [ 1042.018]  -> wl_surface#71.commit()
+[conn#1 fd#4] [ 1042.019]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[conn#1 fd#4] [ 1042.020]  -> wl_surface#61.attach(wl_buffer#99, 0, 0)
+[conn#1 fd#4] [ 1042.021]  -> wl_surface#61.commit()
+[conn#1 fd#4] [ 1042.022]  -> wl_surface#71.attach(nil, 0, 0)
+[conn#1 fd#4] [ 1042.023]  -> wl_surface#71.commit()
+[conn#1 fd#4] [ 1042.024]  -> wp_color_management_surface_v1#23.set_image_description(wp_image_description_v1#31, 0)
+[conn#1 fd#4] [ 1042.025]  -> wl_surface#61.attach(wl_buffer#100, 0, 0)
+[conn#1 fd#4] [ 1042.026]  -> wl_surface#61.commit()
+""".strip()
+            trace_path.write_text(multi_hdr_trace, encoding="utf-8")
+            status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "io.github.rusmikev.CineHDR", "--output", str(out_path)])
+            self.assertEqual(status, 0)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "PASS")
+            # Chosen commit must be commit#26 with effective buffer#100, not commit#21 with buffer#99
+            matched_surf = data["matched"]["surface"]
+            self.assertEqual(matched_surf["commit_index"], 26)
+            self.assertEqual(matched_surf["effective_buffer_id"], 100)
+
+            # 2. Negative control: All HDR commits ambiguous (subsurface#71 has buffer at all commits) -> UNKNOWN
+            ambig_trace = multi_hdr_trace.replace(
+                "-> wl_surface#71.attach(nil, 0, 0)",
+                "-> wl_surface#71.attach(wl_buffer#89, 0, 0)",
+            )
+            trace_path.write_text(ambig_trace, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "io.github.rusmikev.CineHDR", "--output", str(out_path)])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertIn("active buffer detected on subsurface", data["reason"])
+
+            # 3. Negative control: All HDR commits lack buffer attach on toplevel -> FAIL
+            nobuf_trace = multi_hdr_trace.replace("-> wl_surface#61.attach", "# no attach")
+            trace_path.write_text(nobuf_trace, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "io.github.rusmikev.CineHDR", "--output", str(out_path)])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertIn("no non-zero wl_surface.attach observed on target window surface", data["error"])
+
+            # 4. Negative control: Untagged multi-HDR trace -> UNKNOWN
+            untagged_multi = "\n".join(line.split("] ", 1)[1] for line in multi_hdr_trace.splitlines())
+            trace_path.write_text(untagged_multi, encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                status = main(["--trace-only", "--trace", str(trace_path), "--app-id", "io.github.rusmikev.CineHDR", "--output", str(out_path)])
+            self.assertEqual(status, 1)
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "UNKNOWN")
+            self.assertIn("trace-only L3p validation requires verified connection tags", data["reason"])
+
     def test_standard_mode_cli_requires_publication_report_and_backend(self):
         """Hermetic CLI test: standard mode requires --publication-report and --backend."""
         with tempfile.TemporaryDirectory() as temporary:
