@@ -530,6 +530,8 @@ class TestFixtureMathAndLayout(unittest.TestCase):
         expected_10bit = {
             "black": (0, 0, 0),
             "near_black": (396, 396, 396),
+            # Historical frozen expectation: legacy 1s fixture parameterized reference_white
+            # as 0.75 relative scene light -> linear_to_hlg(0.75) gives 10-bit code 969.
             "reference_white": (969, 969, 969),
             "peak_white": (1023, 1023, 1023),
             "red_primary": (1023, 0, 0),
@@ -574,6 +576,69 @@ class TestFixtureMathAndLayout(unittest.TestCase):
             self.assertEqual(result["stream"]["color_transfer"], "arib-std-b67")
             self.assertEqual(len(recorded_cmds), 1)
             self.assertIn("arib-std-b67", recorded_cmds[0])
+
+    def test_hlg_reference_white_audit_positive_and_negative_controls(self) -> None:
+        """Audit of historical 1s HLG fixture vs ITU-R BT.2408-4 reference white (positive/negative controls).
+
+        Inventory of consumers and frozen numerical expectations:
+          1. tests/generate_patterns.py:
+             - fixture_spec("hlg") specifies patch "reference_white" with (0.75, 0.75, 0.75) relative scene light.
+             - raw_frame encodes this via linear_to_hlg(0.75) to 10-bit code 969 (~94.7% signal level).
+             - L4_HLG_VISUAL_ORACLE correctly uses reference_white_hlg_signal = 0.75, reference_white_10bit = 767.
+          2. tools/validation/test_pixel_pipeline.py:
+             - test_hlg_relative_math_patch_codes_and_hermetic_contract freezes expected_10bit["reference_white"] at (969, 969, 969).
+             - probe_result("hlg") mocks output ref_white = 0.5807 (the ST 2084 PQ target luminance for 203 nits diffuse white).
+          3. tests/run_pixel_pipeline.py:
+             - expected_reference_white_luminance("hlg") returns linear_to_pq(203.0) (~0.5807), matching true diffuse white in PQ.
+          4. tools/validation/README.md:
+             - Runbook documents that L4 reference white strip is 75% HLG signal level (code 767), not scene light.
+
+        Positive control of value:
+          - BT.2408-4 Section 5.2.1 defines HLG Reference White at 75% of nominal peak signal level (E' = 0.75).
+          - In full-range 10-bit: round(0.75 * 1023) = 767 (HLG_REFERENCE_WHITE_10BIT_CODE, L4_HLG_REFERENCE_WHITE_10BIT).
+          - The corresponding relative scene light L is ~0.264963401 (hlg_reference_white_scene_light()).
+          - Round-trip: linear_to_hlg(hlg_to_linear(0.75)) == 0.75 -> code 767.
+
+        Negative control of mixing scene-light with signal level:
+          - Confusing 0.75 relative scene light (L = 0.75) with 0.75 signal level (E' = 0.75) encodes to:
+            linear_to_hlg(0.75) = 0.9470986396... -> code 969.
+          - 969 / 1023 = 94.7% signal level, which is a near-peak highlight, NOT 75% diffuse reference white.
+          - Mixing error is +202 code steps (+19.7% of full 10-bit scale).
+        """
+        # 1. Positive control of value (ITU-R BT.2408-4 standard reference white)
+        self.assertEqual(generate_patterns.HLG_REFERENCE_WHITE_SIGNAL_LEVEL, 0.75)
+        self.assertEqual(generate_patterns.HLG_REFERENCE_WHITE_10BIT_CODE, 767)
+        self.assertEqual(generate_patterns.L4_HLG_REFERENCE_WHITE_10BIT, 767)
+
+        scene_light_ref_white = generate_patterns.hlg_reference_white_scene_light()
+        self.assertAlmostEqual(scene_light_ref_white, 0.2649626, places=6)
+        signal_from_scene_light = generate_patterns.linear_to_hlg(scene_light_ref_white)
+        self.assertAlmostEqual(signal_from_scene_light, 0.75, places=7)
+        self.assertEqual(round(signal_from_scene_light * 1023), 767)
+
+        # Round-trip decode/encode
+        self.assertAlmostEqual(generate_patterns.hlg_to_linear(0.75), scene_light_ref_white, places=7)
+        self.assertAlmostEqual(generate_patterns.linear_to_hlg(generate_patterns.hlg_to_linear(0.75)), 0.75, places=7)
+
+        # 2. Negative control: confusing scene-light with signal level
+        confused_signal = generate_patterns.linear_to_hlg(generate_patterns.HLG_HISTORICAL_1S_SCENE_LIGHT)
+        confused_code = round(confused_signal * 1023)
+        self.assertEqual(confused_code, generate_patterns.HLG_HISTORICAL_1S_10BIT_CODE)
+        self.assertEqual(confused_code, 969)
+
+        # Demonstrate the numerical discrepancy
+        code_delta = confused_code - generate_patterns.HLG_REFERENCE_WHITE_10BIT_CODE
+        self.assertEqual(code_delta, 202)
+        self.assertNotEqual(confused_code, generate_patterns.HLG_REFERENCE_WHITE_10BIT_CODE)
+        self.assertGreater(confused_signal, 0.94)  # 94.7% signal level is highlight, not diffuse white
+        self.assertLess(scene_light_ref_white, 0.30)  # Diffuse white is ~26.5% scene reflectance
+
+        # 3. Verification of historical fixture provenance and frozen consumer expectations
+        spec = generate_patterns.fixture_spec("hlg")
+        ref_patch = next(p for p in spec.patches if p.name == "reference_white")
+        self.assertEqual(ref_patch.rgb, (0.75, 0.75, 0.75))  # Historical scene-light input
+        raw_code = generate_patterns._encode_component(spec, ref_patch.rgb[0])
+        self.assertEqual(raw_code, 969)  # Frozen historical 10-bit expectation in 1s fixture
 
     def test_l4_hdr10_pattern_layout_codes_and_hermetic_cli(self) -> None:
         """Hermetically verify L4 HDR10 PQ/BT.2020 pattern (100/203/400/600/800/1000 nits) without invoking real ffmpeg."""

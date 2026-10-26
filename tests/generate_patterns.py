@@ -70,6 +70,20 @@ L4_HLG_FRAME_COUNT = L4_HLG_FPS * L4_HLG_DURATION_SECONDS
 L4_HLG_LEVEL_STEPS: tuple[float, ...] = (0.05, 0.18, 0.50, 0.75, 0.88, 1.0)
 L4_HLG_REFERENCE_WHITE_SIGNAL = 0.75
 L4_HLG_REFERENCE_WHITE_10BIT = round(L4_HLG_REFERENCE_WHITE_SIGNAL * 1023)
+
+# HLG Reference White definitions per ITU-R BT.2408-4 Section 5.2.1:
+# Nominal peak signal level of 75% (E' = 0.75), yielding 10-bit code 767.
+HLG_REFERENCE_WHITE_SIGNAL_LEVEL: float = 0.75
+HLG_REFERENCE_WHITE_10BIT_CODE: int = round(HLG_REFERENCE_WHITE_SIGNAL_LEVEL * 1023)  # 767
+
+# Historical 1-second fixture provenance:
+# In the legacy 1s 8-patch fixture (fixture_spec("hlg")), the patch named "reference_white"
+# was assigned 0.75 relative scene light (L = 0.75), which encodes to ~0.9471 signal level
+# (10-bit code 969) via linear_to_hlg(0.75). This historical value must not be silently
+# changed without documenting provenance, as unit test oracles (test_pixel_pipeline.py)
+# freeze expected_10bit["reference_white"] at 969.
+HLG_HISTORICAL_1S_SCENE_LIGHT: float = 0.75
+HLG_HISTORICAL_1S_10BIT_CODE: int = 969
 L4_HLG_VISUAL_ORACLE = {
     "oracle_id": "hlg-relative-scene-light-contrast-v1",
     "description": (
@@ -327,6 +341,23 @@ def linear_to_hlg(value: float) -> float:
     return a * math.log(12.0 * value - b) + c
 
 
+def hlg_to_linear(signal: float) -> float:
+    """Decode ARIB STD-B67 (HLG) non-linear signal [0.0, 1.0] to relative scene light [0.0, 1.0]."""
+    signal = min(max(signal, 0.0), 1.0)
+    if signal <= 0.5:
+        return (signal ** 2) / 3.0
+    a = 0.17883277
+    b = 0.28466892
+    c = 0.55991073
+    import math
+    return (math.exp((signal - c) / a) + b) / 12.0
+
+
+def hlg_reference_white_scene_light() -> float:
+    """Return the relative scene light corresponding to 75% HLG signal level (ITU-R BT.2408-4)."""
+    return hlg_to_linear(HLG_REFERENCE_WHITE_SIGNAL_LEVEL)
+
+
 def linear_to_srgb(value: float) -> float:
     """Encode a full-range, relative linear-light SDR component as sRGB."""
 
@@ -386,6 +417,13 @@ def fixture_spec(mode: str) -> FixtureSpec:
             target_transfer="pq",
             target_peak_nits=1000.0,
             sample_bits=10,
+            # Note on legacy 1-second fixture provenance:
+            # "reference_white" in this 1s fixture specifies 0.75 relative scene light
+            # (HLG_HISTORICAL_1S_SCENE_LIGHT), encoding to 10-bit code 969 via linear_to_hlg().
+            # Standard ITU-R BT.2408-4 Reference White is 75% signal level (code 767,
+            # HLG_REFERENCE_WHITE_10BIT_CODE), as implemented in L4 (L4_HLG_REFERENCE_WHITE_10BIT).
+            # The historical value 0.75 scene light is preserved here to avoid breaking
+            # historical test oracles and fixture provenance.
             patches=_patches((
                 ("black", (0.0, 0.0, 0.0), None),
                 ("near_black", (0.05, 0.05, 0.05), None),
