@@ -1546,6 +1546,38 @@ class PublicationEvidenceTests(unittest.TestCase):
                 self.assertEqual(status_color, "FAIL")
                 self.assertIn("published color state changed", detail_color)
 
+        # Negative control 4: after metrics snapshot reports stale render_context_generation
+        for bad_ctx_gen in (1, 0):
+            with self.subTest(bad_ctx_gen=bad_ctx_gen):
+                session_stale_ctx = make_session()
+                status_stale_ctx, detail_stale_ctx = session_stale_ctx._verify_step(
+                    step,
+                    {
+                        "time_pos": 10.0,
+                        "render_context_generation": bad_ctx_gen,
+                        "render_frame_generation": 6,
+                        "render_color_state": "rec2100-pq",
+                    },
+                )
+                self.assertEqual(status_stale_ctx, "FAIL")
+                self.assertIn("libmpv render context was not recreated", detail_stale_ctx)
+
+        # Negative control 5: after metrics snapshot reports degraded render target
+        session_degraded_target = make_session()
+        status_target, detail_target = session_degraded_target._verify_step(
+            step,
+            {
+                "time_pos": 10.0,
+                "render_context_generation": 2,
+                "render_frame_generation": 6,
+                "render_color_state": "rec2100-pq",
+                "render_target_format": "GL_RGBA8",
+                "render_target_depth": 8,
+            },
+        )
+        self.assertEqual(status_target, "FAIL")
+        self.assertIn("render target changed", detail_target)
+
     def test_transition_accepts_published_hdr_state_after_a_new_frame(self):
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.video_area = SimpleNamespace(
@@ -1661,8 +1693,15 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertEqual(status_hdr, "PASS")
         self.assertIn("target=pq/bt.2020/auto", detail_hdr)
 
-        # Negative control 1: SDR step with stale HDR target-trc, target-prim, or unknown peak
-        for stale in ({"target_trc": "pq"}, {"target_prim": "bt.2020"}, {"target_peak": "unknown"}):
+        # Negative control 1: SDR step with stale HDR target-trc, target-prim, or numeric peak
+        for stale in (
+            {"target_trc": "pq"},
+            {"target_prim": "bt.2020"},
+            {"target_peak": "unknown"},
+            {"target_peak": 1000},
+            {"target_peak": 743},
+            {"target_peak": "1000"},
+        ):
             with self.subTest(stale_sdr=stale):
                 session._pending_render_frame_generation = 20
                 st, det = session._verify_step(sdr_step, {**sdr_after, **stale})
@@ -1676,6 +1715,40 @@ class PublicationEvidenceTests(unittest.TestCase):
                 st, det = session._verify_step(hdr_step, {**hdr_after, **bad})
                 self.assertEqual(st, "FAIL")
                 self.assertIn("did not match HDR output state", det)
+
+        # Negative control 3: wrong playlist_pos on SDR and HDR steps
+        session._pending_render_frame_generation = 20
+        st, det = session._verify_step(sdr_step, {**sdr_after, "playlist_pos": 1})
+        self.assertEqual(st, "FAIL")
+        self.assertIn("playlist stayed at 1 instead of 0", det)
+
+        session._pending_render_frame_generation = 21
+        st, det = session._verify_step(hdr_step, {**hdr_after, "playlist_pos": 0})
+        self.assertEqual(st, "FAIL")
+        self.assertIn("playlist stayed at 0 instead of 1", det)
+
+        # Negative control 4: stale frame generation (frame not published after media switch)
+        session._pending_render_frame_generation = 21
+        st, det = session._verify_step(hdr_step, {**hdr_after, "render_frame_generation": 21})
+        self.assertEqual(st, "FAIL")
+        self.assertIn("no new frame was published after the media switch", det)
+
+        # Negative control 5: mismatched color state (rec2100-pq on SDR or srgb on HDR)
+        session._pending_render_frame_generation = 20
+        st, det = session._verify_step(sdr_step, {**sdr_after, "render_color_state": "rec2100-pq"})
+        self.assertEqual(st, "FAIL")
+        self.assertIn("published target was", det)
+
+        session._pending_render_frame_generation = 21
+        st, det = session._verify_step(hdr_step, {**hdr_after, "render_color_state": "srgb"})
+        self.assertEqual(st, "FAIL")
+        self.assertIn("published target was", det)
+
+        # Negative control 6: renderer context changed during media transition
+        session._pending_render_frame_generation = 21
+        st, det = session._verify_step(hdr_step, {**hdr_after, "render_context_generation": 2})
+        self.assertEqual(st, "FAIL")
+        self.assertIn("renderer context changed during a media transition", det)
 
     def test_transition_accepts_synthetic_target_properties_matrix(self):
         """P1.5 synthetic matrix: transition verifies hand-crafted property dictionaries (presets, HLG, SDR fallback).
