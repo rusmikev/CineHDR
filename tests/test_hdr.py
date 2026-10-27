@@ -2122,11 +2122,11 @@ class TestAutoTargetPeak(unittest.TestCase):
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
     def test_target_peak_unknown_and_invalid_inputs(self, _g, _s):
-        """P1.6 audit: NaN, zero, negative, or invalid peaks never cause substitution."""
+        """Invalid and non-finite peaks never cause substitution."""
         mock_mpv, props = self._make_mock_mpv()
         valid_monitor = self._states(**{"HDMI-1": (True, 600.0)})
 
-        for bad_sig in (0, -1.0, float("nan"), "invalid", None):
+        for bad_sig in (0, -1.0, float("nan"), float("inf"), 1e308, "invalid", None):
             with self.subTest(bad_sig=bad_sig):
                 with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=valid_monitor):
                     c = self._controller(mock_mpv, sig_peak=bad_sig)
@@ -2134,7 +2134,7 @@ class TestAutoTargetPeak(unittest.TestCase):
                     self.assertEqual(props.get("target-peak"), "auto")
                     self.assertEqual(c.effective_peak_source, "auto")
 
-        for bad_lum in (0, -100.0, float("nan"), None):
+        for bad_lum in (0, -100.0, float("nan"), float("inf"), None):
             with self.subTest(bad_lum=bad_lum):
                 bad_monitor = self._states(**{"HDMI-1": (True, bad_lum)})
                 with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=bad_monitor):

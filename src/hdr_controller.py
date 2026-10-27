@@ -28,6 +28,7 @@ OpenGL rendering widgets from HDR business logic. It handles:
 """
 
 import logging
+import math
 import mpv
 from typing import Any, NamedTuple, Optional
 from gi.repository import GObject, Gio, GLib
@@ -603,9 +604,10 @@ class HdrController(GObject.Object):
             sig_peak = float(params.get("sig-peak"))
         except (TypeError, ValueError):
             return None
-        if sig_peak <= 0:
+        peak_nits = sig_peak * 203.0
+        if not math.isfinite(peak_nits) or peak_nits <= 0:
             return None
-        return sig_peak * 203.0
+        return peak_nits
 
     def _monitor_peak_nits(self):
         """Peak luminance of the output the video sits on, in nits.
@@ -629,8 +631,12 @@ class HdrController(GObject.Object):
                 info = hdr_infos[0]
         if info is None or not info.hdr:
             return None
-        if info.max_lum and info.max_lum > 0:
-            return float(info.max_lum)
+        try:
+            peak_nits = float(info.max_lum)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if math.isfinite(peak_nits) and peak_nits > 0:
+            return peak_nits
         return None
 
     @property
