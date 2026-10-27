@@ -262,7 +262,7 @@ class HdrController(GObject.Object):
                         self._dovi_info = dovi
                         self._dovi_warned = False
                         changed = True
-                    if getattr(self, "_last_stream_peak", None) != current_stream_peak:
+                    if self._last_stream_peak != current_stream_peak:
                         self._last_stream_peak = current_stream_peak
                         changed = True
                     if changed:
