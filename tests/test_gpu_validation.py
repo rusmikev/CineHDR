@@ -1399,7 +1399,16 @@ class PublicationEvidenceTests(unittest.TestCase):
 
         status, detail = session._verify_step(
             ValidationStep("GL context cycle 1", "context-cycle", 10, 1),
-            {"time_pos": 100.0},
+            {
+                "time_pos": 100.0,
+                "render_context_generation": 2,
+                "render_frame_generation": 1,
+                "source_hdr": True,
+                "hdr_output_active": True,
+                "render_target_format": "GL_RGBA16F",
+                "render_target_depth": 16,
+                "render_color_state": "rec2100-pq",
+            },
         )
 
         self.assertEqual(status, "PASS")
@@ -1505,14 +1514,37 @@ class PublicationEvidenceTests(unittest.TestCase):
             s.video_area.render_frame_generation = 6
             return s
 
+        def snapshot(**changes):
+            facts = {
+                "time_pos": 10.0,
+                "render_context_generation": 2,
+                "render_frame_generation": 6,
+                "source_hdr": True,
+                "hdr_output_active": True,
+                "render_target_format": "GL_RGBA16F",
+                "render_target_depth": 16,
+                "render_color_state": "rec2100-pq",
+            }
+            facts.update(changes)
+            return facts
+
         # Positive control: context recreated, new frame published (5->6), HDR active and color state preserved
         session_ok = make_session()
         status, detail = session_ok._verify_step(
             step,
-            {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": "rec2100-pq"},
+            snapshot(),
         )
         self.assertEqual(status, "PASS")
         self.assertIn("1→2", detail)
+
+        # A partial metrics snapshot cannot borrow widget state to manufacture PASS.
+        session_partial = make_session()
+        status_partial, detail_partial = session_partial._verify_step(
+            step,
+            {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": "rec2100-pq"},
+        )
+        self.assertEqual(status_partial, "FAIL")
+        self.assertIn("metrics snapshot is incomplete", detail_partial)
 
         # Negative control 1: _first_frame_logged is True, but frame was dropped/superseded before publication (frame_gen 5->5)
         session_no_pub = make_session()

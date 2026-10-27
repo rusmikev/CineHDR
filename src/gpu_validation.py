@@ -2463,6 +2463,21 @@ class GpuValidationSession:
                     "published color state changed from "
                     f"{pending_color_state} to {actual_color_state}"
                 )
+            required_metrics = (
+                "render_context_generation",
+                "render_frame_generation",
+                "source_hdr",
+                "hdr_output_active",
+                "render_target_format",
+                "render_target_depth",
+                "render_color_state",
+            )
+            missing_metrics = [key for key in required_metrics if after.get(key) is None]
+            if missing_metrics:
+                return "FAIL", (
+                    "context-cycle metrics snapshot is incomplete: "
+                    + ", ".join(missing_metrics)
+                )
             return "PASS", (
                 "context generation advanced "
                 f"{self._pending_context_generation}→{generation}; "
