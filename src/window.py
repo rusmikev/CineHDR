@@ -1850,6 +1850,13 @@ class CineWindow(Adw.ApplicationWindow):
             except Exception:
                 logging.exception("Failed to record diagnostics snapshot on shutdown")
 
+        if hasattr(self, "get_visible_dialog"):
+            try:
+                if dialog := self.get_visible_dialog():
+                    dialog.close()
+            except Exception:
+                pass
+
         try:
             if hasattr(self, "_video_area") and hasattr(self._video_area, "shutdown_render_context"):
                 self._video_area.shutdown_render_context()
@@ -1868,7 +1875,7 @@ class CineWindow(Adw.ApplicationWindow):
             else:
                 self.mpv.quit()
             self.mpv.wait_for_shutdown(timeout=3)
-        except mpv.ShutdownError:
+        except (mpv.ShutdownError, TimeoutError):
             pass
 
         if self._inhibit_cookie:
@@ -1909,6 +1916,8 @@ class CineWindow(Adw.ApplicationWindow):
     def _setup_observers(self):
         @self.mpv.event_callback("start-file")
         def on_start_file(_event):
+            if getattr(self, "_shutting_down", False):
+                return
             self._media_load_generation = getattr(self, "_media_load_generation", 0) + 1
             idle_add_once(self.spinner.set_visible, True)
 
@@ -1935,11 +1944,16 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.event_callback("file-loaded")
         def on_file_loaded(_event):
+            if getattr(self, "_shutting_down", False):
+                return
             idle_add_once(on_f_loaded)
             timeout_add_seconds_once(5, setattr, self, "_error_count", 0)
 
         @self.mpv.event_callback("end-file")
         def on_end_file(event):
+            if getattr(self, "_shutting_down", False):
+                return
+
             idle_add_once(self.spinner.set_visible, False)
             idle_add_once(self.start_page.set_sensitive, True)
 

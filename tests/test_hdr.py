@@ -4607,5 +4607,105 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         self.assertTrue(any("unknown epoch provenance" in r for r in reasons))
 
 
+class TestWindowShutdownLifecycle(unittest.TestCase):
+    """Hermetic behavioral tests for CineWindow application shutdown and end-file lifecycle."""
+
+    def _setup_mock_window(self):
+        from src.window import CineWindow
+        win = CineWindow.__new__(CineWindow)
+        callbacks = {}
+
+        def mock_event_cb(name):
+            def decorator(fn):
+                callbacks[name] = fn
+                return fn
+            return decorator
+
+        win.mpv = MagicMock()
+        win.mpv.event_callback = mock_event_cb
+        win.mpv.property_observer = lambda name: lambda fn: fn
+        win.spinner = MagicMock()
+        win.start_page = MagicMock()
+        win.shuffle_toggle_btn = MagicMock()
+        win.video_progress_scale = MagicMock()
+        win.playlist_ls = MagicMock()
+        win._error_count = 0
+        win.show_toast = MagicMock()
+        win._shutting_down = False
+        win.close = MagicMock()
+        win._setup_observers()
+        return win, callbacks
+
+    def test_end_file_ignored_when_shutting_down(self):
+        win, callbacks = self._setup_mock_window()
+        on_end_file = callbacks["end-file"]
+
+        mock_event = MagicMock()
+        mock_event.as_dict.return_value = {
+            "reason": b"error",
+            "file_error": b"video output initialization failed",
+        }
+        win.mpv.playlist_pos = 0
+        win.mpv.playlist_count = 1
+        win._shutting_down = True
+
+        with patch("src.window.idle_add_once") as mock_idle, \
+             patch("src.window.logger.warning") as mock_warn:
+            on_end_file(mock_event)
+            self.assertEqual(win._error_count, 0)
+            mock_idle.assert_not_called()
+            mock_warn.assert_not_called()
+            self.assertEqual(win.mpv.playlist_pos, 0)
+
+    def test_end_file_processed_during_normal_playback(self):
+        win, callbacks = self._setup_mock_window()
+        on_end_file = callbacks["end-file"]
+
+        mock_event = MagicMock()
+        mock_event.as_dict.return_value = {
+            "reason": b"error",
+            "file_error": b"video output initialization failed",
+        }
+        win.mpv.playlist_pos = 0
+        win.mpv.playlist_count = 1
+        win._shutting_down = False
+
+        with patch("src.window.idle_add_once") as mock_idle, \
+             patch("src.window.logger.warning") as mock_warn:
+            on_end_file(mock_event)
+            self.assertEqual(win._error_count, 1)
+            self.assertTrue(mock_idle.called)
+            mock_warn.assert_called_once()
+            self.assertIn("video output initialization failed", mock_warn.call_args[0][1])
+
+    def test_do_close_request_catches_timeout_and_dialog_cleanup(self):
+        from src.window import CineWindow
+        win = CineWindow.__new__(CineWindow)
+        win._shutting_down = False
+        win._video_area = MagicMock()
+        win.mpv = MagicMock()
+        win.mpv.playlist = []
+        win._is_gpu_validation = False
+        win._inhibit_cookie = 42
+        win.app = MagicMock()
+        mock_dialog = MagicMock()
+        win.get_visible_dialog = MagicMock(return_value=mock_dialog)
+
+        call_sequence = []
+        win._video_area.shutdown_render_context.side_effect = lambda: call_sequence.append("shutdown_render_context")
+        win.mpv.quit_watch_later.side_effect = lambda: call_sequence.append("quit")
+        win.mpv.wait_for_shutdown.side_effect = TimeoutError("core shutdown timed out")
+
+        with patch("src.window.is_same_playlist", return_value=True), \
+             patch("src.window.settings"):
+            res = win.do_close_request()
+
+        self.assertFalse(res)
+        self.assertTrue(win._shutting_down)
+        mock_dialog.close.assert_called_once()
+        self.assertEqual(call_sequence, ["shutdown_render_context", "quit"])
+        win.app.uninhibit.assert_called_once_with(42)
+
+
 if __name__ == "__main__":
     unittest.main()
