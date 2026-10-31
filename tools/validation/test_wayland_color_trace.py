@@ -5138,6 +5138,47 @@ SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE = """
 """.strip()
 
 
+class TestColorSurfaceIdReuse(unittest.TestCase):
+    """The first HDR commit remains valid after a later legal object-ID reuse."""
+
+    def test_reuse_after_destroy_and_delete_preserves_first_commit(self):
+        trace = SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE + "\n" + "\n".join((
+            "[conn#1 fd#9] [ 1042.015] -> wp_color_management_surface_v1#23.destroy()",
+            "[conn#1 fd#9] [ 1042.016] wl_display#1.delete_id(23)",
+            "[conn#1 fd#9] [ 1042.017] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)",
+        ))
+        result = validate_composite_window_trace(
+            trace, expected_app_id="mpv", trace_only=True
+        )
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["matched"]["surface"]["color_management_surface_id"], 23)
+
+    def test_untagged_reuse_remains_unproven(self):
+        tagged = SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE + "\n" + "\n".join((
+            "[conn#1 fd#9] [ 1042.015] -> wp_color_management_surface_v1#23.destroy()",
+            "[conn#1 fd#9] [ 1042.016] wl_display#1.delete_id(23)",
+            "[conn#1 fd#9] [ 1042.017] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)",
+        ))
+        trace = "\n".join(
+            line.removeprefix("[conn#1 fd#9] ")
+            for line in tagged.splitlines() if line.startswith("[conn#1 fd#9]")
+        )
+        with self.assertRaises(TraceValidationError):
+            validate_composite_window_trace(
+                trace, expected_app_id="mpv", trace_only=False
+            )
+
+    def test_reuse_without_delete_is_rejected(self):
+        trace = SYNTHETIC_TAGGED_MULTI_CONN_MPV_TRACE + "\n" + "\n".join((
+            "[conn#1 fd#9] [ 1042.015] -> wp_color_management_surface_v1#23.destroy()",
+            "[conn#1 fd#9] [ 1042.017] -> wp_color_manager_v1#3.get_surface(new id wp_color_management_surface_v1#23, wl_surface#61)",
+        ))
+        with self.assertRaises(TraceValidationError):
+            validate_composite_window_trace(
+                trace, expected_app_id="mpv", trace_only=True
+            )
+
+
 class TestTaggedConnectionTraceValidation(unittest.TestCase):
     """Hermetic tests for parser auto-selection and validation of connection-tagged traces."""
 

@@ -663,6 +663,40 @@ def _used_before_creation(
     )
 
 
+def _color_surface_generation_end(
+    calls: list[TraceCall], creations: dict[tuple[str, int], list[int]],
+    object_id: int, creation_index: int, *, connection_verified: bool,
+) -> tuple[bool, int | None]:
+    """Bound a color surface lifetime; reuse needs verified connection identity."""
+    indices = creations.get(("wp_color_management_surface_v1", object_id), [])
+    if len(indices) > 1 and not connection_verified:
+        return False, None
+    if creation_index not in indices or _used_before_creation(
+        calls, "wp_color_management_surface_v1", object_id, indices[0]
+    ):
+        return False, None
+    for previous, current in zip(indices, indices[1:]):
+        destroyed = next((
+            call.index for call in calls
+            if call.interface == "wp_color_management_surface_v1"
+            and call.object_id == object_id and call.method == "destroy"
+            and previous < call.index < current
+        ), None)
+        if destroyed is None or not any(
+            call.interface == "wl_display" and call.method == "delete_id"
+            and call.args == str(object_id) and destroyed < call.index < current
+            for call in calls
+        ):
+            return False, None
+    end = next((
+        call.index for call in calls
+        if call.interface == "wp_color_management_surface_v1"
+        and call.object_id == object_id and call.method == "destroy"
+        and call.index > creation_index
+    ), None)
+    return True, end
+
+
 def _is_created_by_manager(
     calls_by_index: dict[int, TraceCall],
     c_idx: int,
@@ -2427,13 +2461,13 @@ def validate_composite_window_trace(
             if has_col:
                 raise TraceValidationError(col_err)
 
+            valid_generation, generation_end = _color_surface_generation_end(
+                calls, creations, color_surface_id, get_surface.index,
+                connection_verified=selected_conn is not None,
+            )
             wl_surface_creations = creations.get(("wl_surface", wl_surface_id), [])
             if (
-                len(creations.get(("wp_color_management_surface_v1", color_surface_id), [])) != 1
-                or _used_before_creation(
-                    calls, "wp_color_management_surface_v1", color_surface_id,
-                    get_surface.index,
-                )
+                not valid_generation
                 or len(wl_surface_creations) > 1
                 or (wl_surface_creations and wl_surface_creations[0] >= get_surface.index)
                 or (
@@ -2590,6 +2624,7 @@ def validate_composite_window_trace(
                     or set_description.object_id != color_surface_id
                     or set_description.method != "set_image_description"
                     or set_description.index <= get_surface.index
+                    or (generation_end is not None and set_description.index >= generation_end)
                 ):
                     continue
                 description_match = SET_DESCRIPTION_RE.match(set_description.args)
@@ -2686,6 +2721,9 @@ def validate_composite_window_trace(
                 )
                 if commit is None:
                     order_error = "no wl_surface.commit observed on window surface after set_image_description"
+                    continue
+                if generation_end is not None and commit.index >= generation_end:
+                    order_error = "color management surface was destroyed before window commit"
                     continue
 
                 intervening = next(
