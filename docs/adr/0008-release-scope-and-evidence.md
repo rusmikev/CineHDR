@@ -1,7 +1,7 @@
 # ADR-0008: Scope релиза 1.0 и протокол доказательств
 
-- **Status:** Accepted 2026-10-18 (решения D1–D7 владельца)
-- **Date:** 2026-10-18
+- **Status:** Accepted 2026-10-18 (решения D1–D7), Amended 2026-10-31 (решения D8–D13)
+- **Date:** 2026-10-18 (обновлено 2026-10-31)
 - **Supersedes:** ADR-0006 (bounded validation governance)
 - **Amends:** ADR-0007 (гейт `auto`)
 
@@ -14,7 +14,7 @@ Adjudicator и маршрутизацию по моделям, при этом �
 минимальный набор правил, который один владелец с одной машиной на стенд
 может реально исполнять, не теряя оракулов, которые находили реальные дефекты.
 
-## Решение
+## Решение (D1–D7, 2026-10-18)
 
 1. Upstreaming не является целью релиза; цель — мержабельность с upstream
    `main` (процедура `upstream-diverge:`). `brand:`-коммиты отменены.
@@ -33,9 +33,9 @@ Adjudicator и маршрутизацию по моделям, при этом �
    PASS/FAIL/UNCLEAR и без заявления о колориметрической точности.
 3. `GDK_DEBUG=color-mgmt` включён по умолчанию в Flatpak-лаунчере (GTK runtime
    пиннован), opt-out `CINEHDR_NO_COLOR_MGMT=1`; нативная сборка — opt-in.
-4. Governance сводится к `AGENTS.md` (старые документы подлежат удалению по PLAN C1 после C0); доказательства — уровни L1, L2, L3, L3p,
+4. Governance сводится к `AGENTS.md` (старые документы удалены по PLAN C1); доказательства — уровни L1, L2, L3, L3p,
    L4 и правила их силы в `AGENTS.md` §8. Статусы — в `docs/TESTING.md`.
-5. Scope 1.0: Flatpak x86_64, Wayland; HDR для GNOME ≥ 48 и Plasma ≥ 6.3;
+5. Scope 1.0: Flatpak x86_64, Wayland; HDR для GNOME ≥ 48 и (с учётом поправки D8 ниже) корректный fallback на KDE Plasma ≥ 6.7;
    X11 и прочие композиторы — SDR; gpu-next — экспериментально, по умолчанию
    выключен; нативная сборка — best effort.
 6. Fork-строки переводятся через `update_translations.sh` в `i18n:`-коммитах.
@@ -53,6 +53,49 @@ Adjudicator и маршрутизацию по моделям, при этом �
    механизмы удаляются только адресно, по одному на коммит, с указанием
    потерянной защиты и её замены или причины ненужности.
 
+## Дополнение 2026-10-31 (решения D8–D13, редакция 4 `docs/PLAN.md`)
+
+8. **D8 (KDE в релизе 1.0):** В `color-management-v1` v2 трансферы `srgb` (9) и
+   `ext_srgb` (10) помечены deprecated в пользу `gamma22` (2) / `compound_power_2_4` (14),
+   и KWin с Plasma 6.7 перестал объявлять `TRANSFER_FUNCTION_SRGB`. При этом GTK
+   (как 4.22.5 в runtime GNOME 50, так и 4.24.1/`main` в `gdk/wayland/gdkwaylandcolor.c`)
+   биндит `wp_color_manager_v1` версией `MIN(version, 1)` и жёстко требует `TF_SRGB`,
+   уничтожая `wp_color_manager_v1` при его отсутствии. Поэтому в релизе 1.0 на KDE
+   Plasma ≥ 6.7 целевое поведение — **«SDR + корректный документированный fallback»**
+   с точной причиной в диагностике (`GTK cannot create sRGB image description: missing TF srgb`).
+   Параллельно открывается задача P2.0 (issue + MR в апстрим GTK на поддержку
+   `gamma22`/параметрического sRGB при отсутствии `TF_SRGB`). Нативный HDR на KDE
+   переносится в post-1.0 до включения фикса в GTK runtime. Сборка собственного GTK
+   внутри Flatpak отвергнута.
+9. **D9 (разделение продуктового и gpu-next манифестов `libmpv`):** Продуктовый
+   манифест `build-aux/flatpak/io.github.rusmikev.CineHDR.json` переводится на
+   апстримный `libmpv v0.41.0` с обязательным патчем `fix-screenshots.diff`
+   (`mpv@c66204b69`). Экспериментальный форк `lhc70000/mpv` (`libmpv-gpu-next`)
+   выносится в отдельный манифест `build-aux/flatpak/io.github.rusmikev.CineHDR.gpu-next.json`
+   (вне стандартного CI). Неиспользуемый дубликат патча `build-aux/patches/mpv-gpu-next/`
+   удаляется.
+10. **D10 (автоматизация доказательств и спайк S1):** Вводится единый формат пакета
+    доказательств (`env.json`, `copy-report-*.txt`, `stderr.log`, `wayland.log`,
+    `parser.json`, `pixel-measurements.json`, `SHA256SUMS`). Выполняется спайк S1:
+    запуск установленного Flatpak под headless-композитором (`mutter --headless` /
+    `weston --backend=headless` с `color-management=true`) на `llvmpipe` с
+    `hdr-mode='force-hdr'`, `WAYLAND_DEBUG=1`, `LD_PRELOAD=libwayland_conn_tagger.so`
+    и проверкой `parse_wayland_color_trace.py --trace-only --oracle composite_window`.
+    При объявлении композитором `parametric + srgb + bt2020 + st2084_pq` и `PASS`
+    трассы сценарий становится релизным гейтом CI; иначе закрывается как `N/A` с причиной.
+11. **D11 (немедленное выполнение C4 и C9):** Развязка границы импорта
+    `video_widget.py ↔ gpu_validation.py` через слот `_fbo_pixel_oracle_sampler`,
+    вынос валидационных модулей под meson-опцию `-Dvalidation=true|false` (C4) и
+    приведение `is_hdr_content` к строгому критерию трансфера PQ/HLG (C9) выполняются
+    немедленно, не ожидая аппаратно-отложенных ячеек P1.5.
+12. **D12 (бамп runtime 50 → 51):** Переход на `org.gnome.Platform` 51 (GTK 4.24.x)
+    выполняется отдельной задачей B3 после закрытия GNOME-AMD Phase 1 и до релиза 1.0
+    с повторной проверкой L2 + L3p HDR10 + ресайз/выход.
+13. **D13 (git-дисциплина):** Ветка `main` защищена; кандидаты на железо
+    тегируются `cand-YYYYMMDD-<n>` (ячейки `TESTING.md` ссылаются на тег/sha +
+    flatpak-commit); статус-коммиты батчатся не чаще одного на сессию проверок
+    владельца; кэш `flatpak-builder` в CI ключуется хэшем манифеста (B2).
+
 ## Отвергнутые альтернативы
 
 - Сохранить ADR-0006 с attempt-families и HOLD-rows: не исполняется на
@@ -67,15 +110,20 @@ Adjudicator и маршрутизацию по моделям, при этом �
 - Удалить валидационную инфраструктуру целиком: теряются оракулы, нашедшие
   реальные дефекты (перечень — `tools/validation/README.md`); ручной Copy
   Report не фиксирует состояние первого кадра.
+- Собирать собственный патченный GTK4 внутри Flatpak ради KDE Plasma ≥ 6.7:
+  утяжеляет сборку, расходится с системным GNOME Platform runtime и ломает
+  воспроизводимость (выбраны документированный fallback в 1.0 + апстримный MR в GTK по D8).
 
 ## Последствия и риски
 
 - На композиторах, где GTK молча конвертирует HDR-описание в SDR, `auto` даст
   картинку хуже тон-маппинга mpv. Страховка — `force-sdr` и причина в
   диагностике.
+- На KDE Plasma ≥ 6.7 в релизе 1.0 работает тон-маппинг mpv (`auto` заблокирован
+  с ясной причиной в диагностике) до принятия фикса в апстрим GTK.
 - Утверждения о цветовой точности не делаются; только «HDR доставлен /
   не доставлен / неясно» по двум оракулам.
-- Инструменты в `tools/validation/` требуют сборки с `validation=true` и
+- Инструменты в `tools/validation/` требуют сборки с `-Dvalidation=true` и
   поддержки точек подключения в продукте; это осознанная цена сохранения
   регрессионных проверок.
 
@@ -86,6 +134,6 @@ Adjudicator и маршрутизацию по моделям, при этом �
 
 ## Измеримая валидация
 
-Все критерии `docs/PLAN.md` §8 выполнены; ячейки `docs/TESTING.md` для
-GNOME-AMD — PASS по L3p и L4; автосценарий `publication` PASS на релизном
-коммите.
+Все критерии `docs/PLAN.md` §9 выполнены; ячейки `docs/TESTING.md` для
+GNOME-AMD — PASS по L3p и L4; для KDE-AMD — SDR PASS и fallback PASS с точной
+причиной в диагностике; автосценарий `publication` PASS на релизном коммите.
