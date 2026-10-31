@@ -4645,8 +4645,9 @@ class TestWindowShutdownLifecycle(unittest.TestCase):
             "reason": b"error",
             "file_error": b"video output initialization failed",
         }
-        win.mpv.playlist_pos = 0
-        win.mpv.playlist_count = 1
+        # Initial position: last item with index > 0 (e.g. index 4 of 5)
+        win.mpv.playlist_count = 5
+        win.mpv.playlist_pos = 4
         win._shutting_down = True
 
         with patch("src.window.idle_add_once") as mock_idle, \
@@ -4655,7 +4656,8 @@ class TestWindowShutdownLifecycle(unittest.TestCase):
             self.assertEqual(win._error_count, 0)
             mock_idle.assert_not_called()
             mock_warn.assert_not_called()
-            self.assertEqual(win.mpv.playlist_pos, 0)
+            # Position must remain 4; playlist_pos = 0 must NOT be written upon shutdown
+            self.assertEqual(win.mpv.playlist_pos, 4)
 
     def test_end_file_processed_during_normal_playback(self):
         win, callbacks = self._setup_mock_window()
@@ -4666,19 +4668,21 @@ class TestWindowShutdownLifecycle(unittest.TestCase):
             "reason": b"error",
             "file_error": b"video output initialization failed",
         }
-        win.mpv.playlist_pos = 0
-        win.mpv.playlist_count = 1
+        # During normal playback on last item (index 4 of 5), playlist_pos = 0 is written
+        win.mpv.playlist_count = 5
+        win.mpv.playlist_pos = 4
         win._shutting_down = False
 
         with patch("src.window.idle_add_once") as mock_idle, \
              patch("src.window.logger.warning") as mock_warn:
             on_end_file(mock_event)
             self.assertEqual(win._error_count, 1)
+            self.assertEqual(win.mpv.playlist_pos, 0)
             self.assertTrue(mock_idle.called)
             mock_warn.assert_called_once()
             self.assertIn("video output initialization failed", mock_warn.call_args[0][1])
 
-    def test_do_close_request_catches_timeout_and_dialog_cleanup(self):
+    def test_do_close_request_timeout_warning_and_order(self):
         from src.window import CineWindow
         win = CineWindow.__new__(CineWindow)
         win._shutting_down = False
@@ -4688,22 +4692,26 @@ class TestWindowShutdownLifecycle(unittest.TestCase):
         win._is_gpu_validation = False
         win._inhibit_cookie = 42
         win.app = MagicMock()
-        mock_dialog = MagicMock()
-        win.get_visible_dialog = MagicMock(return_value=mock_dialog)
 
         call_sequence = []
-        win._video_area.shutdown_render_context.side_effect = lambda: call_sequence.append("shutdown_render_context")
+        win._video_area.shutdown_render_context.side_effect = lambda: call_sequence.append("free")
         win.mpv.quit_watch_later.side_effect = lambda: call_sequence.append("quit")
-        win.mpv.wait_for_shutdown.side_effect = TimeoutError("core shutdown timed out")
+        def mock_wait(timeout=None):
+            call_sequence.append("wait")
+            raise TimeoutError("core shutdown timed out")
+        win.mpv.wait_for_shutdown.side_effect = mock_wait
 
         with patch("src.window.is_same_playlist", return_value=True), \
-             patch("src.window.settings"):
+             patch("src.window.settings"), \
+             patch("src.window.logger.warning") as mock_warn:
             res = win.do_close_request()
 
         self.assertFalse(res)
         self.assertTrue(win._shutting_down)
-        mock_dialog.close.assert_called_once()
-        self.assertEqual(call_sequence, ["shutdown_render_context", "quit"])
+        # Full lifecycle sequence must strictly be free -> quit -> wait per AGENTS §4.5
+        self.assertEqual(call_sequence, ["free", "quit", "wait"])
+        mock_warn.assert_called_once()
+        self.assertIn("timed out", mock_warn.call_args[0][0].lower())
         win.app.uninhibit.assert_called_once_with(42)
 
 
