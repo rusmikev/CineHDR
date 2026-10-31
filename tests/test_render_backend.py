@@ -540,7 +540,7 @@ class TestRendererSettingIntegration(unittest.TestCase):
             import gi
             gi.require_version("Gtk", "4.0")
             gi.require_version("Adw", "1")
-            from gi.repository import Gio, Gtk, Adw
+            from gi.repository import Adw, Gdk, Gio, Gtk
         except (ImportError, ValueError) as err:
             self.skipTest(f"GTK4 / libadwaita not available: {err}")
 
@@ -550,8 +550,8 @@ class TestRendererSettingIntegration(unittest.TestCase):
         if not os.path.exists(gres_path):
             self.skipTest(f"Compiled gresource not found at {gres_path}")
 
-        if not Gtk.init_check():
-            self.skipTest("Gtk.init_check() failed (display server unavailable)")
+        if not Gtk.init_check() or Gdk.Display.get_default() is None:
+            self.skipTest("No GTK display available for dialog instantiation")
 
         res = Gio.Resource.load(gres_path)
         Gio.resources_register(res)
