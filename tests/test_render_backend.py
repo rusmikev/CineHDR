@@ -452,7 +452,7 @@ class TestRendererSettingIntegration(unittest.TestCase):
             blueprint = blueprint_file.read()
         self.assertIn('title: _("Video Output Diagnostics")', blueprint)
         self.assertIn('icon-name: "edit-copy-symbolic"', blueprint)
-        self.assertNotIn("&amp;", blueprint)
+        self.assertIn('title: _("Output &amp; Color State")', blueprint)
         for row_name in (
             "renderer_requested_row",
             "renderer_dependency_row",
@@ -1195,7 +1195,7 @@ class TestRuntimeDiagnostics(unittest.TestCase):
         with open(blueprint_path, encoding="utf-8") as blueprint_file:
             blueprint = blueprint_file.read()
 
-        self.assertIn('title: _("Playback Performance & Drops")', blueprint)
+        self.assertIn('title: _("Playback Performance &amp; Drops")', blueprint)
         self.assertIn("perf_fps_row", blueprint)
         self.assertIn("perf_dropped_row", blueprint)
         self.assertIn("perf_delayed_row", blueprint)
