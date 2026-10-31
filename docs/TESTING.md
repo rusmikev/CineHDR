@@ -36,7 +36,7 @@
 | Перенос окна HDR ↔ SDR панель | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Переключение HDR в DE во время проигрывания | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Плейлист HDR → SDR → HDR | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
-| Выход во время проигрывания (нет краша) | L2 | PASS 2026-10-24 a24fe81 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| Выход во время проигрывания (нет краша) | L2 | PASS 2026-10-31 0418a3d9 (GNOME-AMD, установленный Flatpak 0418a3d9 [исходники 8e4d820, исправление 95ecaa9], HLG Auto/legacy; закрытие во время воспроизведения, видео двигалось нормально, окно закрылось без повторного открытия, exit code 0; Copy Report: GL_RGBA16F, Rec.2100 PQ, Auto gate allowed; в stderr отсутствуют mpv end-file error и таймаут shutdown; лог p15-shutdown-20261031T074014Z; ранее SDR PASS 2026-10-24 a24fe81) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Отключение монитора во время проигрывания | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | 4K60 без пропусков кадров | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | hwdec активен (vaapi / nvdec) | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
