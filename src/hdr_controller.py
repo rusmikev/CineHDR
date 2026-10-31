@@ -331,27 +331,19 @@ class HdrController(GObject.Object):
             target_peak = self._hdr_target_peak
             if target_peak not in HDR_PEAK_PRESETS:
                 target_peak = "auto"
-            
-            if target_peak == "auto":
-                # Automatic target-peak: when the monitor's own peak (from its
-                # image description) is meaningfully below the stream's peak,
-                # hand mpv the monitor value so it tone-maps *inside* PQ to the
-                # panel's real capability instead of leaving the excess to the
-                # compositor's clip. Tri-state discipline: unknown stream peak
-                # or unknown monitor peak -> no substitution ("auto").
+
+            if target_peak in (None, "auto"):
+                # PLAN P1.6 / ADR-0007 simplification:
+                # Wayland color management protocols report container color volume
+                # maximum (~10000 nits) rather than calibrated physical panel peak,
+                # providing no reliable physical luminance for automatic substitution.
+                # In "auto" mode, CineHDR passes target-peak=auto directly to mpv.
+                # mpv sets target max_luma=0 (PQ nominal peak), providing clean
+                # pass-through without premature client-side tone-mapping clipping,
+                # allowing the compositor / display pipeline to handle tone mapping.
                 peak_val = "auto"
                 self._effective_peak_source = "auto"
-                monitor_peak = self._monitor_peak_nits()
-                stream_peak = self._stream_peak_nits()
-                if monitor_peak and stream_peak:
-                    # Threshold: 90% of the stream's peak. Below that, the
-                    # monitor clearly cannot hit the content's highlights and
-                    # mpv's tone curve produces a visibly better gradient than
-                    # leaving it to the display's / compositor's hard roll-off.
-                    if monitor_peak < stream_peak * 0.9:
-                        peak_val = int(round(monitor_peak))
-                        self._effective_peak_source = f"monitor ({peak_val} nits)"
-                effective_target_peak = peak_val
+                effective_target_peak = "auto"
             else:
                 peak_val = int(float(target_peak))
                 effective_target_peak = peak_val
@@ -642,7 +634,7 @@ class HdrController(GObject.Object):
     @property
     def effective_peak_source(self) -> str:
         """Human-readable origin of the current target-peak value
-        ('auto' | 'monitor (N nits)' | 'user preset (N nits)') — read-only,
+        ('auto' | 'user preset (N nits)') — read-only,
         shown in the diagnostics dialog."""
         return self._effective_peak_source
 

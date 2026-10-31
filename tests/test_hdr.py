@@ -1972,236 +1972,133 @@ class TestAutoTargetPeak(unittest.TestCase):
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_dim_monitor_substitutes_peak(self, _g, _s):
+    def test_auto_target_peak_always_passes_auto_to_mpv(self, _g, _s):
+        """P1.6: In Auto mode, target-peak is always passed as 'auto' regardless of stream/monitor peak."""
         mock_mpv, props = self._make_mock_mpv()
-        states = self._states(**{"HDMI-1": (True, 600.0)})
+        states = self._states(**{"HDMI-1": (True, 600.0), "DP-1": (True, 10000.0)})
         with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states):
-            controller = self._controller(mock_mpv)
-            controller.apply_hdr_settings()
-        self.assertEqual(props.get("target-peak"), 600)
-        self.assertEqual(controller.effective_peak_source, "monitor (600 nits)")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_bright_monitor_keeps_auto(self, _g, _s):
-        """Monitor at/above the stream's peak (1000 !< 1000*0.9) -> no substitution."""
-        mock_mpv, props = self._make_mock_mpv()
-        states = self._states(**{"HDMI-1": (True, 1000.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states):
-            controller = self._controller(mock_mpv)
-            controller.apply_hdr_settings()
-        self.assertEqual(props.get("target-peak"), "auto")
-        self.assertEqual(controller.effective_peak_source, "auto")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_unknown_stream_peak_never_substitutes(self, _g, _s):
-        """No cached video-params -> no guessed default, no substitution."""
-        mock_mpv, props = self._make_mock_mpv()
-        states = self._states(**{"HDMI-1": (True, 600.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states):
-            controller = self._controller(mock_mpv, sig_peak=None)
-            controller.apply_hdr_settings()
-        self.assertEqual(props.get("target-peak"), "auto")
-        self.assertEqual(controller.effective_peak_source, "auto")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_user_preset_beats_monitor(self, _g, _s):
-        mock_mpv, props = self._make_mock_mpv()
-        states = self._states(**{"HDMI-1": (True, 600.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states):
-            controller = self._controller(mock_mpv)
-            controller._hdr_target_peak = "400"
-            controller.apply_hdr_settings()
-        self.assertEqual(props.get("target-peak"), 400)
-        self.assertEqual(controller.effective_peak_source, "user preset (400 nits)")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_single_hdr_output_fallback_without_hint(self, _g, _s):
-        mock_mpv, props = self._make_mock_mpv()
-        states = self._states(**{"eDP-1": (False, 400.0), "HDMI-1": (True, 500.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states):
-            controller = self._controller(mock_mpv, hint=None)
-            controller.apply_hdr_settings()
-        self.assertEqual(props.get("target-peak"), 500)
-        self.assertEqual(controller.effective_peak_source, "monitor (500 nits)")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=False)
-    def test_force_hdr_onto_sdr_monitor_stays_auto(self, _g, _s):
-        """force-hdr bypasses the monitor gate, but an SDR-only output must
-        not lend its (meaningless here) peak to the substitution."""
-        mock_mpv, props = self._make_mock_mpv()
-        states = self._states(**{"HDMI-1": (False, 350.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states):
-            controller = self._controller(mock_mpv)
-            controller.hdr_mode = "force-hdr"
-        self.assertEqual(props.get("target-trc"), "pq")
-        self.assertEqual(props.get("target-peak"), "auto")
-        self.assertEqual(controller.effective_peak_source, "auto")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_sdr_branch_untouched_and_source_reset(self, _g, _s):
-        mock_mpv, props = self._make_mock_mpv()
-        states = self._states(**{"HDMI-1": (True, 600.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states):
-            controller = self._controller(mock_mpv)
-            controller.apply_hdr_settings()
-            self.assertEqual(controller.effective_peak_source, "monitor (600 nits)")
-            controller.hdr_mode = "force-sdr"     # -> SDR branch re-applies
-        self.assertEqual(props.get("target-peak"), "auto")
-        self.assertEqual(props.get("target-trc"), "auto")
-        self.assertEqual(controller.effective_peak_source, "auto")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_hdr_to_hdr_stream_switch_updates_target_peak_when_peak_changes(self, _g, _s):
-        """P1.6 audit: switching between HDR streams with different peaks updates target-peak."""
-        observers = {}
-        props = {}
-        mock_mpv = MagicMock()
-        mock_mpv.__setitem__ = lambda _s, k, v: props.__setitem__(k, v)
-        mock_mpv.__getitem__ = lambda _s, k: props.get(k)
-        mock_mpv.property_observer = lambda name: (lambda fn: observers.setdefault(name, fn))
-
-        states = self._states(**{"HDMI-1": (True, 600.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states), \
-             patch("src.hdr_controller.idle_add_once", side_effect=lambda fn: fn()):
-            from src.hdr_controller import HdrController
-            controller = HdrController(mock_mpv)
-            controller.set_output_hint("HDMI-1")
-
-            # Stream 1: HDR 1000 nits on 600-nit panel -> substitutes 600
-            observers["video-params"]("video-params", {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261})
-            self.assertEqual(props.get("target-peak"), 600)
-            self.assertEqual(controller.effective_peak_source, "monitor (600 nits)")
-
-            # Stream 2: HDR 500 nits on 600-nit panel -> 600 !< 500*0.9, must reset to auto
-            observers["video-params"]("video-params", {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 2.4630})
-            self.assertEqual(props.get("target-peak"), "auto")
-            self.assertEqual(controller.effective_peak_source, "auto")
-
-            # Stream 3: HDR 4000 nits on 600-nit panel -> 600 < 4000*0.9, must adapt to 600
-            observers["video-params"]("video-params", {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 19.7044})
-            self.assertEqual(props.get("target-peak"), 600)
-            self.assertEqual(controller.effective_peak_source, "monitor (600 nits)")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_target_peak_boundary_exact_90_percent(self, _g, _s):
-        """P1.6 audit: monitor_peak < stream_peak * 0.9 boundary checks."""
-        mock_mpv, props = self._make_mock_mpv()
-        # Stream peak: 1000 nits (sig-peak = 4.9261). 90% threshold = 900.0 nits.
-        # Boundary 1: monitor 900.0 nits -> not strictly less than 900.0 -> keeps auto
-        states_900 = self._states(**{"HDMI-1": (True, 900.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states_900):
-            c1 = self._controller(mock_mpv, sig_peak=4.9261)
-            c1.apply_hdr_settings()
-            self.assertEqual(props.get("target-peak"), "auto")
-            self.assertEqual(c1.effective_peak_source, "auto")
-
-        # Boundary 2: monitor 899.0 nits -> strictly less than 900.0 -> substitutes 899
-        states_899 = self._states(**{"HDMI-1": (True, 899.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states_899):
-            c2 = self._controller(mock_mpv, sig_peak=4.9261)
-            c2.apply_hdr_settings()
-            self.assertEqual(props.get("target-peak"), 899)
-            self.assertEqual(c2.effective_peak_source, "monitor (899 nits)")
-
-        # Boundary 3: monitor 901.0 nits -> greater than 900.0 -> keeps auto
-        states_901 = self._states(**{"HDMI-1": (True, 901.0)})
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states_901):
-            c3 = self._controller(mock_mpv, sig_peak=4.9261)
-            c3.apply_hdr_settings()
-            self.assertEqual(props.get("target-peak"), "auto")
-            self.assertEqual(c3.effective_peak_source, "auto")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_target_peak_unknown_and_invalid_inputs(self, _g, _s):
-        """Invalid and non-finite peaks never cause substitution."""
-        mock_mpv, props = self._make_mock_mpv()
-        valid_monitor = self._states(**{"HDMI-1": (True, 600.0)})
-
-        for bad_sig in (0, -1.0, float("nan"), float("inf"), 1e308, "invalid", None):
-            with self.subTest(bad_sig=bad_sig):
-                with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=valid_monitor):
-                    c = self._controller(mock_mpv, sig_peak=bad_sig)
+            for stream_peak in (2.0, 4.926, 19.7, None):
+                with self.subTest(stream_peak=stream_peak):
+                    c = self._controller(mock_mpv, hint="HDMI-1", sig_peak=stream_peak)
                     c.apply_hdr_settings()
                     self.assertEqual(props.get("target-peak"), "auto")
                     self.assertEqual(c.effective_peak_source, "auto")
-
-        for bad_lum in (0, -100.0, float("nan"), float("inf"), None):
-            with self.subTest(bad_lum=bad_lum):
-                bad_monitor = self._states(**{"HDMI-1": (True, bad_lum)})
-                with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=bad_monitor):
-                    c = self._controller(mock_mpv, sig_peak=4.9261)
-                    c.apply_hdr_settings()
-                    self.assertEqual(props.get("target-peak"), "auto")
-                    self.assertEqual(c.effective_peak_source, "auto")
+                    self.assertEqual(c.committed_output_state.target_peak, "auto")
+                    self.assertTrue(c.committed_output_state.is_hdr)
 
     @patch("src.hdr_controller.check_hdr_support", return_value=True)
     @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_multi_monitor_output_hint_resolution(self, _g, _s):
-        """P1.6 audit: multiple HDR outputs require connector hint; ambiguous outputs stay auto."""
-        mock_mpv, props = self._make_mock_mpv()
-        multi_states = self._states(**{
-            "DP-1": (True, 600.0),
-            "HDMI-1": (True, 1200.0),
-        })
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=multi_states):
-            # Without hint: ambiguous -> stays auto
-            c_ambig = self._controller(mock_mpv, hint=None, sig_peak=4.9261)
-            c_ambig.apply_hdr_settings()
-            self.assertEqual(props.get("target-peak"), "auto")
-            self.assertEqual(c_ambig.effective_peak_source, "auto")
-
-            # With hint for dimmer screen (DP-1: 600 nits < 900) -> 600
-            c_dp1 = self._controller(mock_mpv, hint="DP-1", sig_peak=4.9261)
-            c_dp1.apply_hdr_settings()
-            self.assertEqual(props.get("target-peak"), 600)
-            self.assertEqual(c_dp1.effective_peak_source, "monitor (600 nits)")
-
-            # With hint for brighter screen (HDMI-1: 1200 nits !< 900) -> auto
-            c_hdmi = self._controller(mock_mpv, hint="HDMI-1", sig_peak=4.9261)
-            c_hdmi.apply_hdr_settings()
-            self.assertEqual(props.get("target-peak"), "auto")
-            self.assertEqual(c_hdmi.effective_peak_source, "auto")
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_monitor_change_updates_target_peak(self, _g, _s):
-        """P1.6 audit: moving window between monitors of different peak re-evaluates target-peak."""
-        mock_mpv, props = self._make_mock_mpv()
-        states = self._states(**{
-            "DP-1": (True, 600.0),
-            "HDMI-1": (True, 1200.0),
-            "eDP-1": (False, 300.0),
-        })
-        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value=states):
-            c = self._controller(mock_mpv, hint="DP-1", sig_peak=4.9261)
+    def test_user_presets_reach_mpv_and_committed_state(self, _g, _s):
+        """P1.6: Numeric presets are applied as integers and tracked in CommittedOutputState."""
+        from src.hdr_controller import HDR_PEAK_PRESETS
+        for preset_str in HDR_PEAK_PRESETS:
+            if preset_str == "auto":
+                continue
+            mock_mpv, props = self._make_mock_mpv()
+            c = self._controller(mock_mpv)
+            c.hdr_target_peak = preset_str
             c.apply_hdr_settings()
-            self.assertEqual(props.get("target-peak"), 600)
-            self.assertEqual(c.effective_peak_source, "monitor (600 nits)")
 
-            # Move to HDMI-1 (1200 nits): target-peak must reset to auto
-            c.set_output_hint("HDMI-1")
+            expected_val = int(preset_str)
+            self.assertEqual(props.get("target-peak"), expected_val)
+            self.assertEqual(c.effective_peak_source, f"user preset ({expected_val} nits)")
+            self.assertEqual(c.committed_output_state.target_peak, expected_val)
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_invalid_target_peak_falls_back_to_auto(self, _g, _s):
+        """Invalid / junk presets fall back to 'auto'."""
+        mock_mpv, props = self._make_mock_mpv()
+        c = self._controller(mock_mpv)
+        for bad_preset in ("invalid", "9999", "-100", "", None):
+            c._hdr_target_peak = bad_preset
+            c.apply_hdr_settings()
             self.assertEqual(props.get("target-peak"), "auto")
             self.assertEqual(c.effective_peak_source, "auto")
+            self.assertEqual(c.committed_output_state.target_peak, "auto")
 
-            # Move back to DP-1 (600 nits): target-peak must become 600
-            c.set_output_hint("DP-1")
-            self.assertEqual(props.get("target-peak"), 600)
-            self.assertEqual(c.effective_peak_source, "monitor (600 nits)")
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_stream_switching_maintains_atomic_committed_state(self, _g, _s):
+        """P1.6 / ADR-0007: Switching between SDR and HDR streams transitions CommittedOutputState atomically."""
+        mock_mpv, props = self._make_mock_mpv()
+        c = self._controller(mock_mpv)
+        # Stream 1: HDR
+        c.apply_hdr_settings()
+        s1 = c.committed_output_state
+        ep1 = s1.epoch
+        self.assertTrue(s1.is_hdr)
+        self.assertEqual(s1.target_trc, "pq")
+        self.assertEqual(s1.target_prim, "bt.2020")
+        self.assertEqual(s1.target_peak, "auto")
+        self.assertEqual(s1.fbo_format, "GL_RGBA16F")
+        self.assertEqual(s1.gdk_color_state, "rec2100-pq")
 
-            # In force-hdr mode, move to SDR screen (eDP-1): peak must reset to auto
-            c.hdr_mode = "force-hdr"
-            c.set_output_hint("eDP-1")
-            self.assertEqual(props.get("target-peak"), "auto")
-            self.assertEqual(c.effective_peak_source, "auto")
+        # Stream 2: SDR
+        c._is_hdr_content = False
+        c._last_video_params = {"gamma": "bt.1886", "primaries": "bt.709"}
+        c.apply_hdr_settings()
+        s2 = c.committed_output_state
+        self.assertEqual(s2.epoch, ep1 + 1)
+        self.assertFalse(s2.is_hdr)
+        self.assertEqual(s2.target_trc, "auto")
+        self.assertEqual(s2.target_prim, "auto")
+        self.assertEqual(s2.target_peak, "auto")
+        self.assertEqual(s2.fbo_format, "GL_RGBA8")
+        self.assertEqual(s2.gdk_color_state, "srgb")
+
+        # Stream 3: HDR with preset 600
+        c._is_hdr_content = True
+        c.hdr_target_peak = "600"
+        c._last_video_params = {"gamma": "pq", "primaries": "bt.2020"}
+        c.apply_hdr_settings()
+        s3 = c.committed_output_state
+        self.assertEqual(s3.epoch, ep1 + 2)
+        self.assertTrue(s3.is_hdr)
+        self.assertEqual(s3.target_peak, 600)
+        self.assertEqual(props.get("target-peak"), 600)
+        self.assertEqual(c.effective_peak_source, "user preset (600 nits)")
+
+        # Stream 4: another HDR stream with same preset 600 -> epoch unchanged
+        c._last_video_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 19.7}
+        c.apply_hdr_settings()
+        s4 = c.committed_output_state
+        self.assertEqual(s4.epoch, ep1 + 2)
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_preset_change_on_the_fly_updates_committed_state(self, _g, _s):
+        """P1.6: Changing target-peak on the fly bumps epoch and updates CommittedOutputState."""
+        mock_mpv, props = self._make_mock_mpv()
+        c = self._controller(mock_mpv)
+        c.apply_hdr_settings()
+        ep1 = c.committed_output_state.epoch
+        self.assertEqual(c.committed_output_state.target_peak, "auto")
+
+        changes = []
+        c.on_change_cb = lambda: changes.append(c.committed_output_state.epoch)
+
+        c.hdr_target_peak = "1000"
+        self.assertEqual(c.committed_output_state.epoch, ep1 + 1)
+        self.assertEqual(c.committed_output_state.target_peak, 1000)
+        self.assertEqual(props.get("target-peak"), 1000)
+        self.assertEqual(c.effective_peak_source, "user preset (1000 nits)")
+        self.assertEqual(changes, [ep1 + 1])
+
+    @patch("src.hdr_controller.check_hdr_support", return_value=True)
+    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
+    def test_sdr_fallback_restores_initial_peak(self, _g, _s):
+        """When switching to SDR or force-sdr, initial/default target-peak is restored."""
+        mock_mpv, props = self._make_mock_mpv()
+        c = self._controller(mock_mpv)
+        c.hdr_target_peak = "600"
+        c.apply_hdr_settings()
+        self.assertEqual(props.get("target-peak"), 600)
+
+        c.hdr_mode = "force-sdr"
+        self.assertEqual(props.get("target-peak"), "auto")
+        self.assertEqual(c.effective_peak_source, "auto")
+        self.assertFalse(c.committed_output_state.is_hdr)
 
 class TestHdrControllerPeakMath(unittest.TestCase):
     def setUp(self):
