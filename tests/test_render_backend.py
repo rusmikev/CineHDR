@@ -452,7 +452,6 @@ class TestRendererSettingIntegration(unittest.TestCase):
             blueprint = blueprint_file.read()
         self.assertIn('title: _("Video Output Diagnostics")', blueprint)
         self.assertIn('icon-name: "edit-copy-symbolic"', blueprint)
-        self.assertIn('title: _("Output &amp; Color State")', blueprint)
         for row_name in (
             "renderer_requested_row",
             "renderer_dependency_row",
@@ -508,6 +507,65 @@ class TestRendererSettingIntegration(unittest.TestCase):
                 )
             )
         self.assertNotIn("NVIDIA workaround", source)
+
+    def test_compiled_hdr_diagnostics_ui_markup_validity(self):
+        """Verify compiled XML has escaped ampersands (&amp;) and loads without Gtk markup warnings."""
+        ui_path = os.path.join(
+            os.path.dirname(__file__), "..", "build", "src", "hdr_diagnostics.ui"
+        )
+        blp_path = os.path.join(
+            os.path.dirname(__file__), "..", "src", "hdr_diagnostics.blp"
+        )
+        if os.path.exists(ui_path):
+            root = ET.parse(ui_path).getroot()
+        else:
+            xml_str = subprocess.check_output(
+                ["blueprint-compiler", "compile", blp_path], text=True
+            )
+            root = ET.fromstring(xml_str)
+
+        titles_with_amp = []
+        for prop in root.iter("property"):
+            if prop.get("name") == "title" and prop.text and "&" in prop.text:
+                titles_with_amp.append(prop.text)
+
+        self.assertIn("Output &amp; Color State", titles_with_amp)
+        self.assertIn("Resolution &amp; Pixel Format", titles_with_amp)
+        self.assertIn("Playback Performance &amp; Drops", titles_with_amp)
+        self.assertIn("Delayed &amp; Mistimed Frames", titles_with_amp)
+        for title in titles_with_amp:
+            self.assertNotIn(" & ", title)
+
+        try:
+            import gi
+            gi.require_version("Gtk", "4.0")
+            gi.require_version("Adw", "1")
+            from gi.repository import Gio, Gtk, Adw
+
+            gres_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "build", "src", "cinehdr.gresource")
+            )
+            if os.path.exists(gres_path) and Gtk.init_check():
+                res = Gio.Resource.load(gres_path)
+                Gio.resources_register(res)
+                Adw.init()
+                from src.hdr_diagnostics import HdrDiagnosticsDialog
+
+                stderr_fd = sys.stderr.fileno()
+                saved_fd = os.dup(stderr_fd)
+                with tempfile.NamedTemporaryFile(mode="w+", delete=True) as tmp:
+                    os.dup2(tmp.fileno(), stderr_fd)
+                    try:
+                        _ = HdrDiagnosticsDialog(None)
+                    finally:
+                        os.dup2(saved_fd, stderr_fd)
+                        os.close(saved_fd)
+                    tmp.seek(0)
+                    c_stderr = tmp.read()
+                self.assertNotIn("Failed to set text", c_stderr)
+                self.assertNotIn("error parsing markup", c_stderr)
+        except (ImportError, ValueError):
+            pass
 
     def test_dovi_ab_probe_is_embedded_negative_control(self):
         probe_path = os.path.join(
@@ -1195,7 +1253,6 @@ class TestRuntimeDiagnostics(unittest.TestCase):
         with open(blueprint_path, encoding="utf-8") as blueprint_file:
             blueprint = blueprint_file.read()
 
-        self.assertIn('title: _("Playback Performance &amp; Drops")', blueprint)
         self.assertIn("perf_fps_row", blueprint)
         self.assertIn("perf_dropped_row", blueprint)
         self.assertIn("perf_delayed_row", blueprint)
