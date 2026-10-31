@@ -541,31 +541,36 @@ class TestRendererSettingIntegration(unittest.TestCase):
             gi.require_version("Gtk", "4.0")
             gi.require_version("Adw", "1")
             from gi.repository import Gio, Gtk, Adw
+        except (ImportError, ValueError) as err:
+            self.skipTest(f"GTK4 / libadwaita not available: {err}")
 
-            gres_path = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "build", "src", "cinehdr.gresource")
-            )
-            if os.path.exists(gres_path) and Gtk.init_check():
-                res = Gio.Resource.load(gres_path)
-                Gio.resources_register(res)
-                Adw.init()
-                from src.hdr_diagnostics import HdrDiagnosticsDialog
+        gres_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "build", "src", "cinehdr.gresource")
+        )
+        if not os.path.exists(gres_path):
+            self.skipTest(f"Compiled gresource not found at {gres_path}")
 
-                stderr_fd = sys.stderr.fileno()
-                saved_fd = os.dup(stderr_fd)
-                with tempfile.NamedTemporaryFile(mode="w+", delete=True) as tmp:
-                    os.dup2(tmp.fileno(), stderr_fd)
-                    try:
-                        _ = HdrDiagnosticsDialog(None)
-                    finally:
-                        os.dup2(saved_fd, stderr_fd)
-                        os.close(saved_fd)
-                    tmp.seek(0)
-                    c_stderr = tmp.read()
-                self.assertNotIn("Failed to set text", c_stderr)
-                self.assertNotIn("error parsing markup", c_stderr)
-        except (ImportError, ValueError):
-            pass
+        if not Gtk.init_check():
+            self.skipTest("Gtk.init_check() failed (display server unavailable)")
+
+        res = Gio.Resource.load(gres_path)
+        Gio.resources_register(res)
+        Adw.init()
+        from src.hdr_diagnostics import HdrDiagnosticsDialog
+
+        stderr_fd = sys.stderr.fileno()
+        saved_fd = os.dup(stderr_fd)
+        with tempfile.NamedTemporaryFile(mode="w+", delete=True) as tmp:
+            os.dup2(tmp.fileno(), stderr_fd)
+            try:
+                _ = HdrDiagnosticsDialog(None)
+            finally:
+                os.dup2(saved_fd, stderr_fd)
+                os.close(saved_fd)
+            tmp.seek(0)
+            c_stderr = tmp.read()
+        self.assertNotIn("Failed to set text", c_stderr)
+        self.assertNotIn("error parsing markup", c_stderr)
 
     def test_dovi_ab_probe_is_embedded_negative_control(self):
         probe_path = os.path.join(
