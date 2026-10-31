@@ -32,7 +32,7 @@
 | DoVi Profile 5 → SDR с причиной | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | `force-sdr` / `force-hdr` на лету | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | `force-hdr` при выключенном HDR в DE — наблюдение задокументировано | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
-| Ресайз + fullscreen во время проигрывания | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| Ресайз + fullscreen во время проигрывания | L3 | UNCLEAR 2026-10-31 6673515 (GNOME-AMD, HLG Auto/legacy; владелец видел различимые полосы и не заметил зависаний при входе/выходе из fullscreen; Copy Report: GL_RGBA16F, Rec.2100 PQ, 1432 опубликованных текстуры, 0 сбоев FBO; после снимка stderr записал `video output initialization failed` при end-file, причина и код выхода не установлены) | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Перенос окна HDR ↔ SDR панель | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Переключение HDR в DE во время проигрывания | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
 | Плейлист HDR → SDR → HDR | L3 | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
