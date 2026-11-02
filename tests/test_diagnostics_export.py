@@ -543,6 +543,7 @@ class DiagnosticsExportTests(unittest.TestCase):
         win.mpv.playlist = []
         win._is_gpu_validation = False
         win._inhibit_cookie = 0
+        win._playlist_debounce_id = 0
         win.app = MagicMock()
 
         with patch("src.window.is_same_playlist", return_value=True), \
@@ -1566,6 +1567,152 @@ class DiagnosticsExportTests(unittest.TestCase):
             manifest2 = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest2["evidence_status"], "CONFIRMED")
             self.assertEqual(manifest2["evidence_gaps"], [])
+
+
+class WindowShutdownLifecycleTests(unittest.TestCase):
+    """Hermetic regression tests for CineWindow shutdown order, inhibitor cleanup, and late callbacks."""
+
+    def _create_mock_window(self):
+        from src.window import CineWindow
+        win = CineWindow.__new__(CineWindow)
+        win._shutting_down = False
+        win._inhibit_cookie = 0
+        win._playlist_debounce_id = 0
+        win._diagnostics_exporter = None
+        win._video_area = MagicMock()
+        win.mpv = MagicMock()
+        win.mpv.playlist = []
+        win._is_gpu_validation = False
+        win.app = MagicMock()
+        win.app.get_is_registered.return_value = True
+        return win
+
+    def test_close_request_releases_and_zeroes_inhibit_cookie(self):
+        win = self._create_mock_window()
+        win._inhibit_cookie = 42
+
+        with patch("src.window.is_same_playlist", return_value=True), \
+             patch("src.window.settings"):
+            result = win.do_close_request()
+
+        self.assertFalse(result)
+        self.assertTrue(win._shutting_down)
+        win.app.uninhibit.assert_called_once_with(42)
+        self.assertEqual(win._inhibit_cookie, 0)
+
+    def test_release_inhibit_is_idempotent(self):
+        win = self._create_mock_window()
+        win._inhibit_cookie = 101
+
+        win._release_inhibit()
+        win.app.uninhibit.assert_called_once_with(101)
+        self.assertEqual(win._inhibit_cookie, 0)
+
+        # Second call must be a complete no-op
+        win._release_inhibit()
+        self.assertEqual(win.app.uninhibit.call_count, 1)
+
+    def test_unregistered_app_does_not_call_uninhibit(self):
+        win = self._create_mock_window()
+        win._inhibit_cookie = 77
+        win.app.get_is_registered.return_value = False
+
+        win._release_inhibit()
+        win.app.uninhibit.assert_not_called()
+        self.assertEqual(win._inhibit_cookie, 0)
+
+    def test_sync_inhibit_ignored_when_shutting_down(self):
+        win = self._create_mock_window()
+        win._shutting_down = True
+        win.mpv.pause = False
+        win.mpv.idle_active = False
+
+        win._sync_inhibit()
+        win.app.inhibit.assert_not_called()
+        win.app.uninhibit.assert_not_called()
+
+    def test_sync_inhibit_ignored_when_app_unregistered(self):
+        win = self._create_mock_window()
+        win._shutting_down = False
+        win.app.get_is_registered.return_value = False
+        win.mpv.pause = False
+        win.mpv.idle_active = False
+
+        win._sync_inhibit()
+        win.app.inhibit.assert_not_called()
+        win.app.uninhibit.assert_not_called()
+
+    def test_deferred_sync_inhibit_after_close_does_not_double_uninhibit(self):
+        win = self._create_mock_window()
+        win._inhibit_cookie = 88
+
+        with patch("src.window.is_same_playlist", return_value=True), \
+             patch("src.window.settings"):
+            win.do_close_request()
+
+        self.assertEqual(win.app.uninhibit.call_count, 1)
+        win.app.uninhibit.assert_called_with(88)
+
+        # Simulate deferred callback queued before or during shutdown executing now
+        win.mpv.pause = False
+        win.mpv.idle_active = True
+        win._sync_inhibit()
+
+        # uninhibit must NOT have been called again
+        self.assertEqual(win.app.uninhibit.call_count, 1)
+        self.assertEqual(win._inhibit_cookie, 0)
+
+    def test_release_inhibit_exception_resets_cookie(self):
+        win = self._create_mock_window()
+        win._inhibit_cookie = 55
+        win.app.uninhibit.side_effect = RuntimeError("DBus connection closed")
+
+        win._release_inhibit()
+        self.assertEqual(win._inhibit_cookie, 0)
+
+    def test_playlist_debounce_removed_on_close(self):
+        win = self._create_mock_window()
+        win._playlist_debounce_id = 999
+
+        with patch("src.window.is_same_playlist", return_value=True), \
+             patch("src.window.settings"), \
+             patch("src.window.GLib.source_remove") as mock_remove:
+            win.do_close_request()
+            mock_remove.assert_called_once_with(999)
+            self.assertEqual(win._playlist_debounce_id, 0)
+
+    def test_late_callbacks_suppressed_when_shutting_down(self):
+        win = self._create_mock_window()
+        win._shutting_down = True
+        win.play_pause_btn = MagicMock()
+
+        # _update_play_pause_icon must return without modifying widgets
+        win._update_play_pause_icon(True)
+        win.play_pause_btn.set_icon_name.assert_not_called()
+
+        # Observers must return without queueing work to GLib
+        with patch("src.window.idle_add_once") as mock_idle:
+            registered_observers = {}
+            def fake_observer(prop):
+                def decorator(fn):
+                    registered_observers[prop] = fn
+                    return fn
+                return decorator
+            win.mpv.property_observer = fake_observer
+            win.mpv.event_callback = lambda ev: lambda fn: registered_observers.update({f"event:{ev}": fn}) or fn
+            win._setup_observers()
+
+            # Trigger pause change during shutdown
+            registered_observers["pause"]("pause", True)
+            mock_idle.assert_not_called()
+
+            # Trigger idle-active change during shutdown
+            registered_observers["idle-active"]("idle-active", True)
+            mock_idle.assert_not_called()
+
+            # Trigger mpv shutdown event during shutdown
+            registered_observers["event:shutdown"](None)
+            mock_idle.assert_not_called()
 
 
 if __name__ == "__main__":

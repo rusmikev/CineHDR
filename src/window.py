@@ -1240,6 +1240,8 @@ class CineWindow(Adw.ApplicationWindow):
             )
 
     def _update_play_pause_icon(self, paused):
+        if self._shutting_down:
+            return
         play = "cine-playback-start-symbolic"
         pause = "cine-playback-pause-symbolic"
 
@@ -1718,21 +1720,38 @@ class CineWindow(Adw.ApplicationWindow):
         return hovering
 
 
+    def _release_inhibit(self):
+        cookie = self._inhibit_cookie
+        if not cookie:
+            return
+        self._inhibit_cookie = 0
+        if self.app.get_is_registered():
+            try:
+                self.app.uninhibit(cookie)
+            except Exception:
+                logger.exception("Failed to uninhibit application")
+
     def _sync_inhibit(self):
+        if self._shutting_down:
+            return
+        if not self.app.get_is_registered():
+            return
         try:
             should_inhibit = not self.mpv.pause and not self.mpv.idle_active
-        except mpv.ShutdownError:
+        except (mpv.ShutdownError, AttributeError):
             should_inhibit = False
 
         if should_inhibit and self._inhibit_cookie == 0:
-            self._inhibit_cookie = self.app.inhibit(
-                self,
-                Gtk.ApplicationInhibitFlags.IDLE,
-                "Playing Media",
-            )
+            try:
+                self._inhibit_cookie = self.app.inhibit(
+                    self,
+                    Gtk.ApplicationInhibitFlags.IDLE,
+                    "Playing Media",
+                )
+            except Exception:
+                logger.exception("Failed to inhibit application")
         elif not should_inhibit and self._inhibit_cookie != 0:
-            self.app.uninhibit(self._inhibit_cookie)
-            self._inhibit_cookie = 0
+            self._release_inhibit()
 
     def _show_icon_indicator(self):
         try:
@@ -1844,7 +1863,11 @@ class CineWindow(Adw.ApplicationWindow):
 
     def do_close_request(self) -> bool:
         self._shutting_down = True
-        if getattr(self, "_diagnostics_exporter", None):
+        self._release_inhibit()
+        if self._playlist_debounce_id > 0:
+            GLib.source_remove(self._playlist_debounce_id)
+            self._playlist_debounce_id = 0
+        if self._diagnostics_exporter:
             try:
                 self._diagnostics_exporter.on_shutdown(self)
             except Exception:
@@ -1873,9 +1896,6 @@ class CineWindow(Adw.ApplicationWindow):
                 logger.warning("Timed out waiting for mpv core shutdown after 3 seconds")
         except mpv.ShutdownError:
             pass
-
-        if self._inhibit_cookie:
-            self.app.uninhibit(self._inhibit_cookie)
 
         return False
 
@@ -1989,6 +2009,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("playlist-count")
         def on_playlist_count_change(_name, _count):
+            if self._shutting_down:
+                return
             self.playlist_changed = True
             if isinstance(self._visible_dialog, Playlist):
                 if self._playlist_debounce_id > 0:
@@ -2011,6 +2033,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("playlist-pos")
         def on_playlist_pos_changed(_name, pos):
+            if self._shutting_down:
+                return
             idle_add_once(update_playing_item, pos)
 
         self._ab_loop_a = None
@@ -2191,6 +2215,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("pause")
         def on_pause_change(_name, paused):
+            if self._shutting_down:
+                return
             if self.mpv.eof_reached:  # allow to replay at eof, requires keep-open
                 self.mpv.seek(0, reference="absolute")
                 self.skip_pause_obs_count = 0
@@ -2203,6 +2229,8 @@ class CineWindow(Adw.ApplicationWindow):
             idle_add_once(self._update_play_pause_icon, paused)
 
         def sync_idle_active(is_idle):
+            if self._shutting_down:
+                return
             self._actions["open-sub-menu"].set_enabled(not is_idle)
             self._actions["open-audio-menu"].set_enabled(not is_idle)
 
@@ -2232,6 +2260,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("idle-active")
         def on_idle_change(_name, is_idle):
+            if self._shutting_down:
+                return
             self._is_startup = False
             idle_add_once(sync_idle_active, is_idle)
 
@@ -2255,6 +2285,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("media-title")
         def on_title_change(_name, title):
+            if self._shutting_down:
+                return
             if title:
                 idle_add_once(sync_title, title)
 
@@ -2290,6 +2322,8 @@ class CineWindow(Adw.ApplicationWindow):
         @self.mpv.property_observer("sub-visibility")
         @self.mpv.property_observer("sid")
         def on_sub_vis_change(name, value):
+            if self._shutting_down:
+                return
             idle_add_once(set_sub_icon, name, value)
 
         def set_aid_icon(value):
@@ -2300,10 +2334,14 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.property_observer("aid")
         def on_aid_change(_name, value):
+            if self._shutting_down:
+                return
             idle_add_once(set_aid_icon, value)
 
         @self.mpv.property_observer("vid")
         def on_vid_change(_name, value):
+            if self._shutting_down:
+                return
             idle_add_once(self.audio_only_icon.set_visible, not bool(value))
             if not value:
                 # clear the last frame, which sometimes can still be present
@@ -2328,6 +2366,8 @@ class CineWindow(Adw.ApplicationWindow):
 
         @self.mpv.event_callback("shutdown")
         def on_quit(_event):
+            if self._shutting_down:
+                return
             idle_add_once(self.close)
 
     def _connect(self, signal_name):
