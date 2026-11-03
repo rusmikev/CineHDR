@@ -4588,6 +4588,8 @@ class TestWindowShutdownLifecycle(unittest.TestCase):
         win.mpv.playlist = []
         win._is_gpu_validation = False
         win._inhibit_cookie = 42
+        win._playlist_debounce_id = 0
+        win._diagnostics_exporter = None
         win.app = MagicMock()
 
         call_sequence = []

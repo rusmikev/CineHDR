@@ -70,10 +70,12 @@
   </requires>
 
   <releases>
-    <release version="1.8.7.0" date="2026-10-24">
+    <release version="1.8.7.0" date="2026-11-02">
       <description translate="no">
         <ul>
           <li>Merged upstream Cine v1.8.7 (improved startup, dynamic window sizing based on screen size, fixed mouse click handling)</li>
+          <li>Validated HDR10 and HLG output on GNOME with AMD graphics, including live HDR mode transitions</li>
+          <li>Fixed shutdown cleanup during playback after display changes</li>
         </ul>
       </description>
     </release>
