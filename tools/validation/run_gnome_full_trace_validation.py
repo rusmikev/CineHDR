@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
 # Copyright 2026 rusmikev
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Comprehensive automated validation of the complete CineHDR playback trace on GNOME (Wayland).
+"""Native GNOME legacy playback: HDR L3p, SDR texture state and normal close.
 
-Validates:
-1. Environment & Host Stack (GNOME Shell, Mutter, GTK 4, Mesa, AMD GPU).
-2. Live Wayland Color Management globals (wp_color_manager_v1 v2, intents, TFs, primaries, output luminance).
-3. Live Wayland protocol trace capture via wayland_conn_tagger.so.
-4. Composite toplevel window protocol submission (ready -> set_image_description -> commit with effective buffer).
-5. SDR negative control (no HDR tagging on SDR content).
-6. Dynamic mode transition / render target republication.
-7. Diagnostics report export and fact integrity.
-8. Clean termination without crashes or FBO leaks.
+Explicit owner-run hardware check. Does not validate the Flatpak manifest,
+mode transitions, FBO leaks, measured luminance, or visual HDR delivery (L4).
 """
 
 from __future__ import annotations
@@ -21,28 +14,27 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import tempfile
-import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 REPO_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_DIR))
 
 from tools.validation.parse_wayland_color_trace import (
     validate_composite_window_trace,
-    _calls,
+    TraceValidationError,
+    FATAL_RE,
 )
 from src.gtk_cm_policy import (
     CmCaps,
     gtk_color_managed,
-    gtk_can_tag_hdr,
     TF_PQ,
     TF_SRGB,
     TF_GAMMA22,
@@ -72,33 +64,29 @@ def compile_tagger(output_path: Path) -> Path:
         str(TAGGER_SRC), "-o", str(output_path),
         "-ldl", "-lwayland-client", "-lpthread",
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if res.returncode != 0:
         raise RuntimeError(f"Failed to compile wayland_conn_tagger.c: {res.stderr}")
     return output_path
 
 
-def parse_wayland_info_color_manager() -> Dict[str, Any]:
-    """Query live wayland-info for wp_color_manager_v1 and parse capabilities."""
-    res = subprocess.run(["wayland-info", "-i", "wp_color_manager_v1"], capture_output=True, text=True)
-    if res.returncode != 0:
-        return {"available": False, "error": res.stderr.strip()}
-
-    out = res.stdout
+def parse_wayland_info_color_manager(out: str) -> Dict[str, Any]:
+    """Parse saved wayland-info text without connecting to a display."""
     info: Dict[str, Any] = {
-        "available": True,
+        "available": False,
         "raw_output": out,
         "version": None,
         "features": [],
         "named_tfs": [],
         "named_primaries": [],
         "rendering_intents": [],
-        "output_color_description": {},
+        "output_color_descriptions": [],
     }
 
     m_ver = re.search(r"interface:\s*'wp_color_manager_v1',\s*version:\s*(\d+)", out)
     if m_ver:
         info["version"] = int(m_ver.group(1))
+        info["available"] = True
 
     # Parse sections
     current_section = None
@@ -118,7 +106,7 @@ def parse_wayland_info_color_manager() -> Dict[str, Any]:
             continue
         elif line_s.startswith("output:"):
             current_section = "output"
-            info["output_color_description"]["output_id"] = line_s.split(":")[1].strip()
+            info["output_color_descriptions"].append({})
             continue
 
         if current_section == "intents" and line.startswith("\t\t"):
@@ -131,15 +119,15 @@ def parse_wayland_info_color_manager() -> Dict[str, Any]:
             info["named_primaries"].append(line_s)
         elif current_section == "output" and line.startswith("\t\t"):
             if "tf_named:" in line_s:
-                info["output_color_description"]["tf_named"] = line_s.split(":")[1].strip()
+                info["output_color_descriptions"][-1]["tf_named"] = line_s.split(":")[1].strip()
             elif "primaries_named:" in line_s:
-                info["output_color_description"]["primaries_named"] = line_s.split(":")[1].strip()
+                info["output_color_descriptions"][-1]["primaries_named"] = line_s.split(":")[1].strip()
             elif "luminances (cd/m²):" in line_s:
                 m_lum = re.search(r"min\s+([\d.]+)\s+max\s+([\d.]+)\s+reference\s+([\d.]+)", line_s)
                 if m_lum:
-                    info["output_color_description"]["min_luminance"] = float(m_lum.group(1))
-                    info["output_color_description"]["max_luminance"] = float(m_lum.group(2))
-                    info["output_color_description"]["ref_luminance"] = float(m_lum.group(3))
+                    info["output_color_descriptions"][-1]["min_luminance"] = float(m_lum.group(1))
+                    info["output_color_descriptions"][-1]["max_luminance"] = float(m_lum.group(2))
+                    info["output_color_descriptions"][-1]["ref_luminance"] = float(m_lum.group(3))
 
     return info
 
@@ -190,327 +178,263 @@ def build_cm_caps_from_wayland_info(info: Dict[str, Any]) -> Optional[CmCaps]:
     )
 
 
-def collect_system_environment() -> Dict[str, Any]:
-    """Collect host environment versions and parameters."""
-    env_facts: Dict[str, Any] = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "wayland_display": os.environ.get("WAYLAND_DISPLAY"),
-        "xdg_session_type": os.environ.get("XDG_SESSION_TYPE"),
-        "xdg_current_desktop": os.environ.get("XDG_CURRENT_DESKTOP"),
-    }
-
-    # GNOME Shell
+def command_output(command: List[str]) -> Optional[str]:
+    """Optional host facts stay unknown when a bounded query fails."""
     try:
-        res = subprocess.run(["gnome-shell", "--version"], capture_output=True, text=True)
-        env_facts["gnome_shell"] = res.stdout.strip()
-    except Exception as e:
-        env_facts["gnome_shell"] = f"unknown ({e})"
-
-    # Mutter
-    try:
-        res = subprocess.run(["mutter", "--version"], capture_output=True, text=True)
-        env_facts["mutter"] = res.stdout.strip()
-    except Exception as e:
-        env_facts["mutter"] = f"unknown ({e})"
-
-    # Kernel
-    try:
-        res = subprocess.run(["uname", "-r"], capture_output=True, text=True)
-        env_facts["kernel"] = res.stdout.strip()
-    except Exception as e:
-        env_facts["kernel"] = f"unknown ({e})"
-
-    # RPM packages
-    try:
-        res = subprocess.run(
-            ["rpm", "-q", "gnome-shell", "mutter", "mesa-dri-drivers", "gtk4"],
-            capture_output=True, text=True,
-        )
-        env_facts["rpm_packages"] = res.stdout.strip().splitlines()
-    except Exception as e:
-        env_facts["rpm_packages"] = [f"rpm query error: {e}"]
-
-    # GPU
-    try:
-        res = subprocess.run(["lspci", "-nnk"], capture_output=True, text=True)
-        gpu_lines = [
-            line for line in res.stdout.splitlines()
-            if any(term in line.lower() for term in ("vga", "3d", "display", "amdgpu", "radeon"))
-        ]
-        env_facts["gpu_info"] = gpu_lines[:8]
-    except Exception as e:
-        env_facts["gpu_info"] = [f"lspci error: {e}"]
-
-    return env_facts
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        logger.warning("Host query %s failed: %s", command[0], type(error).__name__)
+        return None
+    if result.returncode:
+        logger.warning("Host query %s exited with %s", command[0], result.returncode)
+        return None
+    return result.stdout.strip()
 
 
-def find_user_instances(app_id: str = "io.github.rusmikev.CineHDR") -> List[str]:
-    """Identify any running instances to avoid interfering with them."""
-    instances: List[str] = []
-    try:
-        res = subprocess.run(["flatpak", "ps", "--columns=instance,application"], capture_output=True, text=True)
-        if res.returncode == 0:
-            for line in res.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 2 and parts[1] == app_id:
-                    instances.append(parts[0])
-    except Exception:
-        pass
-    return instances
+def session_environment(output_dir: Path, tagger_so: Path, private: Path) -> Dict[str, str]:
+    # Keep the Wayland socket and session bus, but isolate all persistent app data.
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("CINEHDR_", "GSETTINGS_", "GDK_", "GSK_", "GTK_", "MPV_"))}
+    for name in ("CONFIG", "CACHE", "DATA", "STATE"):
+        directory = private / name.lower()
+        directory.mkdir()
+        env[f"XDG_{name}_HOME"] = str(directory)
+    env.update({
+        "LD_PRELOAD": str(tagger_so), "WAYLAND_DEBUG": "1", "GDK_BACKEND": "wayland",
+        "GDK_DEBUG": "color-mgmt", "GSETTINGS_BACKEND": "memory",
+        "CINEHDR_NON_UNIQUE": "1", "CINEHDR_RENDER_BACKEND": "legacy",
+        "CINEHDR_LOG_FILE": str(output_dir / "cinehdr.log"),
+        "CINEHDR_DIAGNOSTICS_EXPORT_PATH": str(output_dir / "copy-report.txt"),
+        "LC_ALL": "C.UTF-8",
+    })
+    return env
 
 
-def run_bounded_session(
-    video_path: Path,
-    output_dir: Path,
-    tagger_so: Path,
-    duration_seconds: float = 4.0,
-    extra_env: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
-    """Launch CineHDR under wayland_conn_tagger.so for a bounded observation duration."""
-    trace_log = output_dir / "wayland-client.raw.log"
-    app_log = output_dir / "cinehdr.log"
-
-    env = os.environ.copy()
-    env["LD_PRELOAD"] = str(tagger_so)
-    env["WAYLAND_DEBUG"] = "1"
-    env["GDK_DEBUG"] = "color-mgmt"
-    env["CINEHDR_NON_UNIQUE"] = "1"
-    env["CINEHDR_LOG_FILE"] = str(app_log)
-    if extra_env:
-        env.update(extra_env)
-
-    start_time = time.monotonic()
-    t_start_utc = datetime.now(timezone.utc).isoformat()
-
-    with open(trace_log, "w", encoding="utf-8") as f_trace:
-        proc = subprocess.Popen(
-            [sys.executable, "run_dev.py", str(video_path)],
-            stdout=subprocess.DEVNULL,
-            stderr=f_trace,
-            env=env,
-            cwd=str(REPO_DIR),
-        )
-
-        # Wait for bounded observation window
-        time.sleep(duration_seconds)
-
-        # Graceful shutdown via SIGINT
-        proc.send_signal(signal.SIGINT)
-        try:
-            proc.wait(timeout=3.0)
-        except subprocess.TimeoutExpired:
-            proc.send_signal(signal.SIGTERM)
+def read_session(output_dir: Path) -> Dict[str, Any]:
+    """Analyze saved artifacts without opening a display or trusting an old verdict."""
+    raw = (output_dir / "wayland-client.raw.log").read_text(errors="replace")
+    app_path = output_dir / "cinehdr.log"
+    app_text = app_path.read_text(errors="replace") if app_path.exists() else ""
+    telemetries = []
+    telemetry_valid = True
+    for line in app_text.splitlines():
+        if "HDR Pipeline Telemetry:" in line:
             try:
-                proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-
-    t_end_utc = datetime.now(timezone.utc).isoformat()
-    duration_observed = time.monotonic() - start_time
-
-    raw_text = trace_log.read_text(encoding="utf-8", errors="replace")
-    parsed_evidence = validate_composite_window_trace(raw_text, expected_app_id="io.github.rusmikev.CineHDR")
-
-    # Parse telemetry events from app log
-    telemetries: List[Dict[str, Any]] = []
-    if app_log.exists():
-        for line in app_log.read_text(encoding="utf-8", errors="replace").splitlines():
-            if "HDR Pipeline Telemetry:" in line:
-                try:
-                    payload = line.split("HDR Pipeline Telemetry:", 1)[1].strip()
-                    telemetries.append(json.loads(payload))
-                except Exception:
-                    pass
-
-    session_result = {
-        "fixture": str(video_path),
-        "fixture_sha256": hashlib.sha256(video_path.read_bytes()).hexdigest(),
-        "exit_code": proc.returncode,
-        "duration_seconds": round(duration_observed, 3),
-        "start_time_utc": t_start_utc,
-        "end_time_utc": t_end_utc,
-        "trace_file": str(trace_log),
-        "trace_bytes": trace_log.stat().st_size,
-        "app_log_file": str(app_log),
-        "telemetries": telemetries,
-        "evidence": parsed_evidence,
+                event = json.loads(line.split("HDR Pipeline Telemetry:", 1)[1].strip())
+                if not isinstance(event, dict):
+                    raise ValueError("Telemetry must be an object")
+                telemetries.append(event)
+            except (ValueError, TypeError):
+                logger.warning("Invalid pipeline telemetry in session")
+                telemetry_valid = False
+    diagnostics_path = output_dir / "copy-report.json"
+    try:
+        diagnostics = json.loads(diagnostics_path.read_text()) if diagnostics_path.exists() else {}
+        if not isinstance(diagnostics, dict):
+            raise ValueError("Diagnostic manifest must be an object")
+    except (ValueError, TypeError):
+        logger.warning("Invalid diagnostic manifest in session")
+        diagnostics = {}
+    try:
+        evidence = validate_composite_window_trace(raw, expected_app_id="io.github.rusmikev.CineHDR")
+    except TraceValidationError as error:
+        logger.warning("Composite trace rejected: %s", error)
+        evidence = {"status": "FAIL", "reason": str(error)}
+    exit_path = output_dir / "exit-code.txt"
+    timeout_path = output_dir / "timeout.txt"
+    report_path = output_dir / "copy-report.txt"
+    if diagnostics and (not report_path.exists() or diagnostics.get("report_sha256") !=
+                        hashlib.sha256(report_path.read_bytes()).hexdigest()):
+        logger.warning("Diagnostic report checksum missing or mismatched")
+        diagnostics = {}
+    return {
+        "evidence": evidence,
+        "telemetries": telemetries, "telemetry_valid": telemetry_valid,
+        "diagnostics": diagnostics,
+        "exit_code": int(exit_path.read_text()) if exit_path.exists() else None,
+        "timed_out": timeout_path.read_text().strip() != "false" if timeout_path.exists() else None,
+        "runtime_log": next((line.split("Render runtime ", 1)[1] for line in app_text.splitlines()
+                             if "Render runtime " in line), None),
+        "process_errors": bool(FATAL_RE.search(raw)) or any(token in raw or token in app_text for token in
+                              ("Traceback (most recent call last)", "[ERROR]", "[CRITICAL]")),
     }
-    return session_result
 
 
-def execute_full_gnome_trace_validation(
-    report_parent_dir: Path,
-    hdr_fixture: Path = HDR_FIXTURE_DEFAULT,
-    sdr_fixture: Path = SDR_FIXTURE_DEFAULT,
-    observation_duration: float = 4.0,
-) -> Dict[str, Any]:
-    """Execute complete validation suite across environment, HDR trace, SDR trace, and report."""
-    run_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    run_dir = report_parent_dir / f"gnome51-validation-{run_stamp}-{os.getpid()}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+def evaluate_session(session: Dict[str, Any], *, hdr: bool) -> Dict[str, Any]:
+    """Fail closed on missing media evidence; composite PQ is not a SDR texture test."""
+    events = session["telemetries"]
+    diag = session["diagnostics"]
+    summary = diag.get("summary", {})
+    frame = diag.get("media_frame") or {}
+    expected_trc = "pq" if hdr else "auto"
+    telemetry_ok = session["telemetry_valid"] and bool(events)
+    if hdr:
+        telemetry_ok &= any(t.get("source_hdr") is True and t.get("target_trc") == expected_trc
+                            and t.get("hdr_mode") == "auto" for t in events)
+    else:
+        telemetry_ok &= all(t.get("source_hdr") is False and t.get("target_trc") == expected_trc
+                            and t.get("hdr_mode") == "auto" for t in events)
+    color = "Rec.2100 PQ (published texture)" if hdr else "sRGB (published texture)"
+    checks = {
+        "telemetry": bool(telemetry_ok),
+        "media_frame": (diag.get("first_frame_confirmed") is True
+                        and frame.get("source_width", 0) > 0 and frame.get("source_height", 0) > 0)
+                       if diag else None,
+        "published_texture": (summary.get("render_target_format") == ("GL_RGBA16F" if hdr else "GL_RGBA8")
+                              and summary.get("render_target_depth") == (16 if hdr else 8)
+                              and summary.get("gdk_color_state") == color) if diag else None,
+        "legacy_active": (summary.get("active_api") == "opengl"
+                          and summary.get("session_status") == "active"
+                          and summary.get("startup_fallback_reason") in (None, "none", "None")) if diag else None,
+        "normal_exit": (session["exit_code"] == 0 and session["timed_out"] is False)
+                       if session["exit_code"] is not None else None,
+        "no_process_errors": not session["process_errors"],
+    }
+    if hdr:
+        checks["hdr_protocol"] = session["evidence"].get("status") == "PASS"
+    status = "PASS" if all(value is True for value in checks.values()) else (
+        "FAIL" if False in checks.values() else "UNCLEAR")
+    return {"status": status, "checks": checks, "exit_code": session["exit_code"],
+            "runtime_log": session["runtime_log"], "protocol": session["evidence"],
+            "texture_summary": summary,
+            "claim": "HDR composite submission and client texture" if hdr else
+                     "SDR client texture and target TRC; composite color description is informational"}
 
-    tagger_so = run_dir / "libwayland_conn_tagger.so"
-    compile_tagger(tagger_so)
 
-    # 1. System environment
-    sys_env = collect_system_environment()
+def redact_artifacts(output_dir: Path, video_path: Path) -> None:
+    """Do not persist personal paths or media names in the report bundle."""
+    replacements = ((str(video_path), "<FIXTURE>"), (video_path.name, "<FIXTURE>"),
+                    (str(REPO_DIR), "<REPO>"), (str(Path.home()), "<HOME>"))
+    for path in output_dir.iterdir():
+        if path.suffix not in (".log", ".txt", ".json"):
+            continue
+        value = path.read_text(errors="replace")
+        for source, target in replacements:
+            value = value.replace(source, target)
+        path.write_text(value)
+    # The exporter hashes the original text. Keep its manifest consistent after redaction.
+    manifest = output_dir / "copy-report.json"
+    report = output_dir / "copy-report.txt"
+    if manifest.exists() and report.exists():
+        try:
+            data = json.loads(manifest.read_text())
+            if not isinstance(data, dict):
+                raise ValueError("Diagnostic manifest must be an object")
+        except ValueError:
+            logger.warning("Cannot update checksum of malformed diagnostic manifest")
+        else:
+            data["report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
+            manifest.write_text(json.dumps(data, indent=2))
 
-    # 2. Wayland Color Management globals
-    cm_info = parse_wayland_info_color_manager()
-    cm_caps = build_cm_caps_from_wayland_info(cm_info)
 
-    # In CineHDR runs, GDK_DEBUG=color-mgmt is applied
-    gtk_cm_ok, gtk_cm_reason = gtk_color_managed(cm_caps, env={"GDK_DEBUG": "color-mgmt"}) if cm_caps else (False, "caps unavailable")
-    gtk_can_hdr = gtk_can_tag_hdr(cm_caps, TF_PQ) if cm_caps else False
+def run_bounded_session(video_path: Path, output_dir: Path, tagger_so: Path,
+                        duration_seconds: float = 4.0) -> Dict[str, Any]:
+    if not math.isfinite(duration_seconds) or duration_seconds <= 0:
+        raise ValueError("Observation duration must be finite and positive")
+    video_path = video_path.resolve(strict=True)
+    output_dir = output_dir.resolve()
+    fixture_hash = hashlib.sha256(video_path.read_bytes()).hexdigest()
+    timed_out = False
+    with tempfile.TemporaryDirectory(prefix="cinehdr-trace-") as temporary:
+        env = session_environment(output_dir, tagger_so.resolve(), Path(temporary))
+        with (output_dir / "wayland-client.raw.log").open("w") as trace:
+            proc = subprocess.Popen([
+                sys.executable, str(REPO_DIR / "tools/validation/gnome_trace_observer.py"),
+                str(video_path), str(duration_seconds),
+            ], stdout=trace, stderr=subprocess.STDOUT, env=env, cwd=REPO_DIR, start_new_session=True)
+            try:
+                proc.wait(timeout=duration_seconds + 30)
+            except subprocess.TimeoutExpired:
+                logger.error("Observation timed out; terminating only the test process")
+                timed_out = True
+            finally:
+                if proc.poll() is None:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        logger.error("Test process did not terminate; killing it")
+                        os.killpg(proc.pid, signal.SIGKILL)
+                        proc.wait(timeout=3)
+    (output_dir / "exit-code.txt").write_text(f"{proc.returncode}\n")
+    (output_dir / "timeout.txt").write_text("true\n" if timed_out else "false\n")
+    redact_artifacts(output_dir, video_path)
+    result = read_session(output_dir)
+    result["fixture_sha256"] = fixture_hash
+    result["timed_out"] = timed_out
+    # Even a SIGTERM handler returning zero does not make timeout a clean exit.
+    if timed_out:
+        result["process_errors"] = True
+    (output_dir / "session.json").write_text(json.dumps(result, indent=2))
+    return result
 
-    # 3. Check pre-existing user instances
-    user_instances = find_user_instances()
 
-    # 4. Live HDR10 Playback Trace
-    hdr_dir = run_dir / "hdr-session"
-    hdr_dir.mkdir()
-    hdr_result = run_bounded_session(
-        video_path=hdr_fixture,
-        output_dir=hdr_dir,
-        tagger_so=tagger_so,
-        duration_seconds=observation_duration,
-    )
-
-    # 5. Live SDR Playback Trace (Negative Control)
-    sdr_dir = run_dir / "sdr-session"
-    sdr_dir.mkdir()
-    sdr_result = run_bounded_session(
-        video_path=sdr_fixture,
-        output_dir=sdr_dir,
-        tagger_so=tagger_so,
-        duration_seconds=observation_duration,
-    )
-
-    # Evaluate SDR negative control:
-    # 1. Telemetry must strictly confirm source_hdr is False throughout
-    # 2. No target_trc == 'pq' requested for SDR content
-    sdr_telemetries = sdr_result.get("telemetries", [])
-    sdr_telemetry_clean = (
-        len(sdr_telemetries) > 0
-        and all(not t.get("source_hdr") for t in sdr_telemetries)
-        and all(t.get("target_trc") != "pq" for t in sdr_telemetries)
-    )
-    sdr_negative_control_pass = sdr_telemetry_clean
-
-    # Evaluate HDR session:
-    # 1. Wayland trace must have status PASS on composite window
-    # 2. Telemetry must confirm source_hdr is True and target_trc becomes 'pq'
-    hdr_ev = hdr_result["evidence"]
-    hdr_status = hdr_ev.get("status")
-    hdr_telemetries = hdr_result.get("telemetries", [])
-    hdr_telemetry_pass = any(
-        t.get("source_hdr") and t.get("target_trc") == "pq"
-        for t in hdr_telemetries
-    )
-    hdr_session_pass = (hdr_status == "PASS" and hdr_telemetry_pass)
-
-    # 6. Overall Verdict
-    overall_pass = (
-        cm_info.get("available") is True
-        and gtk_cm_ok is True
-        and gtk_can_hdr is True
-        and hdr_session_pass is True
-        and sdr_negative_control_pass is True
-    )
-
+def execute_full_gnome_trace_validation(report_parent_dir: Path,
+                                       hdr_fixture: Path = HDR_FIXTURE_DEFAULT,
+                                       sdr_fixture: Path = SDR_FIXTURE_DEFAULT,
+                                       observation_duration: float = 4.0) -> Dict[str, Any]:
+    if not math.isfinite(observation_duration) or observation_duration <= 0:
+        raise ValueError("Observation duration must be finite and positive")
+    if not os.environ.get("WAYLAND_DISPLAY") or "GNOME" not in os.environ.get("XDG_CURRENT_DESKTOP", ""):
+        raise RuntimeError("Run explicitly from the owner's GNOME Wayland session")
+    hdr_fixture.resolve(strict=True)
+    sdr_fixture.resolve(strict=True)
+    # Build failures must not silently fall through to stale run_dev.py resources.
+    subprocess.run(["meson", "compile", "-C", "build"], cwd=REPO_DIR, check=True, timeout=120)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    run_dir = report_parent_dir.resolve() / f"gnome-validation-{stamp}-{os.getpid()}"
+    run_dir.mkdir(parents=True)
+    tagger_so = compile_tagger(run_dir / "libwayland_conn_tagger.so")
+    cm_info = parse_wayland_info_color_manager(command_output(["wayland-info", "-i", "wp_color_manager_v1"]) or "")
+    caps = build_cm_caps_from_wayland_info(cm_info)
+    cm_ok, reason = gtk_color_managed(caps, env={"GDK_DEBUG": "color-mgmt"}) if caps else (False, "caps unavailable")
+    sessions = {}
+    for label, fixture in (("hdr", hdr_fixture), ("sdr", sdr_fixture)):
+        directory = run_dir / f"{label}-session"
+        directory.mkdir()
+        session = run_bounded_session(fixture, directory, tagger_so, observation_duration)
+        sessions[label] = evaluate_session(session, hdr=label == "hdr")
     final_report = {
         "schema": "cinehdr.gnome51.full-trace-validation.v1",
-        "verdict": "PASS" if overall_pass else "FAIL",
-        "timestamp_utc": run_stamp,
-        "run_directory": str(run_dir),
-        "system_environment": sys_env,
-        "wayland_color_management": {
-            "version": cm_info.get("version"),
-            "rendering_intents": cm_info.get("rendering_intents"),
-            "features": cm_info.get("features"),
-            "named_transfer_functions": cm_info.get("named_tfs"),
-            "named_primaries": cm_info.get("named_primaries"),
-            "output_color_description": cm_info.get("output_color_description"),
-        },
-        "gtk_color_management_policy": {
-            "gtk_color_managed": gtk_cm_ok,
-            "gtk_color_managed_reason": gtk_cm_reason,
-            "gtk_can_tag_hdr_pq": gtk_can_hdr,
-        },
-        "user_instances_preserved": len(user_instances),
-        "hdr_playback_validation": {
-            "status": hdr_status,
-            "oracle": hdr_ev.get("oracle"),
-            "matched_submission": hdr_ev.get("matched"),
-            "telemetry_pass": hdr_telemetry_pass,
-            "trace_bytes": hdr_result["trace_bytes"],
-            "duration_seconds": hdr_result["duration_seconds"],
-        },
-        "sdr_negative_control": {
-            "negative_control_pass": sdr_negative_control_pass,
-            "telemetry_clean": sdr_telemetry_clean,
-            "trace_bytes": sdr_result["trace_bytes"],
-            "duration_seconds": sdr_result["duration_seconds"],
-        },
+        "verdict": "PASS" if cm_ok and all(item["status"] == "PASS" for item in sessions.values()) else "FAIL",
+        "timestamp_utc": stamp, "run_directory": run_dir.name,
+        "scope": "native run_dev.py, legacy, auto; not Flatpak validation or L4",
+        "source_sha256": {str(path.relative_to(REPO_DIR)): hashlib.sha256(path.read_bytes()).hexdigest()
+                          for path in sorted([*REPO_DIR.glob("src/*.py"), REPO_DIR / "run_dev.py",
+                                              Path(__file__).resolve(),
+                                              REPO_DIR / "tools/validation/gnome_trace_observer.py",
+                                              REPO_DIR / "tools/validation/parse_wayland_color_trace.py"])},
+        "git_commit": command_output(["git", "-C", str(REPO_DIR), "rev-parse", "HEAD"]),
+        "working_tree_status": command_output(["git", "-C", str(REPO_DIR), "status", "--porcelain", "--untracked-files=no"]),
+        "system_environment": {"gnome_shell": command_output(["gnome-shell", "--version"]),
+                               "mutter": command_output(["mutter", "--version"])},
+        "wayland_color_management": {key: value for key, value in cm_info.items() if key != "raw_output"},
+        "gtk_color_management_policy": {"gtk_color_managed": cm_ok, "reason": reason},
+        "hdr_playback_validation": sessions["hdr"], "sdr_negative_control": sessions["sdr"],
+        "not_run": ["Flatpak", "L4", "mode transitions", "FBO leak detection"],
     }
-
-    report_file = run_dir / "report.json"
-    report_file.write_text(json.dumps(final_report, indent=2), encoding="utf-8")
-
-    # Generate SHA256SUMS
-    sha_lines = []
-    for f in sorted(run_dir.rglob("*")):
-        if f.is_file() and f.name != "SHA256SUMS":
-            rel = f.relative_to(run_dir)
-            digest = hashlib.sha256(f.read_bytes()).hexdigest()
-            sha_lines.append(f"{digest}  {rel}")
-    (run_dir / "SHA256SUMS").write_text("\n".join(sha_lines) + "\n", encoding="utf-8")
-
+    (run_dir / "report.json").write_text(json.dumps(final_report, indent=2))
+    sums = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(run_dir)}"
+            for path in sorted(run_dir.rglob("*")) if path.is_file()]
+    (run_dir / "SHA256SUMS").write_text("\n".join(sums) + "\n")
+    logger.info("Report saved in %s", run_dir)
     return final_report
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--report-dir",
-        type=Path,
-        default=REPO_DIR / "validation-reports",
-        help="Directory to save report artifacts",
-    )
-    parser.add_argument(
-        "--duration",
-        type=float,
-        default=4.5,
-        help="Observation duration per session in seconds (default: 4.5)",
-    )
+    parser.add_argument("--report-dir", type=Path, default=REPO_DIR / "validation-reports")
+    parser.add_argument("--duration", type=float, default=4.5)
     args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    logger.info("Starting complete GNOME Wayland pipeline trace validation...")
-
-    report = execute_full_gnome_trace_validation(
-        report_parent_dir=args.report_dir,
-        observation_duration=args.duration,
-    )
-
-    print("\n" + "=" * 60)
-    print(f"=== GNOME PIPELINE TRACE VALIDATION: {report['verdict']} ===")
-    print("=" * 60)
-    print(f"Report Directory: {report['run_directory']}")
-    print(f"GNOME Shell:      {report['system_environment'].get('gnome_shell')}")
-    print(f"Mutter:           {report['system_environment'].get('mutter')}")
-    print(f"Wayland CM v2:    version {report['wayland_color_management'].get('version')}")
-    out_desc = report['wayland_color_management'].get('output_color_description', {})
-    print(f"Display Mode:     {out_desc.get('primaries_named')} / {out_desc.get('tf_named')}")
-    print(f"Display Peak:     min {out_desc.get('min_luminance')} cd/m², max {out_desc.get('max_luminance')} cd/m², ref {out_desc.get('ref_luminance')} cd/m²")
-    print(f"GTK Color Mgmt:   managed={report['gtk_color_management_policy'].get('gtk_color_managed')} (can_tag_hdr={report['gtk_color_management_policy'].get('gtk_can_tag_hdr_pq')})")
-    print(f"HDR Protocol L3p: {report['hdr_playback_validation'].get('status')} ({report['hdr_playback_validation'].get('oracle')})")
-    print(f"SDR Control:      {'PASS' if report['sdr_negative_control'].get('negative_control_pass') else 'FAIL'}")
-    print("=" * 60 + "\n")
-
-    sys.exit(0 if report["verdict"] == "PASS" else 1)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    try:
+        report = execute_full_gnome_trace_validation(args.report_dir, observation_duration=args.duration)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        logger.error("Validation incomplete: %s", error)
+        return 1
+    logger.info("Native validation: %s; Flatpak and L4: NOT_RUN", report["verdict"])
+    return 0 if report["verdict"] == "PASS" else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
