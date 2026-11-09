@@ -92,6 +92,7 @@ class MPRIS:
     def __init__(self, app: Adw.Application) -> None:
         self._app = app
         self._bus_name = f"org.mpris.MediaPlayer2.{APP_ID}"
+        self._name_owned = 0
         self._path = "/org/mpris/MediaPlayer2"
         self._con = None
 
@@ -101,20 +102,24 @@ class MPRIS:
 
     def _on_bus_acquired(self, _source, res):
         def register_obj(con, iface):
-            con.register_object_with_closures2(
-                object_path=self._path,
-                interface_info=iface,
-                method_call_closure=self._on_method_call,
-                get_property_closure=self._on_get_property,
-                set_property_closure=self._on_set_property,
-            )
+            try:
+                if not self._name_owned:
+                    self._name_owned = Gio.bus_own_name_on_connection(
+                        con, self._bus_name, Gio.BusNameOwnerFlags.NONE, None, None
+                    )
+                con.register_object_with_closures2(
+                    object_path=self._path,
+                    interface_info=iface,
+                    method_call_closure=self._on_method_call,
+                    get_property_closure=self._on_get_property,
+                    set_property_closure=self._on_set_property,
+                )
+            except Exception:
+                logger.exception("Failed to register MPRIS object")
 
         def register():
             try:
                 self._con = Gio.bus_get_finish(res)
-                Gio.bus_own_name_on_connection(
-                    self._con, self._bus_name, Gio.BusNameOwnerFlags.NONE, None, None
-                )
                 for interface in NODE_INFO.interfaces:
                     idle_add_once(register_obj, self._con, interface)
             except Exception:

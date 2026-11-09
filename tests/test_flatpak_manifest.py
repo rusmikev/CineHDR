@@ -121,7 +121,7 @@ class FlatpakManifestTests(unittest.TestCase):
         self.assertIn("ffmpeg version 8.1.2", ffmpeg_commands)
 
         placebo = self.module_by_name["libplacebo"]
-        self.assertEqual(placebo["sources"][0]["commit"], "cee9b076f2c63104ccfd497fa79c39a867293ec4")
+        self.assertEqual(placebo["sources"][0]["commit"], "275f7dea27924cdd34ab2e6c20e448b6bc4fab65")
         self.assertTrue({"-Ddovi=enabled", "-Dlibdovi=enabled"}.issubset(placebo["config-opts"]))
         placebo_checks = " ".join(placebo["post-install"])
         self.assertIn("pl_has_dovi", placebo_checks)

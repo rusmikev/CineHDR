@@ -1,5 +1,32 @@
 # Инвентарь инструментов валидации CineHDR (`C0` / решение `D7`)
 
+## Native GNOME trace validation
+
+`tools/validation/run_gnome_full_trace_validation.sh --duration 4.5` is an explicit
+owner-run hardware check. It uses **native `run_dev.py`, legacy/opengl, Auto**;
+it does not exercise the Flatpak manifest or certify its updated dependencies.
+The two generated HDR/SDR fixtures must already exist in `validation-reports/fixtures/`.
+GSettings uses memory defaults; XDG config, cache, data and state are temporary.
+Developer overrides are cleared. The child observer requests normal window close;
+a timeout terminates only the test process group and always fails validation.
+
+PASS requires a confirmed media frame and diagnostic texture state from the existing
+Copy Report exporter: HDR `GL_RGBA16F`/Rec.2100 PQ, SDR `GL_RGBA8`/sRGB. Telemetry must
+match the source and target TRC; HDR additionally requires composite-window L3p PASS.
+SDR composite PQ is recorded separately and is **not** evidence that the video texture
+was tagged HDR. Missing fields, malformed telemetry, protocol errors, crashes and
+nonzero exit codes cannot pass. The exporter's older gpu-next/Flatpak-specific
+`evidence_status` is not promoted to a native PASS; the runner evaluates the explicit
+native checks and preserves the original diagnostic report.
+
+Bundles include actual runtime logs, Copy Reports, parsed traces, fixture hashes,
+exit codes and SHA256SUMS. Physical HDR (L4), Flatpak, mode transitions and FBO leak
+detection remain NOT_RUN. Host output luminances are protocol metadata, not measurements.
+Ordinary Meson tests use synthetic artifacts and mocked processes, never a live desktop.
+The former auto-triggered desktop test is replaced by these hermetic regressions;
+explicit live capture remains available through the shell command above.
+
+
 Этот документ фиксирует проверяемую связь **«инвариант → исторический дефект или синтетический отрицательный контроль → инструмент и функции → регрессионный тест → команда воспроизведения → границы доказательства → точки подключения в продукте»** перед удалением governance-документов в задаче `C1` и переносом кода валидации в задачах `C2`, `C3` и `C4` (`docs/PLAN.md`, решение `D7`, `docs/adr/0008-release-scope-and-evidence.md`).
 
 > **Примечание о ссылках на документы, удаляемые в `C1`**: ссылки на `docs/GPU_NEXT_DEVELOPMENT.md`, `docs/MODEL_USAGE_LOG.md` и `docs/adr/0006-bounded-validation-governance.md` ниже привязаны к базовому коммиту `45fb026e891a21ceb3150808b140085b10138988` (а также к коммитам, в которых были зафиксированы соответствующие свидетельства) и точным заголовкам разделов, чтобы оставаться воспроизводимыми через `git show <commit>:<path>` после выполнения `C1`.

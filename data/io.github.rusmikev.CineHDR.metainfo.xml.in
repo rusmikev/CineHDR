@@ -70,6 +70,14 @@
   </requires>
 
   <releases>
+    <release version="1.8.8.0" date="2026-11-09">
+      <description translate="no">
+        <ul>
+          <li>Merged upstream Cine v1.8.8 (fixed MPRIS registration ownership, reset screen inhibit cookie on window close, added Swedish and Persian translations)</li>
+          <li>GNOME 51 and Mutter 51 platform verification with native Wayland color management v2</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.7.0" date="2026-11-02">
       <description translate="no">
         <ul>
