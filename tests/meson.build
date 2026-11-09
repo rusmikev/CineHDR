@@ -92,3 +92,12 @@ test('diagnostics_export_tests', python3,
   ],
   depends: [cinehdr_resources]
 )
+
+test('gnome_pipeline_trace_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_gnome_pipeline_trace.py'
+  ],
+  env: [
+    'PYTHONPATH=' + meson.project_source_root() / 'tools/validation' + ':' + meson.project_source_root()
+  ]
+)
