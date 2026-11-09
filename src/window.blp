@@ -380,20 +380,18 @@ template $CineWindow: Adw.ApplicationWindow {
                 margin-bottom: 5;
                 height-request: 37;
 
-                Box vid_progress_scale_box {
-                  Scale video_progress_scale {
-                    halign: fill;
-                    hexpand: true;
-                    valign: center;
-                    margin-start: 8;
-                    margin-end: 3;
+                Scale video_progress_scale {
+                  halign: fill;
+                  hexpand: true;
+                  valign: center;
+                  margin-start: 8;
+                  margin-end: 3;
 
-                    adjustment: Adjustment video_progress_adj {
-                      lower: 0;
-                      upper: 100;
-                      value: 0;
-                    };
-                  }
+                  adjustment: Adjustment video_progress_adj {
+                    lower: 0;
+                    upper: 100;
+                    value: 0;
+                  };
                 }
 
                 Button time_elapsed_button {

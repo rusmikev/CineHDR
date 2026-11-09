@@ -8,7 +8,7 @@ msgstr ""
 "Project-Id-Version: io.github.diegopvlk.Cine\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-08-15 13:38-0300\n"
-"PO-Revision-Date: 2026-10-18 12:46+0000\n"
+"PO-Revision-Date: 2026-10-24 18:14+0000\n"
 "Last-Translator: Josef Gottlander "
 "<jgottlander@users.noreply.hosted.weblate.org>\n"
 "Language-Team: Swedish <https://hosted.weblate.org/projects/cine/app/sv/>\n"
@@ -34,7 +34,7 @@ msgstr "Spela upp dina videor"
 #: data/io.github.diegopvlk.Cine.desktop.in:10
 msgid "Audio;Video;Movie;TV;Film;Clip;Player;Cine;mpv;"
 msgstr ""
-"Audio;Video;Movie;TV;Film;Clip;Player;Cine;mpv;Ljud;Video;Film;TV;Klipp;Spelare;"
+"Audio;Video;Movie;TV;Film;Clip;Player;Cine;mpv;Ljud;Video;Film;Klipp;Spelare;"
 
 #: data/io.github.diegopvlk.Cine.desktop.in:18 src/shortcuts-dialog.blp:11
 #: src/window.blp:122
@@ -353,525 +353,527 @@ msgstr "Ljud av/på"
 #: src/shortcuts.py:74 src/shortcuts.py:75 src/shortcuts.py:76
 #: src/options.blp:680 src/options.blp:706
 msgid "Audio Delay"
-msgstr ""
+msgstr "Ljudfördröjning"
 
 #: src/shortcuts.py:74
 msgid "Decrease Audio Delay"
-msgstr ""
+msgstr "Minska ljudfördröjning"
 
 #: src/shortcuts.py:75 src/shortcuts.py:76
 msgid "Increase Audio Delay"
-msgstr ""
+msgstr "Öka ljudfördröjning"
 
 #: src/shortcuts.py:77
 msgid "Go Back One Frame"
-msgstr ""
+msgstr "Gå bakåt en bildruta"
 
 #: src/shortcuts.py:78
 msgid "Advance One Frame"
-msgstr ""
+msgstr "Gå fram en bildruta"
 
 #: src/shortcuts.py:79
 msgid "Seek to the Previous Chapter"
-msgstr ""
+msgstr "Hoppa till föregående kapitel"
 
 #: src/shortcuts.py:80
 msgid "Seek to the Next Chapter"
-msgstr ""
+msgstr "Hoppa till nästa kapitel"
 
 #: src/shortcuts.py:81
 msgid "Take Screenshot With Subtitles"
-msgstr ""
+msgstr "Ta skärmbild med undertexter"
 
 #: src/shortcuts.py:82
 msgid "Take Screenshot Without Subtitles"
-msgstr ""
+msgstr "Ta skärmbild utan undertexter"
 
 #: src/shortcuts.py:83
 msgid "Statistics"
-msgstr ""
+msgstr "Statistik"
 
 #: src/shortcuts.py:84
 msgid "Statistics Overlay"
-msgstr ""
+msgstr "Statistiköverlägg"
 
 #: src/shortcuts.py:85 src/window.blp:318
 msgid "Set/Clear A-B Loop Points"
-msgstr ""
+msgstr "Sätt/Rensa A-B-slingpunkter"
 
 #: src/shortcuts.py:86 src/window.py:1282 src/window.blp:330
 msgid "Loop"
-msgstr ""
+msgstr "Slinga"
 
 #: src/shortcuts.py:86 src/window.py:1279
 msgid "Loop File"
-msgstr ""
+msgstr "Spela filen i slinga"
 
 #: src/shortcuts.py:87 src/shortcuts.py:88 src/options.blp:342
 #: src/options.blp:367
 msgid "Contrast"
-msgstr ""
+msgstr "Kontrast"
 
 #: src/shortcuts.py:87
 msgid "Decrease Contrast"
-msgstr ""
+msgstr "Minska kontrasten"
 
 #: src/shortcuts.py:88
 msgid "Increase Contrast"
-msgstr ""
+msgstr "Öka kontrasten"
 
 #: src/shortcuts.py:89 src/shortcuts.py:90 src/options.blp:398
 #: src/options.blp:423
 msgid "Brightness"
-msgstr ""
+msgstr "Ljusstyrka"
 
 #: src/shortcuts.py:89
 msgid "Decrease Brightness"
-msgstr ""
+msgstr "Minska ljusstyrkan"
 
 #: src/shortcuts.py:90
 msgid "Increase Brightness"
-msgstr ""
+msgstr "Öka ljusstyrkan"
 
 #: src/shortcuts.py:91 src/shortcuts.py:92 src/options.blp:454
 #: src/options.blp:479
 msgid "Gamma"
-msgstr ""
+msgstr "Gamma"
 
 #: src/shortcuts.py:91
 msgid "Decrease Gamma"
-msgstr ""
+msgstr "Minska gamma"
 
 #: src/shortcuts.py:92
 msgid "Increase Gamma"
-msgstr ""
+msgstr "Öka gamma"
 
 #: src/shortcuts.py:93 src/shortcuts.py:94 src/options.blp:510
 #: src/options.blp:535
 msgid "Saturation"
-msgstr ""
+msgstr "Mättnad"
 
 #: src/shortcuts.py:93
 msgid "Decrease Saturation"
-msgstr ""
+msgstr "Minska mättnaden"
 
 #: src/shortcuts.py:94
 msgid "Increase Saturation"
-msgstr ""
+msgstr "Öka mättnaden"
 
 #: src/shortcuts.py:95 src/shortcuts.py:96 src/shortcuts.py:97
 msgid "Speed"
-msgstr ""
+msgstr "Hastighet"
 
 #: src/shortcuts.py:95
 msgid "Decrease Playback Speed"
-msgstr ""
+msgstr "Minska uppspelningshastigheten"
 
 #: src/shortcuts.py:96
 msgid "Increase Playback Speed"
-msgstr ""
+msgstr "Öka uppspelningshastigheten"
 
 #: src/shortcuts.py:97 src/options.blp:727
 msgid "Reset Playback Speed"
-msgstr ""
+msgstr "Återställ uppspelningshastighet"
 
 #: src/shortcuts.py:154 src/shortcuts.py:237
 msgid "Display & Video"
-msgstr ""
+msgstr "Bild och video"
 
 #: src/shortcuts.py:171 src/shortcuts.py:235
 msgid "Audio & Volume"
-msgstr ""
+msgstr "Ljud och volym"
 
 #: src/shortcuts.py:172 src/shortcuts.py:236
 msgid "Navigation"
-msgstr ""
+msgstr "Navigering"
 
 #: src/shortcuts.py:173 src/shortcuts.py:238
 msgid "Playback"
-msgstr ""
+msgstr "Uppspelning"
 
 #: src/shortcuts.py:177 src/shortcuts.py:183 src/shortcuts.py:239
 #: src/shortcuts.py:243
 msgid "Miscellaneous"
-msgstr ""
+msgstr "Diverse"
 
 #: src/window.py:640 src/window.blp:104
 msgid "Add Subtitle Track"
-msgstr ""
+msgstr "Lägg till undertextspår"
 
 #: src/window.py:642 src/window.py:651
 msgid "None"
-msgstr ""
+msgstr "Inget"
 
 #: src/window.py:649 src/window.blp:105
 msgid "Add Audio Track"
-msgstr ""
+msgstr "Lägg till ljudspår"
 
 #: src/window.py:689
 msgid "Track"
-msgstr ""
+msgstr "Spår"
 
 #: src/window.py:732 src/playlist.blp:31 src/window.blp:102
 msgid "Add Folder"
-msgstr ""
+msgstr "Lägg till mapp"
 
 #: src/window.py:732 src/shortcuts-dialog.blp:21 src/window.blp:99
 #: src/window.blp:481 src/window.blp:547
 msgid "Open Folder"
-msgstr ""
+msgstr "Öppna mapp"
 
 #: src/window.py:759 src/shortcuts-dialog.blp:16 src/window.blp:98
 #: src/window.blp:546
 msgid "Open Files"
-msgstr ""
+msgstr "Öppna filer"
 
 #: src/window.py:762 src/playlist.blp:26 src/window.blp:101
 msgid "Add Files"
-msgstr ""
+msgstr "Lägg till filer"
 
 #: src/window.py:766
 msgid "Add Subtitle"
-msgstr ""
+msgstr "Lägg till undertext"
 
 #: src/window.py:769
 msgid "Add Audio"
-msgstr ""
+msgstr "Lägg till ljud"
 
 #: src/window.py:794
 msgid "Media"
-msgstr ""
+msgstr "Media"
 
 #: src/window.py:857
 msgid "Session Saved"
-msgstr ""
+msgstr "Session sparad"
 
 #: src/window.py:865 src/playlist.blp:36 src/window.blp:103
 msgid "Add URL"
-msgstr ""
+msgstr "Lägg till URL"
 
 #: src/window.py:865 src/shortcuts-dialog.blp:26 src/window.blp:100
 #: src/window.blp:490 src/window.blp:548
 msgid "Open URL"
-msgstr ""
+msgstr "Öppna URL"
 
 #: src/window.py:878
 msgid "URL"
-msgstr ""
+msgstr "URL"
 
 #: src/window.py:886 src/playlist.blp:22
 msgid "Add"
-msgstr ""
+msgstr "Lägg till"
 
 #: src/window.py:886 src/window.blp:93
 msgid "Open"
-msgstr ""
+msgstr "Öppna"
 
 #: src/window.py:1128
 msgid "Chapter"
-msgstr ""
+msgstr "Kapitel"
 
 #: src/window.py:1190 src/window.py:2050
 msgid "Play"
-msgstr ""
+msgstr "Spela"
 
 #: src/window.py:1190
 msgid "Pause"
-msgstr ""
+msgstr "Pausa"
 
 #: src/window.py:1276
 msgid "Loop Playlist"
-msgstr ""
+msgstr "Repetera spellista"
 
 #: src/window.py:2050
 msgid "Play or Add Subtitles"
-msgstr ""
+msgstr "Spela eller lägg till undertexter"
 
 #: src/options.blp:14
 msgid "Options"
-msgstr ""
+msgstr "Alternativ"
 
 #: src/options.blp:28
 msgid "Reset All"
-msgstr ""
+msgstr "Återställ allt"
 
 #: src/options.blp:40
 msgid "Reset Aspect Ratio"
-msgstr ""
+msgstr "Återställ bildförhållande"
 
 #: src/options.blp:50
 msgid "Aspect Ratio"
-msgstr ""
+msgstr "Bildförhållande"
 
 #: src/options.blp:76 src/options.blp:135
 msgid "Original"
-msgstr ""
+msgstr "Original"
 
 #: src/options.blp:99
 msgid "Reset Crop"
-msgstr ""
+msgstr "Återställ beskärning"
 
 #: src/options.blp:109
 msgid "Crop"
-msgstr ""
+msgstr "Beskära"
 
 #: src/options.blp:159
 msgid "Reset Rotation"
-msgstr ""
+msgstr "Återställ rotation"
 
 #: src/options.blp:169
 msgid "Rotate"
-msgstr ""
+msgstr "Rotera"
 
 #: src/options.blp:196
 msgid "Rotate Left"
-msgstr ""
+msgstr "Rotera vänster"
 
 #: src/options.blp:204
 msgid "Rotate Right"
-msgstr ""
+msgstr "Rotera höger"
 
 #: src/options.blp:217
 msgid "Reset Flip"
-msgstr ""
+msgstr "Återställ vändning"
 
 #: src/options.blp:227
 msgid "Flip"
-msgstr ""
+msgstr "Vänd"
 
 #: src/options.blp:254
 msgid "Flip Horizontally"
-msgstr ""
+msgstr "Vänd vågrätt"
 
 #: src/options.blp:262
 msgid "Flip Vertically"
-msgstr ""
+msgstr "Vänd lodrätt"
 
 #: src/options.blp:275
 msgid "Reset Zoom"
-msgstr ""
+msgstr "Återställ zoom"
 
 #: src/options.blp:332
 msgid "Reset Contrast"
-msgstr ""
+msgstr "Återställ kontrast"
 
 #: src/options.blp:388
 msgid "Reset Brightness"
-msgstr ""
+msgstr "Återställ ljusstyrka"
 
 #: src/options.blp:444
 msgid "Reset Gamma"
-msgstr ""
+msgstr "Återställ gamma"
 
 #: src/options.blp:500
 msgid "Reset Saturation"
-msgstr ""
+msgstr "Återställ mättnad"
 
 #: src/options.blp:556
 msgid "Reset Hue"
-msgstr ""
+msgstr "Återställ färgton"
 
 #. TRANSLATORS: Do not use "Color" or "Temperature", those are different things
 #: src/options.blp:567 src/options.blp:592
 msgid "Hue"
-msgstr ""
+msgstr "Färgton"
 
 #: src/options.blp:613
 msgid "Reset Subtitle Delay"
-msgstr ""
+msgstr "Återställ undertextfördröjning"
 
 #: src/options.blp:670
 msgid "Reset Audio Delay"
-msgstr ""
+msgstr "Återställ ljudfördröjning"
 
 #: src/options.blp:737 src/options.blp:763
 msgid "Playback Speed"
-msgstr ""
+msgstr "Uppspelningshastighet"
 
 #: src/playlist.blp:94
 msgid "No Results Found"
-msgstr ""
+msgstr "Inga resultat hittades"
 
 #: src/playlist.blp:128
 msgid "Add to Playlist"
-msgstr ""
+msgstr "Lägg till i spellista"
 
 #: src/preferences.blp:15
 msgid "About Permissions"
-msgstr ""
+msgstr "Om behörigheter"
 
 #: src/preferences.blp:81
 msgid "Open New Window for New Files"
-msgstr ""
+msgstr "Öppna nytt fönster för nya filer"
 
 #: src/preferences.blp:85
 msgid "Seek Bar Thumbnail"
-msgstr ""
+msgstr "Miniatyrbild för söklist"
 
 #: src/preferences.blp:89
 msgid "Normalize Volume"
-msgstr ""
+msgstr "Normalisera volym"
 
 #: src/preferences.blp:93
 msgid "Graphics Offload"
-msgstr ""
+msgstr "Avlastning av grafik"
 
 #: src/preferences.blp:94
 msgid "Reduces resource usage; disable if you encounter playback issues"
 msgstr ""
+"Minskar resursanvändningen; inaktivera om du upplever problem med "
+"uppspelningen"
 
 #: src/preferences.blp:98
 msgid "Hardware Acceleration"
-msgstr ""
+msgstr "Hårdvaruacceleration"
 
 #: src/preferences.blp:99
 msgid "Use GPU for video decoding when available"
-msgstr ""
+msgstr "Använd GPU för videoavkodning när det är möjligt"
 
 #: src/preferences.blp:104
 msgid "Pick up where you left off after saving from the menu"
-msgstr ""
+msgstr "Fortsätt där du slutade efter att ha sparat via menyn"
 
 #: src/preferences.blp:139
 msgid "Also save options like brightness, subtitle delay, etc."
-msgstr ""
+msgstr "Sparar även inställningar som ljusstyrka, undertextfördröjning, m.m."
 
 #: src/preferences.blp:188 src/preferences.blp:234
 msgid "Reset"
-msgstr ""
+msgstr "Återställ"
 
 #: src/preferences.blp:198
 msgid "Subtitle Font"
-msgstr ""
+msgstr "Undertextteckensnitt"
 
 #: src/preferences.blp:211
 msgid "Some fonts may not work"
-msgstr ""
+msgstr "Vissa teckensnitt kanske inte fungerar"
 
 #: src/preferences.blp:274
 msgid "Primary Click"
-msgstr ""
+msgstr "Primärklick"
 
 #: src/preferences.blp:279
 msgid "Focus/Play/Pause"
-msgstr ""
+msgstr "Fokus/Spela/Pausa"
 
 #: src/preferences.blp:280 src/preferences.blp:292
 msgid "Bypass"
-msgstr ""
+msgstr "Kringgå"
 
 #: src/preferences.blp:286
 msgid "Secondary Click"
-msgstr ""
+msgstr "Sekundärklick"
 
 #: src/preferences.blp:291
 msgid "Context Menu"
-msgstr ""
+msgstr "Snabbmeny"
 
 #: src/preferences.blp:300
 msgid "Preferred Subtitle Languages"
-msgstr ""
+msgstr "Föredragna undertextspråk"
 
 #: src/preferences.blp:301 src/preferences.blp:306
 msgid "Example: en,es,pt"
-msgstr ""
+msgstr "Exempel: sv-SE,sv,en"
 
 #: src/preferences.blp:305
 msgid "Preferred Audio Languages"
-msgstr ""
+msgstr "Föredragna ljudspråk"
 
 #: src/preferences.blp:312
 msgid "Open Config Folder"
-msgstr ""
+msgstr "Öppna konfigurationsmapp"
 
 #: src/shortcuts-dialog.blp:8
 msgid "General"
-msgstr ""
+msgstr "Allmänt"
 
 #: src/shortcuts-dialog.blp:31
 msgid "Add Files to Playlist"
-msgstr ""
+msgstr "Lägg till filer i spellistan"
 
 #: src/shortcuts-dialog.blp:36
 msgid "Add Folder to Playlist"
-msgstr ""
+msgstr "Lägg till mapp i spellista"
 
 #: src/shortcuts-dialog.blp:41
 msgid "Add URL to Playlist"
-msgstr ""
+msgstr "Lägg till URL i spellista"
 
 #: src/shortcuts-dialog.blp:46
 msgid "Open Subtitles Menu"
-msgstr ""
+msgstr "Öppna undertextmenyn"
 
 #: src/shortcuts-dialog.blp:51
 msgid "Open Audio Menu"
-msgstr ""
+msgstr "Öppna ljudmenyn"
 
 #: src/shortcuts-dialog.blp:56
 msgid "Open Chapters Menu"
-msgstr ""
+msgstr "Öppna kapitelmenyn"
 
 #: src/shortcuts-dialog.blp:66
 msgid "Show Shortcuts"
-msgstr ""
+msgstr "Visa genvägar"
 
 #: src/shortcuts-dialog.blp:71
 msgid "Close Window"
-msgstr ""
+msgstr "Stäng fönster"
 
 #: src/shortcuts-dialog.blp:76 src/window.blp:129
 msgid "Save Session"
-msgstr ""
+msgstr "Spara session"
 
 #: src/shortcuts-dialog.blp:81 src/window.blp:130
 msgid "Save Session and Close"
-msgstr ""
+msgstr "Spara session och stäng"
 
 #: src/shortcuts-dialog.blp:86
 msgid "Quit"
-msgstr ""
+msgstr "Avsluta"
 
 #: src/window.blp:118
 msgid "Main Menu"
-msgstr ""
+msgstr "Huvudmeny"
 
 #: src/window.blp:124
 msgid "Keyboard Shortcuts"
-msgstr ""
+msgstr "Tangentbordsgenvägar"
 
 #: src/window.blp:125
 msgid "About Cine"
-msgstr ""
+msgstr "Om Cine"
 
 #: src/window.blp:169 src/window.blp:541
 msgid "Previous"
-msgstr ""
+msgstr "Föregående"
 
 #: src/window.blp:192 src/window.blp:542
 msgid "Next"
-msgstr ""
+msgstr "Nästa"
 
 #: src/window.blp:273
 msgid "Video"
-msgstr ""
+msgstr "Video"
 
 #: src/window.blp:288
 msgid "Chapters"
-msgstr ""
+msgstr "Kapitel"
 
 #: src/window.blp:305
 msgid "Shuffle Playlist"
-msgstr ""
+msgstr "Blanda spellista"
 
 #: src/window.blp:390
 msgid "Toggle Elapsed/Remaining"
-msgstr ""
+msgstr "Växla förfluten/återstående tid"
 
 #: src/window.blp:437
 msgid "Drag and drop files here"
-msgstr ""
+msgstr "Dra och släpp filer här"
 
 #: src/window.blp:457
 msgid "Open…"
-msgstr ""
+msgstr "Öppna…"

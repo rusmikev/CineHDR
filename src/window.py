@@ -165,7 +165,6 @@ class CineWindow(Adw.ApplicationWindow):
     fullscreen_btn: Gtk.Button = Gtk.Template.Child()
     time_elapsed_label: Gtk.Label = Gtk.Template.Child()
     progress_box: Gtk.Box = Gtk.Template.Child()
-    vid_progress_scale_box: Gtk.Box = Gtk.Template.Child()
     video_progress_scale: Gtk.Scale = Gtk.Template.Child()
     video_progress_adj: Gtk.Adjustment = Gtk.Template.Child()
     time_total_label: Gtk.Label = Gtk.Template.Child()
@@ -407,7 +406,6 @@ class CineWindow(Adw.ApplicationWindow):
             self.volume_box,
             self.volume_scale,
             self.progress_box,
-            self.vid_progress_scale_box,
             self.video_progress_scale,
             self.time_elapsed_label,
         ]:
@@ -1897,6 +1895,8 @@ class CineWindow(Adw.ApplicationWindow):
         except mpv.ShutdownError:
             pass
 
+        if self._inhibit_cookie:
+            self._release_inhibit()
         return False
 
     def splice_playlist(self):
