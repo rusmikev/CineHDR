@@ -1,6 +1,7 @@
 # Copyright 2026 rusmikev
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -105,6 +106,11 @@ from src.gpu_validation import (
     PausedTransitionPixelOracle,
     compute_patch_centers,
     compute_samples_hash,
+    analyze_gradient_ramp,
+    read_fbo_gradient_samples,
+    parse_egl_config_from_log,
+    serialize_gradient_fbo_measurements,
+    format_gradient_validation_report,
 )
 from src.hdr_controller import is_tone_mapping_active
 
@@ -3520,6 +3526,295 @@ class TestStartupFixtureContract(unittest.TestCase):
 
         self.assertTrue(session._advance_step.called, "Must advance to step 0 when paused at position 0")
         self.assertFalse(session._finish.called, "Must not finish on valid readiness")
+
+
+class TestGradientFboValidation(unittest.TestCase):
+    """Unit tests for FBO gradient readback, ramp analysis, and EGL configuration correlation."""
+
+    def test_analyze_gradient_ramp_strictly_monotonic(self):
+        samples = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+        coords = [0, 100, 250, 500, 750, 1000]
+        res = analyze_gradient_ramp(samples, coords=coords)
+
+        self.assertTrue(res["monotonic"])
+        self.assertEqual(res["non_monotonic_count"], 0)
+        self.assertEqual(res["max_drop"], 0.0)
+        self.assertEqual(res["drops"], [])
+        self.assertEqual(res["repetitions_count"], 0)
+        self.assertEqual(res["max_plateau_length"], 1)
+        self.assertEqual(res["unique_levels_count"], 6)
+        self.assertAlmostEqual(res["min_step"], 0.1, places=5)
+        self.assertAlmostEqual(res["max_step"], 0.25, places=5)
+
+    def test_analyze_gradient_ramp_with_plateaus_and_repetitions(self):
+        # 8-bit quantized ramp where adjacent pixels share quantized levels
+        samples = [0.1, 0.1, 0.1, 0.2, 0.2, 0.3, 0.3, 0.3, 0.3]
+        res = analyze_gradient_ramp(samples)
+
+        self.assertTrue(res["monotonic"])
+        self.assertEqual(res["non_monotonic_count"], 0)
+        self.assertEqual(res["repetitions_count"], 6)
+        self.assertEqual(res["max_plateau_length"], 4)
+        self.assertEqual(res["unique_levels_count"], 3)
+        self.assertAlmostEqual(res["min_step"], 0.1, places=5)
+
+    def test_analyze_gradient_ramp_with_drops(self):
+        # Non-monotonic ramp with dips
+        samples = [0.1, 0.25, 0.20, 0.40, 0.35, 0.50]
+        coords = [0, 100, 200, 300, 400, 500]
+        res = analyze_gradient_ramp(samples, coords=coords)
+
+        self.assertFalse(res["monotonic"])
+        self.assertEqual(res["non_monotonic_count"], 2)
+        self.assertAlmostEqual(res["max_drop"], 0.05, places=5)
+        self.assertEqual(len(res["drops"]), 2)
+        self.assertEqual(res["drops"][0]["x_curr"], 100)
+        self.assertEqual(res["drops"][0]["x_next"], 200)
+        self.assertAlmostEqual(res["drops"][0]["drop"], 0.05, places=5)
+        self.assertEqual(res["drops"][1]["x_curr"], 300)
+        self.assertEqual(res["drops"][1]["x_next"], 400)
+
+    def test_analyze_gradient_ramp_edge_cases(self):
+        empty_res = analyze_gradient_ramp([])
+        self.assertEqual(empty_res["sample_count"], 0)
+        self.assertTrue(empty_res["monotonic"])
+        self.assertEqual(empty_res["unique_levels_count"], 0)
+
+        single_res = analyze_gradient_ramp([0.42])
+        self.assertEqual(single_res["sample_count"], 1)
+        self.assertTrue(single_res["monotonic"])
+        self.assertEqual(single_res["unique_levels_count"], 1)
+        self.assertEqual(single_res["max_plateau_length"], 1)
+
+    def test_read_fbo_gradient_samples_float(self):
+        # Mock glReadPixels for 1920x1080 float buffer
+        def mock_gl_read_pixels(x, y, width, height, gl_format, gl_type, buf_ptr):
+            buf = ctypes.cast(buf_ptr, ctypes.POINTER(ctypes.c_float * (width * 4))).contents
+            # Populate horizontal gradient: R increases linearly from 0.0 to 1.0
+            base = 0.0 if y < 500 else 0.5
+            for px in range(width):
+                val = base + 0.5 * (px / (width - 1))
+                buf[4 * px + 0] = val
+                buf[4 * px + 1] = val
+                buf[4 * px + 2] = val
+                buf[4 * px + 3] = 1.0
+
+        with patch("src.gpu_validation.glReadPixels", side_effect=mock_gl_read_pixels):
+            res = read_fbo_gradient_samples(1920, 1080, is_float=True, num_samples=32)
+
+        self.assertEqual(res["width"], 1920)
+        self.assertEqual(res["height"], 1080)
+        self.assertTrue(res["is_float"])
+        self.assertEqual(res["top_y"], 200)
+        self.assertEqual(res["bottom_y"], 800)
+
+        top = res["top_half"]
+        bottom = res["bottom_half"]
+        self.assertEqual(top["sample_count"], 32)
+        self.assertEqual(bottom["sample_count"], 32)
+        self.assertTrue(top["analysis_samples"]["monotonic"])
+        self.assertTrue(bottom["analysis_samples"]["monotonic"])
+        self.assertAlmostEqual(top["sampled_values"][0], 0.0, places=4)
+        self.assertAlmostEqual(top["sampled_values"][-1], 0.5, places=4)
+        self.assertAlmostEqual(bottom["sampled_values"][0], 0.5, places=4)
+        self.assertAlmostEqual(bottom["sampled_values"][-1], 1.0, places=4)
+
+    def test_read_fbo_gradient_samples_uint8(self):
+        def mock_gl_read_pixels(x, y, width, height, gl_format, gl_type, buf_ptr):
+            buf = ctypes.cast(buf_ptr, ctypes.POINTER(ctypes.c_uint8 * (width * 4))).contents
+            for px in range(width):
+                b = int(round(255.0 * px / (width - 1)))
+                buf[4 * px + 0] = b
+                buf[4 * px + 1] = b
+                buf[4 * px + 2] = b
+                buf[4 * px + 3] = 255
+
+        with patch("src.gpu_validation.glReadPixels", side_effect=mock_gl_read_pixels):
+            res = read_fbo_gradient_samples(640, 360, is_float=False, num_samples=16)
+
+        self.assertFalse(res["is_float"])
+        self.assertTrue(res["top_half"]["analysis_samples"]["monotonic"])
+        self.assertAlmostEqual(res["top_half"]["sampled_values"][0], 0.0, places=4)
+        self.assertAlmostEqual(res["top_half"]["sampled_values"][-1], 1.0, places=4)
+
+    def test_read_fbo_gradient_samples_requires_gl_binding(self):
+        with patch("src.gpu_validation.glReadPixels", None):
+            with self.assertRaises(RuntimeError) as ctx:
+                read_fbo_gradient_samples(1920, 1080, is_float=True)
+            self.assertIn("unavailable", str(ctx.exception))
+
+    def test_parse_egl_config_from_log(self):
+        log_sample = (
+            "EGL API version 1.5 found\n"
+            " - Vendor: Mesa Project\n"
+            " - Selected fbconfig: R8G8B8A8, depth 0, stencil 0\n"
+            "          high depth: none\n"
+        )
+        info = parse_egl_config_from_log(log_sample)
+        self.assertEqual(info["selected_fbconfig"], "R8G8B8A8, depth 0, stencil 0")
+        self.assertEqual(info["high_depth"], "none")
+        self.assertEqual(info["egl_vendor"], "Mesa Project")
+        self.assertEqual(info["egl_version"], "1.5")
+        self.assertFalse(info["high_depth_available"])
+
+        missing = parse_egl_config_from_log("no egl lines here")
+        self.assertEqual(missing["selected_fbconfig"], "not-detected")
+        self.assertEqual(missing["high_depth"], "not-detected")
+        self.assertEqual(missing["egl_vendor"], "unknown")
+        self.assertFalse(missing["high_depth_available"])
+
+    def test_serialize_gradient_fbo_measurements_and_format_report(self):
+        capture = {
+            "slot_id": 2,
+            "epoch": 1,
+            "frame_generation": 42,
+            "fbo_format": "GL_RGBA16F",
+            "is_float": True,
+            "width": 1920,
+            "height": 1080,
+            "target_properties": {"target-trc": "pq", "target-prim": "bt.2020", "is_hdr": True},
+            "gradient_data": {
+                "top_half": {
+                    "y": 200,
+                    "analysis_samples": {"monotonic": True, "non_monotonic_count": 0, "max_drop": 0.0, "repetitions_count": 0, "max_plateau_length": 1, "unique_levels_count": 64},
+                    "analysis_full_row": {"min_step": 0.0005, "unique_levels_count": 500},
+                },
+                "bottom_half": {
+                    "y": 800,
+                    "analysis_samples": {"monotonic": True, "non_monotonic_count": 0, "max_drop": 0.0, "repetitions_count": 0, "max_plateau_length": 1, "unique_levels_count": 64},
+                    "analysis_full_row": {"min_step": 0.0008, "unique_levels_count": 400},
+                },
+            },
+        }
+        log_sample = (
+            "Selected fbconfig: R8G8B8A8, depth 0, stencil 0\n"
+            "high depth: none\n"
+        )
+        serialized = serialize_gradient_fbo_measurements(
+            capture, backend="legacy", session_id="test-session", log_text=log_sample
+        )
+        self.assertEqual(serialized["schema"], "cinehdr.gradient-fbo-analysis.v1")
+        self.assertEqual(serialized["backend"], "legacy")
+        self.assertTrue(serialized["summary"]["top_monotonic"])
+        self.assertTrue(serialized["summary"]["bottom_monotonic"])
+        self.assertTrue(serialized["summary"]["fbo_has_sub_8bit_granularity"])
+        self.assertEqual(
+            serialized["current_session_measurements"]["gtk_egl_selected_fbconfig"],
+            "R8G8B8A8, depth 0, stencil 0",
+        )
+        self.assertEqual(
+            serialized["prior_trace_context"]["wayland_surface_buffer"],
+            "AR24 (DRM_FORMAT_ARGB8888, 8-bit)",
+        )
+
+        txt_report = format_gradient_validation_report(serialized)
+        self.assertIn("CineHDR Gradient FBO Validation Report", txt_report)
+        self.assertIn("Top Half Gradient", txt_report)
+        self.assertIn("Bottom Half Gradient", txt_report)
+        self.assertIn("Selected fbconfig:  R8G8B8A8", txt_report)
+        self.assertIn("Wayland Surface Buffer: AR24", txt_report)
+
+    def test_video_widget_custom_sampler_slot(self):
+        from src.video_widget import MpvVideoWidget
+
+        widget = MpvVideoWidget.__new__(MpvVideoWidget)
+        widget._fbo_pixel_oracle_cb = None
+        widget._fbo_pixel_oracle_sampler = None
+        widget._fbo_pixel_oracle_error_cb = None
+
+        self.assertIsNone(widget._fbo_pixel_oracle_sampler)
+        custom_sampler = MagicMock(return_value={"custom": "samples"})
+        widget._fbo_pixel_oracle_sampler = custom_sampler
+
+        slot = MagicMock()
+        slot.resource.fbo_id.value = 17
+
+        # Verify sampler call with glBindFramebuffer mock
+        with patch("src.video_widget.glBindFramebuffer") as mock_bind:
+            widget._fbo_pixel_oracle_cb = MagicMock()
+            mock_bind.side_effect = lambda target, fbo: None
+            if widget._fbo_pixel_oracle_cb is not None and callable(widget._fbo_pixel_oracle_cb):
+                mock_bind(0x8D40, slot.resource.fbo_id.value)
+                samples = widget._fbo_pixel_oracle_sampler(1920, 1080, True)
+
+            mock_bind.assert_called_with(0x8D40, 17)
+            custom_sampler.assert_called_with(1920, 1080, True)
+            self.assertEqual(samples, {"custom": "samples"})
+
+    def test_gpu_validation_session_gradient_mode_lifecycle(self):
+        from src.gpu_validation import GpuValidationConfig
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.config = GpuValidationConfig(mode="gradient", report_dir=Path("/tmp/test"), expected_backend="legacy")
+        session._expected_playlist_count = 1
+        session._ready_last_playlist_count = None
+        session._ready_stable_since = time.monotonic() - 10.0  # Already stable
+        session._ready_last_position = 5.0
+        session._ready_last_sample_at = time.monotonic()
+        session.ready_deadline = time.monotonic() + 100.0
+        session.finished = False
+        session._gradient_capture = None
+        session._gradient_capture_armed = False
+        session.step_timer_id = None
+        session.memory_samples = []
+        session.vram_samples = []
+        session.drm_vram_samples = []
+        session.drm_gtt_samples = []
+        session.resource_samples = []
+
+        props = {
+            "duration": 60.0,
+            "time-pos": 5.0,
+            "seeking": False,
+            "playlist-count": 1,
+            "playlist-pos": 0,
+            "pause": False,
+        }
+        session.player = MagicMock()
+        session.player._get_property.side_effect = lambda k, default=None: props.get(k, default)
+        session.player.get_property.side_effect = lambda k, default=None: props.get(k, default)
+
+        session.video_area = MagicMock()
+        session.video_area._first_frame_logged = True
+        session.video_area.render_session_status = "active"
+        session.video_area.render_backend_active = "opengl"
+        session.video_area.hdr_controller.committed_output_state.is_hdr = True
+        session.video_area._fbo_pixel_oracle_sampler = None
+        session.video_area._fbo_pixel_oracle_cb = None
+
+        session._metrics_snapshot = lambda: {"sample_at": time.monotonic()}
+        session._sample_memory = MagicMock()
+        session._finish = MagicMock()
+        session.window = MagicMock()
+
+        self.assertEqual(session._expected_active_api(), "opengl")
+
+        # Call _wait_until_ready: should arm gradient capture on stable HDR frame
+        session._wait_until_ready()
+
+        self.assertTrue(session._gradient_capture_armed)
+        self.assertIsNotNone(session.video_area._fbo_pixel_oracle_sampler)
+        self.assertEqual(session.video_area._fbo_pixel_oracle_cb, session._on_gradient_capture)
+
+        # Trigger _on_gradient_capture callback: should disarm and finish
+        mock_slot = MagicMock()
+        mock_slot.index = 0
+        session._on_gradient_capture(
+            slot=mock_slot,
+            epoch=1,
+            frame_generation=12,
+            fbo_format="GL_RGBA16F",
+            is_float=True,
+            width=1920,
+            height=1080,
+            patch_samples={"top_half": {"analysis_samples": {"monotonic": True}}},
+        )
+
+        # Verify one-shot disarm
+        self.assertIsNone(session.video_area._fbo_pixel_oracle_sampler)
+        self.assertIsNone(session.video_area._fbo_pixel_oracle_cb)
+        self.assertIsNotNone(session._gradient_capture)
+        session._finish.assert_called_with(None)
 
 
 if __name__ == "__main__":

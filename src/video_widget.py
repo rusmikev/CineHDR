@@ -87,6 +87,10 @@ class MpvVideoWidget(Gtk.Widget):
 
     __gtype_name__ = "MpvVideoWidget"
 
+    _fbo_pixel_oracle_cb: Optional[Any] = None
+    _fbo_pixel_oracle_sampler: Optional[Any] = None
+    _fbo_pixel_oracle_error_cb: Optional[Any] = None
+
     def __init__(
         self,
         mpv_player: mpv.MPV,
@@ -137,6 +141,7 @@ class MpvVideoWidget(Gtk.Widget):
         self._exported_media_generation: Optional[tuple[int, int]] = None
         self._committed_render_epoch: Optional[int] = None
         self._fbo_pixel_oracle_cb: Optional[Any] = None
+        self._fbo_pixel_oracle_sampler: Optional[Any] = None
         self._fbo_pixel_oracle_error_cb: Optional[Any] = None
         self._cached_hdr_support = False
         self._cached_hdr_support_valid = False
@@ -661,7 +666,11 @@ class MpvVideoWidget(Gtk.Widget):
                     # libmpv may restore the default framebuffer on return.
                     # Read from the caller-owned FBO that received this frame.
                     glBindFramebuffer(GL_FRAMEBUFFER, slot.resource.fbo_id.value)
-                    pending_pixel_samples = read_fbo_patch_samples(scaled_w, scaled_h, use_float)
+                    sampler = self._fbo_pixel_oracle_sampler
+                    if callable(sampler):
+                        pending_pixel_samples = sampler(scaled_w, scaled_h, use_float)
+                    else:
+                        pending_pixel_samples = read_fbo_patch_samples(scaled_w, scaled_h, use_float)
                 except Exception as e:
                     logging.warning(f"FBO pixel oracle readback failed: {e}")
                     if hasattr(self, "_fbo_pixel_oracle_error_cb") and callable(self._fbo_pixel_oracle_error_cb):

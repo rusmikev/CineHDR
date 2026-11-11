@@ -27,8 +27,9 @@ import logging
 import math
 import os
 from pathlib import Path
+import re
 import time
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 gi.require_version("Gdk", "4.0")
 
@@ -145,7 +146,7 @@ def is_verified_flatpak_container(
 
 VALIDATION_MODES = (
     "quick", "soak", "sdr-soak", "lifecycle", "transition", "publication",
-    "settling",
+    "settling", "gradient",
 )
 READY_STABLE_SECONDS = 4.0
 SETTLING_SCHEMA = "cinehdr.gate2.resource-settling.v1"
@@ -280,6 +281,305 @@ def read_fbo_patch_samples(
                 float(buf[3]) / 255.0,
             )
     return samples
+
+
+def analyze_gradient_ramp(
+    samples: Sequence[float],
+    coords: Sequence[int] | None = None,
+    tolerance: float = 1e-5,
+) -> dict[str, Any]:
+    """Analyze a horizontal luminance sequence for monotonicity, repetitions, plateaus, and drops."""
+    n = len(samples)
+    if n == 0:
+        return {
+            "sample_count": 0,
+            "monotonic": True,
+            "non_monotonic_count": 0,
+            "max_drop": 0.0,
+            "drops": [],
+            "repetitions_count": 0,
+            "max_plateau_length": 0,
+            "unique_levels_count": 0,
+            "min_step": 0.0,
+            "max_step": 0.0,
+        }
+    if coords is None:
+        coords = list(range(n))
+
+    drops: list[dict[str, Any]] = []
+    repetitions_count = 0
+    plateau_len = 1
+    max_plateau_len = 1
+    positive_steps: list[float] = []
+
+    for i in range(n - 1):
+        v_curr = float(samples[i])
+        v_next = float(samples[i + 1])
+        diff = v_next - v_curr
+        if diff < -tolerance:
+            drops.append({
+                "index": i,
+                "x_curr": int(coords[i]),
+                "x_next": int(coords[i + 1]),
+                "from_value": round(v_curr, 6),
+                "to_value": round(v_next, 6),
+                "drop": round(-diff, 6),
+            })
+        if abs(diff) <= tolerance:
+            repetitions_count += 1
+            plateau_len += 1
+            if plateau_len > max_plateau_len:
+                max_plateau_len = plateau_len
+        else:
+            plateau_len = 1
+            if diff > tolerance:
+                positive_steps.append(diff)
+
+    unique_levels = len(set(round(float(v), 6) for v in samples))
+    min_step = min(positive_steps) if positive_steps else 0.0
+    max_step = max(positive_steps) if positive_steps else 0.0
+    max_drop = max((d["drop"] for d in drops), default=0.0)
+    is_monotonic = len(drops) == 0
+
+    return {
+        "sample_count": n,
+        "monotonic": is_monotonic,
+        "non_monotonic_count": len(drops),
+        "max_drop": round(max_drop, 6),
+        "drops": drops[:50],
+        "repetitions_count": repetitions_count,
+        "max_plateau_length": max_plateau_len,
+        "unique_levels_count": unique_levels,
+        "min_step": round(min_step, 6),
+        "max_step": round(max_step, 6),
+    }
+
+
+def read_fbo_gradient_samples(
+    width: int,
+    height: int,
+    is_float: bool,
+    num_samples: int = 128,
+) -> dict[str, Any]:
+    """Read horizontal pixel samples across top and bottom halves of the gradient from currently bound FBO.
+
+    Top half (0.1..100 nits) is sampled at GL row ~200 (low GL y with flip_y=False).
+    Bottom half (100..1000 nits) is sampled at GL row ~800 (high GL y with flip_y=False).
+    """
+    if not glReadPixels:
+        raise RuntimeError("glReadPixels binding is unavailable")
+
+    width = max(1, int(width))
+    height = max(1, int(height))
+    num_samples = max(2, min(width, int(num_samples)))
+
+    top_y = max(0, min(height - 1, int(round(height * 200 / 1080))))
+    bottom_y = max(0, min(height - 1, int(round(height * 800 / 1080))))
+
+    x_indices = [int(round(i * (width - 1) / (num_samples - 1))) for i in range(num_samples)]
+
+    halves: dict[str, Any] = {}
+    for name, y in (("top_half", top_y), ("bottom_half", bottom_y)):
+        if is_float:
+            buf = (ctypes.c_float * (width * 4))()
+            buf_ptr = ctypes.cast(buf, ctypes.c_void_p)
+            glReadPixels(0, y, width, 1, GL_RGBA, GL_FLOAT, buf_ptr)
+            full_row_values = [float(buf[4 * x]) for x in range(width)]
+            sampled_values = [float(buf[4 * x]) for x in x_indices]
+            sampled_rgb = [
+                (float(buf[4 * x]), float(buf[4 * x + 1]), float(buf[4 * x + 2]), float(buf[4 * x + 3]))
+                for x in x_indices
+            ]
+        else:
+            buf = (ctypes.c_uint8 * (width * 4))()
+            buf_ptr = ctypes.cast(buf, ctypes.c_void_p)
+            glReadPixels(0, y, width, 1, GL_RGBA, GL_UNSIGNED_BYTE, buf_ptr)
+            full_row_values = [float(buf[4 * x]) / 255.0 for x in range(width)]
+            sampled_values = [float(buf[4 * x]) / 255.0 for x in x_indices]
+            sampled_rgb = [
+                (
+                    float(buf[4 * x]) / 255.0,
+                    float(buf[4 * x + 1]) / 255.0,
+                    float(buf[4 * x + 2]) / 255.0,
+                    float(buf[4 * x + 3]) / 255.0,
+                )
+                for x in x_indices
+            ]
+
+        analysis_samples = analyze_gradient_ramp(sampled_values, coords=x_indices)
+        analysis_full_row = analyze_gradient_ramp(full_row_values)
+
+        halves[name] = {
+            "y": y,
+            "sample_count": num_samples,
+            "x_indices": x_indices,
+            "sampled_values": [round(v, 6) for v in sampled_values],
+            "sampled_rgb": [(round(r, 6), round(g, 6), round(b, 6), round(a, 6)) for r, g, b, a in sampled_rgb],
+            "analysis_samples": analysis_samples,
+            "analysis_full_row": analysis_full_row,
+        }
+
+    return {
+        "width": width,
+        "height": height,
+        "is_float": is_float,
+        "top_y": top_y,
+        "bottom_y": bottom_y,
+        "top_half": halves["top_half"],
+        "bottom_half": halves["bottom_half"],
+    }
+
+
+def parse_egl_config_from_log(log_text: str) -> dict[str, Any]:
+    """Parse GTK GDK_DEBUG=opengl configuration output from stderr / log text."""
+    fbconfig_m = re.search(r"Selected fbconfig:\s*([^\n\r]+)", log_text)
+    high_depth_m = re.search(r"high depth:\s*([^\n\r]+)", log_text)
+    vendor_m = re.search(r"Vendor:\s*([^\n\r]+)", log_text)
+    version_m = re.search(r"EGL API version\s+([^\n\r]+)\s+found", log_text)
+
+    selected_fbconfig = fbconfig_m.group(1).strip() if fbconfig_m else "not-detected"
+    high_depth = high_depth_m.group(1).strip() if high_depth_m else "not-detected"
+    vendor = vendor_m.group(1).strip() if vendor_m else "unknown"
+    version = version_m.group(1).strip() if version_m else "unknown"
+
+    return {
+        "selected_fbconfig": selected_fbconfig,
+        "high_depth": high_depth,
+        "egl_vendor": vendor,
+        "egl_version": version,
+        "high_depth_available": high_depth not in ("none", "not-detected"),
+    }
+
+
+def serialize_gradient_fbo_measurements(
+    capture: Mapping[str, Any],
+    *,
+    backend: str = "legacy",
+    session_id: str = "none",
+    log_text: str = "",
+) -> dict[str, Any]:
+    """Serialize gradient FBO measurements, ramp analysis, and EGL correlation into a dict."""
+    gradient_data = dict(capture.get("gradient_data") or {})
+    egl_info = parse_egl_config_from_log(log_text)
+
+    top_analysis = gradient_data.get("top_half", {}).get("analysis_samples", {})
+    bottom_analysis = gradient_data.get("bottom_half", {}).get("analysis_samples", {})
+
+    top_full = gradient_data.get("top_half", {}).get("analysis_full_row", {})
+    bottom_full = gradient_data.get("bottom_half", {}).get("analysis_full_row", {})
+
+    is_float = bool(capture.get("is_float", False))
+    fbo_format = str(capture.get("fbo_format", "unknown"))
+
+    top_monotonic = bool(top_analysis.get("monotonic", False))
+    bottom_monotonic = bool(bottom_analysis.get("monotonic", False))
+
+    has_sub_8bit_granularity = (
+        is_float
+        and (
+            0.0 < float(top_full.get("min_step", 1.0)) < (1.0 / 255.0)
+            or 0.0 < float(bottom_full.get("min_step", 1.0)) < (1.0 / 255.0)
+        )
+    )
+
+    return {
+        "schema": "cinehdr.gradient-fbo-analysis.v1",
+        "backend": backend,
+        "session_id": session_id,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+        "slot_id": capture.get("slot_id"),
+        "epoch": capture.get("epoch"),
+        "frame_generation": capture.get("frame_generation"),
+        "fbo_format": fbo_format,
+        "is_float": is_float,
+        "width": capture.get("width"),
+        "height": capture.get("height"),
+        "target_properties": dict(capture.get("target_properties") or {}),
+        "gradient_fbo": gradient_data,
+        "summary": {
+            "top_monotonic": top_monotonic,
+            "bottom_monotonic": bottom_monotonic,
+            "top_max_drop": top_analysis.get("max_drop", 0.0),
+            "bottom_max_drop": bottom_analysis.get("max_drop", 0.0),
+            "top_unique_levels": top_analysis.get("unique_levels_count", 0),
+            "bottom_unique_levels": bottom_analysis.get("unique_levels_count", 0),
+            "top_max_plateau": top_analysis.get("max_plateau_length", 0),
+            "bottom_max_plateau": bottom_analysis.get("max_plateau_length", 0),
+            "fbo_has_sub_8bit_granularity": has_sub_8bit_granularity,
+        },
+        "current_session_measurements": {
+            "backend": backend,
+            "fbo_format": fbo_format,
+            "is_float": is_float,
+            "gdk_debug_opengl_active": "opengl" in os.environ.get("GDK_DEBUG", ""),
+            "gtk_egl_selected_fbconfig": egl_info["selected_fbconfig"],
+            "gtk_egl_high_depth": egl_info["high_depth"],
+            "gl_vendor": egl_info.get("vendor"),
+        },
+        "prior_trace_context": {
+            "source": "kde-shim-tagged-wayland.log (SHA-256 60f1b4ed)",
+            "wayland_surface_buffer": "AR24 (DRM_FORMAT_ARGB8888, 8-bit)",
+            "protocol_state": "Rec.2100 PQ ready -> set_image_description -> commit on composite toplevel",
+        },
+    }
+
+
+def format_gradient_validation_report(
+    measurements: Mapping[str, Any],
+) -> str:
+    """Format human-readable gradient validation report."""
+    curr = measurements.get("current_session_measurements", {})
+    prior = measurements.get("prior_trace_context", {})
+    fbo = measurements.get("gradient_fbo", {})
+
+    top_half = fbo.get("top_half", {})
+    bottom_half = fbo.get("bottom_half", {})
+    top_analysis = top_half.get("analysis_samples", {})
+    bottom_analysis = bottom_half.get("analysis_samples", {})
+    top_full = top_half.get("analysis_full_row", {})
+    bottom_full = bottom_half.get("analysis_full_row", {})
+
+    top_y = top_half.get("y")
+    bottom_y = bottom_half.get("y")
+    top_mono = "PASS" if top_analysis.get("monotonic") else "FAIL"
+    bottom_mono = "PASS" if bottom_analysis.get("monotonic") else "FAIL"
+
+    lines = [
+        "==================================================================",
+        "              CineHDR Gradient FBO Validation Report              ",
+        "==================================================================",
+        f"Backend:            {measurements.get('backend', 'unknown')}",
+        f"Session ID:         {measurements.get('session_id', 'none')}",
+        f"Created At:         {measurements.get('created_at', 'unknown')}",
+        f"FBO Format:         {measurements.get('fbo_format', 'unknown')} (is_float={measurements.get('is_float')})",
+        f"Dimensions:         {measurements.get('width')}x{measurements.get('height')}",
+        f"Frame Generation:   {measurements.get('frame_generation')}",
+        "",
+        f"--- Top Half Gradient (0.1 to 100 cd/m², GL row y={top_y}) ---",
+        f"  Monotonic:            {top_mono} (drops: {top_analysis.get('non_monotonic_count')}, max drop: {top_analysis.get('max_drop')})",
+        f"  Repetitions:          {top_analysis.get('repetitions_count')} (max plateau: {top_analysis.get('max_plateau_length')} samples)",
+        f"  Unique Levels:        {top_analysis.get('unique_levels_count')} (sampled), {top_full.get('unique_levels_count')} (full row)",
+        f"  Step Granularity:     min positive step: {top_full.get('min_step')} (< 0.00392: {0 < float(top_full.get('min_step', 1)) < 1.0 / 255.0})",
+        "",
+        f"--- Bottom Half Gradient (100 to 1000 cd/m², GL row y={bottom_y}) ---",
+        f"  Monotonic:            {bottom_mono} (drops: {bottom_analysis.get('non_monotonic_count')}, max drop: {bottom_analysis.get('max_drop')})",
+        f"  Repetitions:          {bottom_analysis.get('repetitions_count')} (max plateau: {bottom_analysis.get('max_plateau_length')} samples)",
+        f"  Unique Levels:        {bottom_analysis.get('unique_levels_count')} (sampled), {bottom_full.get('unique_levels_count')} (full row)",
+        f"  Step Granularity:     min positive step: {bottom_full.get('min_step')} (< 0.00392: {0 < float(bottom_full.get('min_step', 1)) < 1.0 / 255.0})",
+        "",
+        "--- Current Session GTK EGL Configuration (GDK_DEBUG=opengl) ---",
+        f"  GDK_DEBUG active:       {curr.get('gdk_debug_opengl_active', False)}",
+        f"  GTK Selected fbconfig:  {curr.get('gtk_egl_selected_fbconfig')}",
+        f"  GTK High Depth Config:  {curr.get('gtk_egl_high_depth')}",
+        f"  GL Vendor / Version:    {curr.get('gl_vendor')}",
+        "",
+        "--- Prior Wayland Trace Context (Reference) ---",
+        f"  Trace Source:           {prior.get('source')}",
+        f"  Wayland Surface Buffer: {prior.get('wayland_surface_buffer')}",
+        f"  Protocol State:         {prior.get('protocol_state')}",
+        "==================================================================",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 @dataclass(frozen=True)
@@ -715,7 +1015,7 @@ def verify_fbo_pixel_measurements_artifact(
 def validation_expected_playlist_count(mode: str) -> int | None:
     if mode in ("transition", "publication", "settling"):
         return 2
-    if mode == "sdr-soak":
+    if mode in ("sdr-soak", "gradient"):
         return 1
     return None
 
@@ -736,7 +1036,8 @@ def validation_config_from_env(
         source.get(VALIDATION_REPORT_DIR_ENV, "validation-reports")
     ).expanduser()
     if not _uses_publication_fixture_contract(raw_mode):
-        return GpuValidationConfig(raw_mode, report_dir)
+        backend = source.get("CINEHDR_RENDER_BACKEND", "").strip() or None
+        return GpuValidationConfig(raw_mode, report_dir, expected_backend=backend)
 
     expected_backend = source.get(PUBLICATION_EXPECTED_BACKEND_ENV, "").strip()
     if expected_backend not in ("legacy", "gpu-next"):
@@ -775,6 +1076,10 @@ def validation_steps(mode: str) -> tuple[ValidationStep, ...]:
     """Return the prescribed, non-destructive interaction sequence."""
     if mode not in VALIDATION_MODES:
         raise ValueError(f"unsupported GPU validation mode: {mode}")
+    if mode == "gradient":
+        return (
+            ValidationStep("wait for stable HDR gradient frame", "gradient-settle", 8),
+        )
     if mode == "lifecycle":
         return (
             ValidationStep("normalize start position", "seek", 4, 0.05),
@@ -1640,6 +1945,9 @@ class GpuValidationSession:
         self._ready_stable_since: float | None = None
         self._ready_last_playlist_count: int | None = None
 
+        self._gradient_capture: dict[str, Any] | None = None
+        self._gradient_capture_armed: bool = False
+
         self.pixel_oracle: PausedTransitionPixelOracle | None = None
         if self.config.mode == "publication":
             self.pixel_oracle = PausedTransitionPixelOracle()
@@ -1653,6 +1961,7 @@ class GpuValidationSession:
         toast = {
             "publication": _("Wayland publication validation is starting"),
             "settling": _("Wayland resource-settling validation is starting"),
+            "gradient": _("HDR gradient validation is starting"),
         }.get(self.config.mode, _("GPU Next validation is starting"))
         self.window.show_toast(toast, True)
         self.close_signal_id = self.window.connect(
@@ -1674,7 +1983,7 @@ class GpuValidationSession:
                     f"could not prepare {self.config.mode} validation: {error}"
                 )
                 return
-        elif self.config.mode in ("transition", "sdr-soak"):
+        elif self.config.mode in ("transition", "sdr-soak", "gradient"):
             controller = self.video_area.hdr_controller
             self._transition_original_hdr_mode = controller.hdr_mode
             # An SDR file intentionally stays on the HDR surface in force-hdr.
@@ -1730,10 +2039,14 @@ class GpuValidationSession:
 
     def _expected_active_api(self) -> str:
         config = getattr(self, "config", None)
-        if config is not None and _uses_publication_fixture_contract(config.mode):
-            if config.expected_backend is None:
-                raise RuntimeError(f"{config.mode} has no expected renderer backend")
-            return publication_expected_api(config.expected_backend)
+        if config is not None:
+            if _uses_publication_fixture_contract(config.mode):
+                if config.expected_backend is None:
+                    raise RuntimeError(f"{config.mode} has no expected renderer backend")
+                return publication_expected_api(config.expected_backend)
+            if config.mode == "gradient":
+                backend = config.expected_backend or os.environ.get("CINEHDR_RENDER_BACKEND", "legacy")
+                return publication_expected_api(backend)
         return "opengl-next"
 
     def _wait_until_ready(self):
@@ -1810,7 +2123,7 @@ class GpuValidationSession:
             )
         else:
             renderer_ready = (
-                active_api == "opengl-next"
+                active_api == self._expected_active_api()
                 and session_status == "active"
                 and first_frame
                 and duration > 1
@@ -1846,6 +2159,15 @@ class GpuValidationSession:
             and self._ready_stable_since is not None
             and now - self._ready_stable_since >= READY_STABLE_SECONDS
         ):
+            if self.config.mode == "gradient":
+                controller = getattr(self.video_area, "hdr_controller", None)
+                committed = getattr(controller, "committed_output_state", None) if controller else None
+                if committed is not None and committed.is_hdr:
+                    self.ready_timer_id = None
+                    self._arm_gradient_capture()
+                    return GLib.SOURCE_REMOVE
+                return GLib.SOURCE_CONTINUE
+
             self.ready_timer_id = None
             # Startup allocation is expected and is not leak evidence. Begin
             # memory/VRAM growth measurement only after the first frame.
@@ -2204,6 +2526,57 @@ class GpuValidationSession:
     def _on_fbo_pixel_readback_error(self, error: str) -> None:
         if getattr(self, "pixel_oracle", None) is not None:
             self.pixel_oracle.record_readback_error(error)
+
+    def _arm_gradient_capture(self) -> None:
+        if getattr(self, "_gradient_capture_armed", False):
+            return
+        self._gradient_capture_armed = True
+        logger.info("Arming one-shot FBO gradient capture on stable HDR frame")
+        self.video_area._fbo_pixel_oracle_sampler = read_fbo_gradient_samples
+        self.video_area._fbo_pixel_oracle_cb = self._on_gradient_capture
+        self.step_timer_id = GLib.timeout_add_seconds(
+            15, self._on_gradient_timeout
+        )
+
+    def _on_gradient_timeout(self):
+        self.step_timer_id = None
+        if not self.finished and not getattr(self, "_gradient_capture", None):
+            self._finish("timeout waiting for gradient frame capture")
+        return GLib.SOURCE_REMOVE
+
+    def _on_gradient_capture(
+        self,
+        slot: Any,
+        epoch: int | None,
+        frame_generation: int,
+        fbo_format: str,
+        is_float: bool,
+        width: int,
+        height: int,
+        patch_samples: Any,
+    ) -> None:
+        if self.video_area is not None:
+            self.video_area._fbo_pixel_oracle_cb = None
+            self.video_area._fbo_pixel_oracle_sampler = None
+        if self.step_timer_id:
+            try:
+                GLib.source_remove(self.step_timer_id)
+            except Exception:
+                pass
+            self.step_timer_id = None
+
+        self._gradient_capture = {
+            "slot_id": getattr(slot, "index", getattr(slot, "slot_id", None)),
+            "epoch": epoch,
+            "frame_generation": frame_generation,
+            "fbo_format": fbo_format,
+            "is_float": is_float,
+            "width": width,
+            "height": height,
+            "gradient_data": patch_samples,
+            "captured_at": time.monotonic(),
+        }
+        self._finish(None)
 
     def _realize_validation_gl_area(self, gl_area):
         self.lifecycle_timer_id = None
@@ -2692,6 +3065,8 @@ class GpuValidationSession:
             return self._write_publication_report(failure_reason)
         if self.config.mode == "settling":
             return self._write_resource_settling_report(failure_reason)
+        if self.config.mode == "gradient":
+            return self._write_gradient_report(failure_reason)
         final = self._metrics_snapshot()
         active_api, session_status = self._renderer_facts()
         fbo_drops = self._counter_growth(final, "fbo_drops")
@@ -3272,13 +3647,62 @@ class GpuValidationSession:
         report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return report_path, overall
 
+    def _write_gradient_report(self, failure_reason: str | None) -> tuple[Path, str]:
+        backend = self.config.expected_backend or os.environ.get("CINEHDR_RENDER_BACKEND", "legacy")
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        self.config.report_dir.mkdir(parents=True, exist_ok=True)
+
+        session_id = os.environ.get("CINEHDR_DIAGNOSTICS_SESSION_ID", "").strip() or "none"
+        log_text = ""
+        log_path_env = os.environ.get("CINEHDR_LOG_FILE")
+        if log_path_env and Path(log_path_env).is_file():
+            try:
+                log_text = Path(log_path_env).read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+        capture_dict = dict(self._gradient_capture or {})
+        controller = getattr(self.video_area, "hdr_controller", None)
+        committed = getattr(controller, "committed_output_state", None) if controller else None
+        if committed is not None:
+            capture_dict["target_properties"] = {
+                "target-trc": committed.target_trc,
+                "target-prim": committed.target_prim,
+                "target-peak": committed.target_peak,
+                "is_hdr": committed.is_hdr,
+            }
+
+        measurements = serialize_gradient_fbo_measurements(
+            capture_dict,
+            backend=backend,
+            session_id=session_id,
+            log_text=log_text,
+        )
+
+        overall = "PASS" if (
+            not failure_reason
+            and measurements.get("summary", {}).get("top_monotonic")
+            and measurements.get("summary", {}).get("bottom_monotonic")
+        ) else "FAIL"
+
+        json_path = self.config.report_dir / f"gradient-measurements-{backend}-{stamp}.json"
+        json_path.write_text(json.dumps(measurements, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        txt_report = format_gradient_validation_report(measurements)
+        if failure_reason:
+            txt_report += f"\nValidation Failure Reason: {failure_reason}\n"
+        txt_path = self.config.report_dir / f"gradient-validation-{backend}-{stamp}.txt"
+        txt_path.write_text(txt_report, encoding="utf-8")
+
+        return txt_path, overall
+
     def _finish(self, failure_reason: str | None):
         if self.finished:
             return
         self.finished = True
-        if hasattr(self.video_area, "_fbo_pixel_oracle_cb"):
+        if self.video_area is not None:
             self.video_area._fbo_pixel_oracle_cb = None
-        if hasattr(self.video_area, "_fbo_pixel_oracle_error_cb"):
+            self.video_area._fbo_pixel_oracle_sampler = None
             self.video_area._fbo_pixel_oracle_error_cb = None
         for source_id in (
             self.ready_timer_id,

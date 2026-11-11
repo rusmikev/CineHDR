@@ -9,7 +9,7 @@ gpu_next_lib="${gpu_next_lib_dir}/libmpv.so.2"
 
 usage() {
     echo "Использование:" >&2
-    echo "  tools/validation/run_gpu_validation.sh <видеофайл> [quick|soak|sdr-soak|lifecycle]" >&2
+    echo "  tools/validation/run_gpu_validation.sh <видеофайл> [quick|soak|sdr-soak|lifecycle|gradient]" >&2
     echo "  tools/validation/run_gpu_validation.sh <SDR-файл> <HDR-файл> transition" >&2
 }
 
@@ -17,7 +17,7 @@ video_files=()
 if [[ $# -eq 1 ]]; then
     video_files=("$1")
     validation_mode="quick"
-elif [[ $# -eq 2 && ( "$2" == "quick" || "$2" == "soak" || "$2" == "sdr-soak" || "$2" == "lifecycle" ) ]]; then
+elif [[ $# -eq 2 && ( "$2" == "quick" || "$2" == "soak" || "$2" == "sdr-soak" || "$2" == "lifecycle" || "$2" == "gradient" ) ]]; then
     video_files=("$1")
     validation_mode="$2"
 elif [[ $# -eq 3 && "$3" == "transition" ]]; then
@@ -55,25 +55,41 @@ if [[ "${validation_mode}" == "transition" ]]; then
     fi
 fi
 
-if [[ ! -e "${gpu_next_lib}" ]]; then
-    echo "CineHDR GPU Next: экспериментальный libmpv не найден: ${gpu_next_lib}" >&2
-    exit 1
+if [[ "${validation_mode}" == "gradient" ]]; then
+    backend="${CINEHDR_RENDER_BACKEND:-legacy}"
+else
+    backend="gpu-next"
 fi
+
+if [[ "${backend}" == "gpu-next" ]]; then
+    CINEHDR_RENDER_BACKEND="gpu-next"
+    if [[ ! -e "${gpu_next_lib}" ]]; then
+        echo "CineHDR GPU Next: экспериментальный libmpv не найден: ${gpu_next_lib}" >&2
+        exit 1
+    fi
+    export LD_LIBRARY_PATH="${gpu_next_lib_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+else
+    CINEHDR_RENDER_BACKEND="${backend}"
+fi
+export CINEHDR_RENDER_BACKEND
 
 if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
-    echo "CineHDR GPU Next: сеанс Wayland не обнаружен; проверка HDR недоступна." >&2
+    echo "CineHDR: сеанс Wayland не обнаружен; проверка HDR недоступна." >&2
     exit 1
 fi
 
-export LD_LIBRARY_PATH="${gpu_next_lib_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export GDK_BACKEND="wayland"
-export CINEHDR_RENDER_BACKEND="gpu-next"
+export CINEHDR_RENDER_BACKEND="${backend}"
 export CINEHDR_GPU_VALIDATION="${validation_mode}"
 export CINEHDR_GPU_VALIDATION_REPORT_DIR="${repo_root}/validation-reports"
+if [[ "${validation_mode}" == "gradient" ]]; then
+    export GDK_DEBUG="${GDK_DEBUG:-color-mgmt:opengl}"
+fi
 
 mkdir -p -- "${CINEHDR_GPU_VALIDATION_REPORT_DIR}"
 run_stamp="$(date +%Y%m%d-%H%M%S)"
-validation_log="${CINEHDR_GPU_VALIDATION_REPORT_DIR}/gpu-next-${validation_mode}-${run_stamp}-$$.log"
+validation_log="${CINEHDR_GPU_VALIDATION_REPORT_DIR}/${backend}-${validation_mode}-${run_stamp}-$$.log"
+export CINEHDR_LOG_FILE="${validation_log}"
 run_marker="$(mktemp "${CINEHDR_GPU_VALIDATION_REPORT_DIR}/.validation-start.XXXXXX")"
 trap 'rm -f -- "${run_marker}"' EXIT
 
@@ -92,10 +108,16 @@ if [[ "${application_status}" -ne 0 ]]; then
 fi
 
 new_report="$(find "${CINEHDR_GPU_VALIDATION_REPORT_DIR}" -maxdepth 1 -type f \
-    -name "gpu-next-${validation_mode}-*.txt" -newer "${run_marker}" -print -quit)"
+    \( -name "${backend}-${validation_mode}-*.txt" -o -name "${validation_mode}-validation-${backend}-*.txt" \) \
+    -newer "${run_marker}" -print -quit)"
 if [[ -z "${new_report}" ]]; then
     echo "CineHDR: процесс завершился без нового отчёта. Журнал: ${validation_log}" >&2
     exit 1
 fi
 
 echo "CineHDR: отчёт проверки: ${new_report}"
+new_json="$(find "${CINEHDR_GPU_VALIDATION_REPORT_DIR}" -maxdepth 1 -type f \
+    -name "gradient-measurements-${backend}-*.json" -newer "${run_marker}" -print -quit)"
+if [[ -n "${new_json}" ]]; then
+    echo "CineHDR: артефакт измерений: ${new_json}"
+fi
