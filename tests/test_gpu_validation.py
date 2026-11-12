@@ -80,13 +80,9 @@ from src.validation.gpu_validation import (
     PUBLICATION_SDR_SHA256,
     FLATPAK_LIBMPV_DIR,
     HOST_LIBMPV_DIR,
-    SETTLING_COOLDOWN_SECONDS,
-    SETTLING_REVISION,
-    SETTLING_SCHEMA,
     ValidationStep,
     aggregate_drm_memory_kib,
     evaluate_publication_validation,
-    evaluate_resource_settling_validation,
     evaluate_validation,
     expected_scaled_texture_dimensions,
     is_verified_flatpak_container,
@@ -96,8 +92,6 @@ from src.validation.gpu_validation import (
     publication_runtime_errors,
     publication_state_errors,
     publication_texture_evidence,
-    resource_settling_trend,
-    settling_endpoint_errors,
     validation_config_from_env,
     validation_expected_playlist_count,
     validation_steps,
@@ -129,12 +123,6 @@ def publication_environment(**overrides):
         "CINEHDR_PUBLICATION_HDR_SHA256": PUBLICATION_HDR_SHA256,
         "CINEHDR_PUBLICATION_SDR_SHA256": PUBLICATION_SDR_SHA256,
     }
-    environment.update(overrides)
-    return environment
-
-
-def settling_environment(**overrides):
-    environment = publication_environment(CINEHDR_GPU_VALIDATION="settling")
     environment.update(overrides)
     return environment
 
@@ -185,64 +173,6 @@ def publication_metrics(signal: str, *, api: str = "opengl-next"):
     }
 
 
-def settling_endpoint(
-    cycle: int,
-    rss_kib: int | None,
-    drm_vram_kib: int | None,
-    *,
-    size: tuple[int, int] = (960, 540),
-):
-    metrics = publication_metrics("hdr")
-    metrics.update(
-        {
-            "width": size[0],
-            "height": size[1],
-            "rss_kib": rss_kib,
-            "drm_vram_kib": drm_vram_kib,
-            "drm_gtt_kib": 1024,
-            "fbo_drops": 0,
-            "decoder_drops": 0,
-            "vo_drops": 0,
-        }
-    )
-    return {
-        "name": f"cycle {cycle} small-window HDR endpoint",
-        "action": "settling-endpoint",
-        "expected_state": (cycle, 1, "hdr", 960, 540),
-        "status": "PASS",
-        "metrics": metrics,
-    }
-
-
-def complete_settling_steps(endpoints):
-    endpoint_iter = iter(endpoints)
-    results = []
-    for step in validation_steps("settling"):
-        if step.action == "settling-endpoint":
-            results.append(next(endpoint_iter))
-        else:
-            results.append(
-                {
-                    "name": step.name,
-                    "action": step.action,
-                    "expected_state": step.value,
-                    "status": "PASS",
-                    "metrics": publication_metrics("hdr"),
-                }
-            )
-    return tuple(results)
-
-
-def unloaded_cooldown_metrics():
-    return {
-        "idle_active": True,
-        "time_pos_available": False,
-        "gl_errors": 0,
-        "fbo_failures": 0,
-        "render_context_generation": 4,
-    }
-
-
 class ValidationConfigTests(unittest.TestCase):
     def test_validator_is_off_by_default(self):
         self.assertIsNone(validation_config_from_env({}))
@@ -290,23 +220,9 @@ class ValidationConfigTests(unittest.TestCase):
                 publication_environment(CINEHDR_PUBLICATION_HDR_SHA256="wrong")
             )
 
-    def test_settling_reuses_the_exact_publication_fixture_contract(self):
-        config = validation_config_from_env(
-            settling_environment(CINEHDR_PUBLICATION_EXPECTED_BACKEND="legacy")
-        )
-        self.assertEqual(config.mode, "settling")
-        self.assertEqual(config.expected_backend, "legacy")
-        self.assertEqual(config.fixture_profile, PUBLICATION_FIXTURE_PROFILE)
-        self.assertEqual(config.fixture_revision, PUBLICATION_FIXTURE_REVISION)
-        with self.assertRaisesRegex(ValueError, "SDR_SHA256"):
-            validation_config_from_env(
-                settling_environment(CINEHDR_PUBLICATION_SDR_SHA256="unaccepted")
-            )
-
     def test_playlist_count_expectation_is_mode_specific(self):
         self.assertEqual(validation_expected_playlist_count("gradient"), 1)
         self.assertEqual(validation_expected_playlist_count("publication"), 2)
-        self.assertEqual(validation_expected_playlist_count("settling"), 2)
         self.assertIsNone(validation_expected_playlist_count("unknown"))
 
     def test_validation_player_does_not_restore_or_save_watch_later(self):
@@ -328,13 +244,6 @@ class ValidationConfigTests(unittest.TestCase):
         self.assertNotIn("pause", normal_player)
         self.assertNotIn("keep-open", normal_player)
         self.assertNotIn("hwdec", normal_player)
-
-    def test_settling_player_is_paused_and_copy_decode_before_loadfile(self):
-        player = {}
-        self.assertEqual(prepare_validation_player(player, "settling"), ())
-        self.assertEqual(player["pause"], "yes")
-        self.assertEqual(player["keep-open"], "yes")
-        self.assertEqual(player["hwdec"], "vaapi-copy")
 
     def test_drm_fdinfo_is_aggregated_once_per_client(self):
         duplicated_client = """
@@ -374,34 +283,6 @@ class ValidationPlanTests(unittest.TestCase):
         self.assertNotIn("play", {step.action for step in steps})
         self.assertNotIn("seek", {step.action for step in steps})
         self.assertEqual({step.wait_seconds for step in steps}, {6})
-
-    def test_settling_plan_has_one_warmup_and_three_equal_hdr_endpoints(self):
-        steps = validation_steps("settling")
-        self.assertEqual(steps[0].action, "settling-warmup")
-        self.assertEqual(steps[0].value, (1, "hdr"))
-        endpoints = [step for step in steps if step.action == "settling-endpoint"]
-        self.assertEqual(
-            [step.value for step in endpoints],
-            [
-                (1, 1, "hdr", 960, 540),
-                (2, 1, "hdr", 960, 540),
-                (3, 1, "hdr", 960, 540),
-            ],
-        )
-        resizes = [step.value for step in steps if step.action == "settling-resize"]
-        self.assertEqual(
-            resizes,
-            [
-                (1, "hdr", 1280, 720), (1, "hdr", 960, 540),
-                (1, "hdr", 1280, 720), (1, "hdr", 960, 540),
-                (1, "hdr", 1280, 720), (1, "hdr", 960, 540),
-            ],
-        )
-        self.assertEqual(steps[-2].action, "settling-unload")
-        self.assertEqual(steps[-1].action, "settling-cooldown")
-        self.assertEqual(steps[-1].wait_seconds, SETTLING_COOLDOWN_SECONDS)
-        self.assertNotIn("play", {step.action for step in steps})
-        self.assertNotIn("context-cycle", {step.action for step in steps})
 
     def test_readiness_rejects_saved_position_jump(self):
         self.assertTrue(position_sample_is_stable(100.0, 100.5, 0.5))
@@ -519,202 +400,6 @@ class ValidationResultTests(unittest.TestCase):
         )
         self.assertEqual(result, "FAIL")
         self.assertIn("OpenGL errors", warnings[0])
-
-
-class ResourceSettlingEvidenceTests(unittest.TestCase):
-    def test_endpoint_requires_actual_state_rss_and_process_drm_vram(self):
-        endpoint = settling_endpoint(1, 12_000, 34_000)["metrics"]
-        self.assertEqual(
-            settling_endpoint_errors(
-                endpoint,
-                expected_api="opengl-next",
-                expected_context_generation=4,
-            ),
-            (),
-        )
-        endpoint["rss_kib"] = None
-        endpoint["drm_vram_kib"] = None
-        endpoint["render_target_format"] = "GL_RGBA8"
-        errors = settling_endpoint_errors(
-            endpoint,
-            expected_api="opengl-next",
-            expected_context_generation=4,
-        )
-        self.assertTrue(any("RSS" in error for error in errors))
-        self.assertTrue(any("DRM VRAM" in error for error in errors))
-        self.assertTrue(any("render target" in error for error in errors))
-
-    def test_settling_trend_only_warns_for_three_strictly_rising_endpoints(self):
-        endpoints = (
-            settling_endpoint(1, 100, 1000),
-            settling_endpoint(2, 110, 1000),
-            settling_endpoint(3, 120, 1000),
-        )
-        result, findings, trends = evaluate_resource_settling_validation(
-            active_api="opengl-next",
-            session_status="active",
-            expected_api="opengl-next",
-            endpoint_results=endpoints,
-            step_results=complete_settling_steps(endpoints),
-            final=unloaded_cooldown_metrics(),
-            expected_context_generation=4,
-            failure_reason=None,
-            isolation_failures=(),
-        )
-        self.assertEqual(result, "WARN")
-        self.assertEqual(trends["rss_kib"], "strictly-increasing")
-        self.assertEqual(trends["drm_vram_kib"], "not-strictly-increasing")
-        self.assertTrue(any("rss_kib" in finding for finding in findings))
-
-        plateau_endpoints = (
-            settling_endpoint(1, 100, 1000),
-            settling_endpoint(2, 100, 1000),
-            settling_endpoint(3, 101, 1002),
-        )
-        result, findings, trends = evaluate_resource_settling_validation(
-            active_api="opengl-next",
-            session_status="active",
-            expected_api="opengl-next",
-            endpoint_results=plateau_endpoints,
-            step_results=complete_settling_steps(plateau_endpoints),
-            final=unloaded_cooldown_metrics(),
-            expected_context_generation=4,
-            failure_reason=None,
-            isolation_failures=(),
-        )
-        self.assertEqual((result, findings), ("PASS", ()))
-        self.assertEqual(trends["rss_kib"], "not-strictly-increasing")
-        self.assertEqual(trends["drm_vram_kib"], "not-strictly-increasing")
-
-    def test_settling_evaluation_fails_closed_for_missing_or_unloaded_evidence(self):
-        endpoints = (
-            settling_endpoint(1, 100, 1000),
-            settling_endpoint(2, None, 1001),
-            settling_endpoint(3, 102, 1002),
-        )
-        final = unloaded_cooldown_metrics()
-        final["idle_active"] = False
-        result, errors, _trends = evaluate_resource_settling_validation(
-            active_api="opengl",
-            session_status="startup-fallback",
-            expected_api="opengl-next",
-            endpoint_results=endpoints,
-            step_results=complete_settling_steps(endpoints)[:-1],
-            final=final,
-            expected_context_generation=4,
-            failure_reason="test failure",
-            isolation_failures=("pause",),
-        )
-        self.assertEqual(result, "FAIL")
-        self.assertTrue(any("active API" in error for error in errors))
-        self.assertTrue(any("RSS" in error for error in errors))
-        self.assertTrue(any("incomplete or out of order" in error for error in errors))
-        self.assertTrue(any("media was unloaded" in error for error in errors))
-
-    def test_settling_accepts_adjusted_but_equal_endpoint_sizes(self):
-        adjusted = (
-            settling_endpoint(1, 100, 1000, size=(944, 531)),
-            settling_endpoint(2, 100, 1000, size=(944, 531)),
-            settling_endpoint(3, 101, 1002, size=(944, 531)),
-        )
-        result, errors, _trends = evaluate_resource_settling_validation(
-            active_api="opengl-next",
-            session_status="active",
-            expected_api="opengl-next",
-            endpoint_results=adjusted,
-            step_results=complete_settling_steps(adjusted),
-            final=unloaded_cooldown_metrics(),
-            expected_context_generation=4,
-            failure_reason=None,
-            isolation_failures=(),
-        )
-        self.assertEqual((result, errors), ("PASS", ()))
-        adjusted[-1]["metrics"]["width"] = 960
-        result, errors, _trends = evaluate_resource_settling_validation(
-            active_api="opengl-next",
-            session_status="active",
-            expected_api="opengl-next",
-            endpoint_results=adjusted,
-            step_results=complete_settling_steps(adjusted),
-            final=unloaded_cooldown_metrics(),
-            expected_context_generation=4,
-            failure_reason=None,
-            isolation_failures=(),
-        )
-        self.assertEqual(result, "FAIL")
-        self.assertTrue(any("not comparable" in error for error in errors))
-
-    def test_settling_endpoint_and_cooldown_use_pre_unload_decode_evidence(self):
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.config = SimpleNamespace(mode="settling", expected_backend="gpu-next")
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-        )
-        session._settling_context_generation = 4
-        endpoint_metrics = settling_endpoint(1, 100, 1000, size=(944, 531))["metrics"]
-        endpoint_metrics["render_frame_generation"] = 12
-        status, _detail = session._verify_step(
-            ValidationStep(
-                "cycle 1 small-window HDR endpoint",
-                "settling-endpoint",
-                6,
-                (1, 1, "hdr", 960, 540),
-            ),
-            endpoint_metrics,
-        )
-        self.assertEqual(status, "PASS")
-        cooldown = unloaded_cooldown_metrics()
-        self.assertNotIn("hwdec", cooldown)
-        status, _detail = session._verify_step(
-            ValidationStep("ten-second unload cooldown", "settling-cooldown", 10),
-            cooldown,
-        )
-        self.assertEqual(status, "PASS")
-
-    def test_settling_helpers_do_not_fit_a_byte_threshold(self):
-        self.assertEqual(resource_settling_trend((1, 2, 3)), "strictly-increasing")
-        self.assertEqual(resource_settling_trend((1, 1, 2)), "not-strictly-increasing")
-        self.assertEqual(resource_settling_trend((1, 2)), "unavailable")
-
-    def test_settling_writer_records_typed_endpoints_scope_and_cooldown(self):
-        endpoints = (
-            settling_endpoint(1, 100, 1000),
-            settling_endpoint(2, 100, 1000),
-            settling_endpoint(3, 101, 1002),
-        )
-        step_results = list(complete_settling_steps(endpoints))
-        step_results[-1]["metrics"] = unloaded_cooldown_metrics()
-        with tempfile.TemporaryDirectory() as temporary:
-            session = GpuValidationSession.__new__(GpuValidationSession)
-            session.config = validation_config_from_env(settling_environment())
-            session.config = SimpleNamespace(
-                **{
-                    **session.config.__dict__,
-                    "report_dir": Path(temporary),
-                }
-            )
-            session.step_results = step_results
-            session.window = SimpleNamespace(
-                app=SimpleNamespace(_gpu_validation_setup_failures=())
-            )
-            session._settling_context_generation = 4
-            session.started_at = time.monotonic()
-            session._renderer_facts = lambda: ("opengl-next", "active")
-            session._expected_active_api = lambda: "opengl-next"
-            report_path, status = session._write_resource_settling_report(None)
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-        self.assertEqual(status, "PASS")
-        self.assertEqual(report["schema"], SETTLING_SCHEMA)
-        self.assertEqual(report["revision"], SETTLING_REVISION)
-        self.assertEqual(report["status"], "PASS")
-        self.assertEqual(len(report["hdr_endpoints"]), 3)
-        self.assertEqual(
-            report["endpoint_requested_logical_size"], {"width": 960, "height": 540}
-        )
-        self.assertEqual(report["cooldown_metrics"]["idle_active"], True)
-        self.assertIn("not a leak-free claim", report["scope"])
-        self.assertNotIn("path", report["fixture"])
 
 
 class PublicationEvidenceTests(unittest.TestCase):
@@ -1403,55 +1088,6 @@ class PublicationEvidenceTests(unittest.TestCase):
 
 
 class ValidationIntegrationTests(unittest.TestCase):
-    def test_resource_settling_launcher_is_isolated_and_accepts_pass_or_warn(self):
-        launcher_path = ROOT / "tools" / "validation" / "run_gate2_resource_settling.sh"
-        self.assertFalse((ROOT / "run_gate2_resource_settling.sh").exists())
-        self.assertTrue(launcher_path.is_file())
-        launcher = launcher_path.read_text(encoding="utf-8")
-        self.assertTrue(launcher_path.stat().st_mode & 0o111)
-        self.assertIn("set -euo pipefail", launcher)
-        self.assertIn('echo "Usage: $0"', launcher)
-        self.assertIn('mktemp -d /tmp/cinehdr-resource-settling-fixtures.XXXXXX', launcher)
-        self.assertIn('fixture_profile="hevc-main10-yuv420p10-lossless"', launcher)
-        self.assertIn('fixture_revision="hevc-main10-yuv420p10-mp4-v2"', launcher)
-        self.assertIn(PUBLICATION_HDR_SHA256, launcher)
-        self.assertIn(PUBLICATION_SDR_SHA256, launcher)
-        self.assertIn('tests/generate_patterns.py', launcher)
-        self.assertIn('metadata.get("generator_revision") != revision', launcher)
-        self.assertIn('hashlib.sha256(media.read_bytes()).hexdigest()', launcher)
-        self.assertIn('sha256sum -- "${sdr_media}"', launcher)
-        self.assertIn('"CINEHDR_GPU_VALIDATION=settling"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_EXPECTED_BACKEND=${backend}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_FIXTURE_PROFILE=${fixture_profile}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_FIXTURE_REVISION=${fixture_revision}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_HDR_SHA256=${hdr_sha256}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_SDR_SHA256=${sdr_sha256}"', launcher)
-        self.assertIn('python3 "${repo_root}/run_dev.py" "${sdr_media}" "${hdr_media}"', launcher)
-        self.assertLess(launcher.index("run_backend legacy"), launcher.index("run_backend gpu-next"))
-        self.assertIn('tee "${log_path}"', launcher)
-        self.assertIn('application_status="${PIPESTATUS[0]}"', launcher)
-        self.assertIn('gate2-resource-settling-${backend}-*.json', launcher)
-        self.assertIn('-newer "${marker}"', launcher)
-        self.assertIn('[[ ${#reports[@]} -ne 1 ]]', launcher)
-        self.assertIn('report.get("status") not in {"PASS", "WARN"}', launcher)
-        self.assertIn(SETTLING_SCHEMA, launcher)
-        self.assertIn(SETTLING_REVISION, launcher)
-        self.assertNotIn("flatpak", launcher.lower())
-        self.assertNotIn("/dev/dri", launcher)
-        self.assertNotIn("--device", launcher)
-        self.assertNotIn("DRI_PRIME=", launcher)
-
-    def test_resource_settling_report_is_machine_readable_and_bounded(self):
-        source = (ROOT / "tools/validation/gpu_validation.py").read_text(encoding="utf-8")
-        self.assertIn('"schema": SETTLING_SCHEMA', source)
-        self.assertIn('"status": overall', source)
-        self.assertIn('"hdr_endpoints": list(endpoint_results)', source)
-        self.assertIn('"process_drm_gtt_kib"', source)
-        self.assertIn('"global_vram_kib"', source)
-        self.assertIn("not a leak-free claim", source)
-        self.assertIn("not fit a byte threshold", source)
-        self.assertIn("f\"gate2-resource-settling-{self.config.expected_backend}-{stamp}.json\"", source)
-
     def test_wayland_publication_launcher_is_strict_and_runs_two_processes(self):
         launcher_path = ROOT / "tools" / "validation" / "run_wayland_publication_validation.sh"
         self.assertFalse((ROOT / "run_wayland_publication_validation.sh").exists())

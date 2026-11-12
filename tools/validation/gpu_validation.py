@@ -7,7 +7,7 @@
 
 Normal CineHDR runs never import or start this session. The development
 launcher enables it with
-``CINEHDR_GPU_VALIDATION=quick|soak|sdr-soak|lifecycle|transition|publication|settling``.
+``CINEHDR_GPU_VALIDATION=publication|gradient``.
 All actions
 run on GTK's main thread and use existing window/mpv controls; the render
 backend, saved color policy, and production context ownership are not changed
@@ -162,17 +162,14 @@ def is_verified_flatpak_container(
     return True
 
 VALIDATION_MODES = (
-    "publication", "settling", "gradient",
+    "publication", "gradient",
 )
 READY_STABLE_SECONDS = 4.0
-SETTLING_SCHEMA = "cinehdr.gate2.resource-settling.v1"
-SETTLING_REVISION = "bounded-resource-settling-v3"
-SETTLING_COOLDOWN_SECONDS = 10
 
 
 def _uses_publication_fixture_contract(mode: str) -> bool:
     """Whether a development mode requires the exact paused HEVC inputs."""
-    return mode in ("publication", "settling")
+    return mode == "publication"
 
 
 @dataclass(frozen=True)
@@ -1029,7 +1026,7 @@ def verify_fbo_pixel_measurements_artifact(
 
 
 def validation_expected_playlist_count(mode: str) -> int | None:
-    if mode in ("publication", "settling"):
+    if mode == "publication":
         return 2
     if mode == "gradient":
         return 1
@@ -1105,64 +1102,6 @@ def validation_steps(mode: str) -> tuple[ValidationStep, ...]:
             ValidationStep("switch HDR to SDR publication", "switch-media", 6, (0, "sdr")),
             ValidationStep("switch SDR to HDR publication again", "switch-media", 6, (1, "hdr")),
         )
-    if mode == "settling":
-        # The first HDR arrival warms allocations but is not an endpoint.
-        # Every measured cycle finishes in the same paused small-window HDR
-        # state, so resource samples are comparable without any byte budget.
-        steps: list[ValidationStep] = [
-            ValidationStep(
-                "unmeasured allocation warm-up",
-                "settling-warmup",
-                6,
-                (1, "hdr"),
-            ),
-        ]
-        for cycle in range(1, 4):
-            steps.extend(
-                (
-                    ValidationStep(
-                        f"cycle {cycle} resize HDR to 1280×720",
-                        "settling-resize",
-                        6,
-                        (1, "hdr", 1280, 720),
-                    ),
-                    ValidationStep(
-                        f"cycle {cycle} resize HDR to 960×540",
-                        "settling-resize",
-                        6,
-                        (1, "hdr", 960, 540),
-                    ),
-                    ValidationStep(
-                        f"cycle {cycle} switch HDR to SDR",
-                        "settling-switch",
-                        6,
-                        (0, "sdr"),
-                    ),
-                    ValidationStep(
-                        f"cycle {cycle} switch SDR to HDR",
-                        "settling-switch",
-                        6,
-                        (1, "hdr"),
-                    ),
-                    ValidationStep(
-                        f"cycle {cycle} small-window HDR endpoint",
-                        "settling-endpoint",
-                        6,
-                        (cycle, 1, "hdr", 960, 540),
-                    ),
-                )
-            )
-        steps.extend(
-            (
-                ValidationStep("stop and unload media", "settling-unload", 2),
-                ValidationStep(
-                    "ten-second unload cooldown",
-                    "settling-cooldown",
-                    SETTLING_COOLDOWN_SECONDS,
-                ),
-            )
-        )
-        return tuple(steps)
     raise ValueError(f"unsupported GPU validation mode: {mode}")
 
 
@@ -1725,168 +1664,6 @@ def evaluate_publication_validation(
     return ("FAIL", tuple(errors)) if errors else ("PASS", ())
 
 
-def _required_nonnegative_kib(metrics: Mapping[str, object], key: str) -> str | None:
-    """Validate an endpoint resource observation without choosing a budget."""
-    value = metrics.get(key)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        label = "RSS" if key == "rss_kib" else "process DRM VRAM"
-        return f"{label} evidence was unavailable at the HDR endpoint"
-    return None
-
-
-def resource_settling_trend(values: tuple[int, ...]) -> str:
-    """Classify only the ADR's sustained-growth shape, never a byte budget."""
-    if len(values) != 3:
-        return "unavailable"
-    if all(after > before for before, after in zip(values, values[1:])):
-        return "strictly-increasing"
-    return "not-strictly-increasing"
-
-
-def settling_endpoint_errors(
-    metrics: Mapping[str, object],
-    *,
-    expected_api: str,
-    expected_context_generation: int | None,
-    expected_width: int | None = None,
-    expected_height: int | None = None,
-) -> tuple[str, ...]:
-    """Validate one comparable small-window HDR resource endpoint."""
-    errors = list(
-        publication_state_errors(
-            metrics,
-            expected_index=1,
-            expected_signal="hdr",
-            expected_api=expected_api,
-            expected_context_generation=expected_context_generation,
-        )
-    )
-    if (
-        expected_width is not None
-        and expected_height is not None
-        and (metrics.get("width"), metrics.get("height"))
-        != (expected_width, expected_height)
-    ):
-        errors.append(
-            "logical window size did not reach the comparable "
-            f"{expected_width}×{expected_height} HDR endpoint"
-        )
-    for key in ("rss_kib", "drm_vram_kib"):
-        error = _required_nonnegative_kib(metrics, key)
-        if error:
-            errors.append(error)
-    return tuple(errors)
-
-
-def evaluate_resource_settling_validation(
-    *,
-    active_api: str | None,
-    session_status: str,
-    expected_api: str,
-    endpoint_results: tuple[Mapping[str, object], ...],
-    step_results: tuple[Mapping[str, object], ...],
-    final: Mapping[str, object],
-    expected_context_generation: int | None,
-    failure_reason: str | None,
-    isolation_failures: tuple[str, ...],
-) -> tuple[str, tuple[str, ...], dict[str, str]]:
-    """Apply the bounded resource-settling acceptance matrix.
-
-    This intentionally emits WARN only for three same-state, strictly rising
-    endpoint samples. It neither fits a byte threshold nor claims that a
-    passing workload is leak-free.
-    """
-    errors: list[str] = []
-    if active_api != expected_api:
-        errors.append(f"active API was {active_api!r}, expected {expected_api!r}")
-    if session_status != "active":
-        errors.append(f"renderer session ended as {session_status!r}")
-    if failure_reason:
-        errors.append(failure_reason)
-    if isolation_failures:
-        errors.append("validation process isolation was incomplete")
-
-    expected_actions = tuple(step.action for step in validation_steps("settling"))
-    actual_actions = tuple(str(result.get("action")) for result in step_results)
-    if actual_actions != expected_actions:
-        errors.append("resource-settling action sequence was incomplete or out of order")
-    if any(result.get("status") != "PASS" for result in step_results):
-        errors.append("one or more resource-settling actions failed")
-    if len(endpoint_results) != 3:
-        errors.append("three comparable small-window HDR endpoints were required")
-
-    rss_values: list[int] = []
-    drm_vram_values: list[int] = []
-    endpoint_sizes: list[tuple[int, int]] = []
-    for expected_cycle, result in enumerate(endpoint_results, start=1):
-        expected_state = result.get("expected_state")
-        if expected_state != (expected_cycle, 1, "hdr", 960, 540):
-            errors.append("resource endpoint sequence was incomplete or out of order")
-        metrics = result.get("metrics")
-        if not isinstance(metrics, Mapping):
-            errors.append("resource endpoint metrics were unavailable")
-            continue
-        errors.extend(
-            settling_endpoint_errors(
-                metrics,
-                expected_api=expected_api,
-                expected_context_generation=expected_context_generation,
-            )
-        )
-        rss = metrics.get("rss_kib")
-        drm_vram = metrics.get("drm_vram_kib")
-        if isinstance(rss, int) and not isinstance(rss, bool) and rss >= 0:
-            rss_values.append(rss)
-        if (
-            isinstance(drm_vram, int)
-            and not isinstance(drm_vram, bool)
-            and drm_vram >= 0
-        ):
-            drm_vram_values.append(drm_vram)
-        width, height = metrics.get("width"), metrics.get("height")
-        if (
-            isinstance(width, int)
-            and not isinstance(width, bool)
-            and width > 0
-            and isinstance(height, int)
-            and not isinstance(height, bool)
-            and height > 0
-        ):
-            endpoint_sizes.append((width, height))
-        else:
-            errors.append("actual small-window HDR endpoint size was unavailable")
-
-    if len(endpoint_sizes) == 3 and len(set(endpoint_sizes)) != 1:
-        errors.append(
-            "the three actual small-window HDR endpoint sizes were not comparable"
-        )
-
-    if int(final.get("gl_errors", 0)) != 0:
-        errors.append("CineHDR observed OpenGL errors")
-    if int(final.get("fbo_failures", 0)) != 0:
-        errors.append("CineHDR observed FBO allocation failures")
-    if final.get("idle_active") is not True or final.get("time_pos_available") is not False:
-        errors.append("final cooldown did not prove that media was unloaded")
-    if (
-        expected_context_generation is not None
-        and final.get("render_context_generation") != expected_context_generation
-    ):
-        errors.append("renderer context changed during the resource-settling matrix")
-
-    trends = {
-        "rss_kib": resource_settling_trend(tuple(rss_values)),
-        "drm_vram_kib": resource_settling_trend(tuple(drm_vram_values)),
-    }
-    if errors:
-        return "FAIL", tuple(errors), trends
-    warnings = tuple(
-        f"three comparable HDR endpoint samples were strictly increasing for {key}"
-        for key, trend in trends.items()
-        if trend == "strictly-increasing"
-    )
-    return ("WARN" if warnings else "PASS"), warnings, trends
-
-
 class GpuValidationSession:
     """Drive one opt-in validation run and write a path-safe text report."""
 
@@ -1923,7 +1700,6 @@ class GpuValidationSession:
         self._pending_render_frame_generation = 0
         self._transition_original_hdr_mode: str | None = None
         self._publication_context_generation: int | None = None
-        self._settling_context_generation: int | None = None
         self._expected_playlist_count = validation_expected_playlist_count(
             config.mode
         )
@@ -1949,7 +1725,6 @@ class GpuValidationSession:
         logger.info("Starting %s GPU validation session", self.config.mode)
         toast = {
             "publication": _("Wayland publication validation is starting"),
-            "settling": _("Wayland resource-settling validation is starting"),
             "gradient": _("HDR gradient validation is starting"),
         }.get(self.config.mode, _("GPU Next validation is starting"))
         self.window.show_toast(toast, True)
@@ -2171,19 +1946,11 @@ class GpuValidationSession:
                 self._publication_context_generation = int(
                     getattr(self.video_area, "render_context_generation", 0)
                 )
-            if self.config.mode == "settling":
-                self._settling_context_generation = int(
-                    getattr(self.video_area, "render_context_generation", 0)
-                )
             self.window.show_toast(
                 (
                     _("Wayland publication validation is running — do not interact")
                     if self.config.mode == "publication"
-                    else (
-                        _("Wayland resource-settling validation is running — do not interact")
-                        if self.config.mode == "settling"
-                        else _("GPU validation is running — do not interact")
-                    )
+                    else _("GPU validation is running — do not interact")
                 ),
                 True,
             )
@@ -2329,32 +2096,6 @@ class GpuValidationSession:
                 getattr(self.video_area, "render_frame_generation", 0)
             )
             self.player.command("playlist-play-index", int(playlist_index))
-        elif step.action in ("settling-warmup", "settling-switch"):
-            playlist_index, _expected_signal = step.value
-            self._pending_render_frame_generation = int(
-                getattr(self.video_area, "render_frame_generation", 0)
-            )
-            self.player.command("playlist-play-index", int(playlist_index))
-        elif step.action == "settling-resize":
-            _playlist_index, _expected_signal, width, height = step.value
-            self._pending_render_frame_generation = int(
-                getattr(self.video_area, "render_frame_generation", 0)
-            )
-            self.window.unfullscreen()
-            self.window.unmaximize()
-            # Request the exact logical size after unmaximize is observed.
-            # A compositor may negotiate another size; the evaluator records
-            # that actual size and requires all measured endpoints to match.
-            GLib.timeout_add(500, self._request_window_size, width, height)
-        elif step.action == "settling-endpoint":
-            # The preceding resize/switch must already have published a newer
-            # frame. This wait records the same paused HDR state, not a new
-            # playback event.
-            pass
-        elif step.action == "settling-unload":
-            self.player.command("stop")
-        elif step.action == "settling-cooldown":
-            pass
         else:
             raise ValueError(f"unknown validation action: {step.action}")
 
@@ -2534,94 +2275,11 @@ class GpuValidationSession:
         }
         self._finish(None)
 
-    def _verify_settling_step(
-        self, step: ValidationStep, after: dict[str, object], expected_api: str
-    ) -> tuple[str, str]:
-        """Verify the paused fixed-fixture matrix without normal-mode rules."""
-        if step.action in ("settling-unload", "settling-cooldown"):
-            if after.get("idle_active") is not True or after.get(
-                "time_pos_available"
-            ) is not False:
-                return "FAIL", "mpv did not prove that the media was unloaded"
-            if int(after.get("gl_errors", 0)) != 0:
-                return "FAIL", "CineHDR observed OpenGL errors"
-            if int(after.get("fbo_failures", 0)) != 0:
-                return "FAIL", "CineHDR observed FBO allocation failures"
-            if (
-                self._settling_context_generation is not None
-                and after.get("render_context_generation")
-                != self._settling_context_generation
-            ):
-                return "FAIL", "renderer context changed after media unload"
-            return "PASS", "media remained unloaded while renderer context stayed active"
-
-        if step.action == "settling-endpoint":
-            cycle, expected_index, expected_signal, width, height = step.value
-        elif step.action == "settling-resize":
-            expected_index, expected_signal, width, height = step.value
-            cycle = None
-        else:
-            expected_index, expected_signal = step.value
-            width = None
-            cycle = None
-
-        if step.action == "settling-endpoint":
-            errors = list(
-                settling_endpoint_errors(
-                    after,
-                    expected_api=expected_api,
-                    expected_context_generation=self._settling_context_generation,
-                )
-            )
-        else:
-            errors = list(
-                publication_state_errors(
-                    after,
-                    expected_index=int(expected_index),
-                    expected_signal=str(expected_signal),
-                    expected_api=expected_api,
-                    expected_context_generation=self._settling_context_generation,
-                )
-            )
-        if step.action in (
-            "settling-warmup",
-            "settling-switch",
-            "settling-resize",
-        ) and int(after["render_frame_generation"]) <= self._pending_render_frame_generation:
-            errors.append("no newer frame was published for the settling transition")
-        if width is not None:
-            actual_size = (after.get("width"), after.get("height"))
-            if (
-                not isinstance(actual_size[0], int)
-                or not isinstance(actual_size[1], int)
-                or actual_size[0] <= 0
-                or actual_size[1] <= 0
-            ):
-                errors.append("window lost its drawable size during settling")
-            elif step.action == "settling-resize" and actual_size == self._pending_before_size:
-                errors.append(
-                    "compositor did not apply the requested logical size transition"
-                )
-        if errors:
-            return "FAIL", "; ".join(errors)
-        if cycle is not None:
-            return "PASS", (
-                f"cycle {cycle} comparable small-window HDR endpoint; frame "
-                f"generation {after['render_frame_generation']}"
-            )
-        return "PASS", f"actual {str(expected_signal).upper()} settling state confirmed"
-
     def _verify_step(self, step: ValidationStep, after: dict[str, object]) -> tuple[str, str]:
         active_api, session_status = self._renderer_facts()
         expected_api = self._expected_active_api()
         if active_api != expected_api or session_status != "active":
             return "FAIL", f"renderer became {active_api}/{session_status}"
-
-        if (
-            getattr(getattr(self, "config", None), "mode", None) == "settling"
-            and step.action.startswith("settling-")
-        ):
-            return self._verify_settling_step(step, after, expected_api)
 
         if getattr(getattr(self, "config", None), "mode", None) == "publication" and step.action in (
             "publication-state", "switch-media"
@@ -2822,8 +2480,6 @@ class GpuValidationSession:
     def _write_report(self, failure_reason: str | None) -> tuple[Path, str]:
         if self.config.mode == "publication":
             return self._write_publication_report(failure_reason)
-        if self.config.mode == "settling":
-            return self._write_resource_settling_report(failure_reason)
         if self.config.mode == "gradient":
             return self._write_gradient_report(failure_reason)
         final = self._metrics_snapshot()
@@ -3007,140 +2663,6 @@ class GpuValidationSession:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         report_path = self.config.report_dir / f"gpu-next-{self.config.mode}-{stamp}.txt"
         report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        return report_path, overall
-
-    def _write_resource_settling_report(
-        self, failure_reason: str | None
-    ) -> tuple[Path, str]:
-        """Write the separate, machine-readable bounded settling evidence."""
-        active_api, session_status = self._renderer_facts()
-        expected_api = self._expected_active_api()
-        endpoint_results = tuple(
-            result
-            for result in self.step_results
-            if result.get("action") == "settling-endpoint"
-        )
-        cooldown_result = next(
-            (
-                result
-                for result in reversed(self.step_results)
-                if result.get("action") == "settling-cooldown"
-                and isinstance(result.get("metrics"), Mapping)
-            ),
-            None,
-        )
-        cooldown_metrics = (
-            cooldown_result["metrics"]
-            if isinstance(cooldown_result, Mapping)
-            and isinstance(cooldown_result.get("metrics"), Mapping)
-            else self._metrics_snapshot()
-        )
-        isolation_failures = tuple(
-            getattr(self.window.app, "_gpu_validation_setup_failures", ())
-        )
-        overall, findings, trends = evaluate_resource_settling_validation(
-            active_api=active_api,
-            session_status=session_status,
-            expected_api=expected_api,
-            endpoint_results=endpoint_results,
-            step_results=tuple(self.step_results),
-            final=cooldown_metrics,
-            expected_context_generation=self._settling_context_generation,
-            failure_reason=failure_reason,
-            isolation_failures=isolation_failures,
-        )
-
-        def endpoint_values(key: str) -> list[int | None]:
-            values: list[int | None] = []
-            for result in endpoint_results:
-                metrics = result.get("metrics")
-                value = metrics.get(key) if isinstance(metrics, Mapping) else None
-                values.append(value if isinstance(value, int) and not isinstance(value, bool) else None)
-            return values
-
-        elapsed = time.monotonic() - self.started_at
-        report = {
-            "schema": SETTLING_SCHEMA,
-            "revision": SETTLING_REVISION,
-            "status": overall,
-            "mode": "settling",
-            "elapsed_seconds": elapsed,
-            "fixture": {
-                "profile": self.config.fixture_profile,
-                "revision": self.config.fixture_revision,
-                "sdr_sha256": self.config.fixture_sdr_sha256,
-                "hdr_sha256": self.config.fixture_hdr_sha256,
-            },
-            "expected_backend": self.config.expected_backend,
-            "expected_renderer_api": expected_api,
-            "active_renderer_api": active_api,
-            "renderer_status": session_status,
-            "validation_hdr_mode": "auto (temporary; saved preference unchanged)",
-            "saved_position_session_watch_later_playlist_writes": "disabled",
-            "context_generation": self._settling_context_generation,
-            "warm_up": next(
-                (
-                    result
-                    for result in self.step_results
-                    if result.get("action") == "settling-warmup"
-                ),
-                None,
-            ),
-            "actions": self.step_results,
-            "hdr_endpoints": list(endpoint_results),
-            "endpoint_requested_logical_size": {"width": 960, "height": 540},
-            "endpoint_actual_logical_sizes": [
-                (
-                    {
-                        "width": result.get("metrics", {}).get("width"),
-                        "height": result.get("metrics", {}).get("height"),
-                    }
-                    if isinstance(result.get("metrics"), Mapping)
-                    else None
-                )
-                for result in endpoint_results
-            ],
-            "cooldown": cooldown_result,
-            "cooldown_metrics": cooldown_metrics,
-            "endpoint_trends": {
-                "rss_kib": {
-                    "samples": endpoint_values("rss_kib"),
-                    "classification": trends["rss_kib"],
-                },
-                "drm_vram_kib": {
-                    "samples": endpoint_values("drm_vram_kib"),
-                    "classification": trends["drm_vram_kib"],
-                },
-            },
-            "diagnostic_only": {
-                "process_drm_gtt_kib": endpoint_values("drm_gtt_kib"),
-                "global_vram_kib": [
-                    (
-                        result.get("metrics", {}).get("global_vram_kib")
-                        if isinstance(result.get("metrics"), Mapping)
-                        else None
-                    )
-                    for result in endpoint_results
-                ],
-                "note": "GTT and global VRAM are recorded for context only and do not determine status.",
-            },
-            "findings": list(findings),
-            "scope": (
-                "PASS means this bounded repeated allocation workload had no "
-                "strictly-increasing same-state RSS or process DRM VRAM signal "
-                "and met structural checks. It is not a leak-free claim, does "
-                "not fit a byte threshold, and does not certify long-media, "
-                "compositor, display, or color behavior."
-            ),
-        }
-        self.config.report_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        report_path = self.config.report_dir / (
-            f"gate2-resource-settling-{self.config.expected_backend}-{stamp}.json"
-        )
-        report_path.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
         return report_path, overall
 
     def _write_publication_report(
