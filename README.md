@@ -127,7 +127,7 @@ python3 run_dev.py /path/to/video.mkv
 ## How this project is built
 
 CineHDR is developed by its owner with AI coding assistants: first Google
-Gemini, then OpenAI Codex/ChatGPT, and now Anthropic Claude. Most of the HDR
+Gemini, then OpenAI ChatGPT, and now Anthropic Claude. Most of the HDR
 code was written by these assistants under written rules ([AGENTS.md](AGENTS.md))
 and an evidence protocol ([docs/TESTING.md](docs/TESTING.md)). The owner sets
 the goals and runs every hardware check; an assistant never claims a result it
