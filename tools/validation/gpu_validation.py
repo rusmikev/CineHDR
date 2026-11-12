@@ -162,7 +162,7 @@ def is_verified_flatpak_container(
     return True
 
 VALIDATION_MODES = (
-    "quick", "soak", "sdr-soak", "lifecycle", "transition", "publication",
+    "soak", "sdr-soak", "lifecycle", "transition", "publication",
     "settling", "gradient",
 )
 READY_STABLE_SECONDS = 4.0

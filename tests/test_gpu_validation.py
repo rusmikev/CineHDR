@@ -247,14 +247,14 @@ class ValidationConfigTests(unittest.TestCase):
     def test_validator_is_off_by_default(self):
         self.assertIsNone(validation_config_from_env({}))
 
-    def test_quick_config_uses_requested_report_directory(self):
+    def test_gradient_config_uses_requested_report_directory(self):
         config = validation_config_from_env(
             {
-                "CINEHDR_GPU_VALIDATION": "QUICK",
+                "CINEHDR_GPU_VALIDATION": "GRADIENT",
                 "CINEHDR_GPU_VALIDATION_REPORT_DIR": "/tmp/cinehdr-reports",
             }
         )
-        self.assertEqual(config.mode, "quick")
+        self.assertEqual(config.mode, "gradient")
         self.assertEqual(config.report_dir, Path("/tmp/cinehdr-reports"))
 
     def test_invalid_mode_fails_closed(self):
@@ -326,7 +326,7 @@ class ValidationConfigTests(unittest.TestCase):
         self.assertEqual(validation_expected_playlist_count("transition"), 2)
         self.assertEqual(validation_expected_playlist_count("publication"), 2)
         self.assertEqual(validation_expected_playlist_count("settling"), 2)
-        self.assertIsNone(validation_expected_playlist_count("quick"))
+        self.assertIsNone(validation_expected_playlist_count("soak"))
 
     def test_validation_player_does_not_restore_or_save_watch_later(self):
         player = {}
@@ -378,13 +378,6 @@ drm-memory-vram: 512 KiB
 
 
 class ValidationPlanTests(unittest.TestCase):
-    def test_quick_plan_exercises_playback_and_window_transitions(self):
-        steps = validation_steps("quick")
-        actions = {step.action for step in steps}
-        self.assertEqual(actions, {"play", "pause", "seek", "resize", "fullscreen"})
-        self.assertEqual(steps[0].name, "normalize start position")
-        self.assertLess(sum(step.wait_seconds for step in steps), 120)
-
     def test_soak_adds_thirty_minute_playback(self):
         steps = validation_steps("soak")
         self.assertTrue(
