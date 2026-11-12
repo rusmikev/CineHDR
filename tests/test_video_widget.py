@@ -352,7 +352,8 @@ class TestVideoWidgetLifecycleAndHdrWiring(unittest.TestCase):
             allow_creation_fallback=False,
         )
 
-        with patch("src.video_widget.Gtk.GLArea", return_value=mock_area), \
+        with patch("src.video_widget.Gtk.Widget.__init__", return_value=None), \
+             patch("src.video_widget.Gtk.GLArea", return_value=mock_area), \
              patch("src.video_widget.HdrController", return_value=mock_ctrl), \
              patch.object(MpvVideoWidget, "connect"):
             widget = MpvVideoWidget(mock_mpv, render_backend_selection=selection)
