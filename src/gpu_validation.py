@@ -62,17 +62,34 @@ PUBLICATION_HDR_SHA256 = (
 PUBLICATION_SDR_SHA256 = (
     "41393a0ee9dd887a1f11d4b21946fef3d1f49e72127719eefd1ac40aa9d5e360"
 )
+def _accepted_libplacebo_versions(version: str) -> frozenset[str]:
+    return frozenset(
+        {
+            version,
+            f"v{version}",
+            f"v{version} (v{version})",
+            f"{version} (v{version})",
+            f"v{version} ({version})",
+            f"{version} ({version})",
+        }
+    )
+
+
 PUBLICATION_MPV_VERSION = "mpv v0.41.0-dev-g97179bce7"
-PUBLICATION_LIBPLACEBO_VERSION = "7.360.1"
-PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS = frozenset(
+PUBLICATION_LEGACY_MPV_VERSION = "mpv v0.41.0-dirty"
+PUBLICATION_LEGACY_MPV_ACCEPTED_VERSIONS = frozenset(
     {
-        PUBLICATION_LIBPLACEBO_VERSION,
-        f"v{PUBLICATION_LIBPLACEBO_VERSION}",
-        f"v{PUBLICATION_LIBPLACEBO_VERSION} (v{PUBLICATION_LIBPLACEBO_VERSION})",
-        f"{PUBLICATION_LIBPLACEBO_VERSION} (v{PUBLICATION_LIBPLACEBO_VERSION})",
-        f"v{PUBLICATION_LIBPLACEBO_VERSION} ({PUBLICATION_LIBPLACEBO_VERSION})",
-        f"{PUBLICATION_LIBPLACEBO_VERSION} ({PUBLICATION_LIBPLACEBO_VERSION})",
+        PUBLICATION_LEGACY_MPV_VERSION,
+        "mpv v0.41.0",
     }
+)
+PUBLICATION_LIBPLACEBO_VERSION = "7.387.0"
+PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS = _accepted_libplacebo_versions(
+    PUBLICATION_LIBPLACEBO_VERSION
+)
+HOST_PUBLICATION_LIBPLACEBO_VERSION = "7.360.1"
+HOST_PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS = _accepted_libplacebo_versions(
+    HOST_PUBLICATION_LIBPLACEBO_VERSION
 )
 PUBLICATION_FFMPEG_VERSION = "8.1.2"
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1568,6 +1585,7 @@ def publication_runtime_errors(
     is_flatpak_context: bool | None = None,
     host_prefix: Path | None = None,
     flatpak_prefix: Path | None = None,
+    expected_api: str | None = None,
 ) -> tuple[str, ...]:
     """Return strict pinned-runtime identity failures for fixed-fixture modes.
 
@@ -1579,15 +1597,15 @@ def publication_runtime_errors(
     if not isinstance(runtime, Mapping):
         return ("render runtime evidence was unavailable",)
     errors: list[str] = []
+    in_container = (
+        is_flatpak_context
+        if is_flatpak_context is not None
+        else is_verified_flatpak_container()
+    )
     libmpv_path = runtime.get("libmpv_path")
     if not isinstance(libmpv_path, str) or not libmpv_path.strip():
         errors.append("libmpv was not loaded from the pinned GPU Next prefix")
     else:
-        in_container = (
-            is_flatpak_context
-            if is_flatpak_context is not None
-            else is_verified_flatpak_container()
-        )
         resolved = Path(libmpv_path.strip()).resolve()
         if in_container:
             base_flatpak_dir = (
@@ -1614,14 +1632,26 @@ def publication_runtime_errors(
             if resolved not in valid_host_paths:
                 errors.append("libmpv was not loaded from the pinned GPU Next prefix")
 
-    if runtime.get("mpv_version") != PUBLICATION_MPV_VERSION:
+    if expected_api == "opengl":
+        if runtime.get("mpv_version") not in PUBLICATION_LEGACY_MPV_ACCEPTED_VERSIONS:
+            errors.append("mpv runtime identity was not the accepted v0.41.0 build")
+    elif runtime.get("mpv_version") != PUBLICATION_MPV_VERSION:
         errors.append("mpv runtime identity was not the accepted g97179bce7 build")
+
+    if in_container:
+        expected_placebo_version = PUBLICATION_LIBPLACEBO_VERSION
+        accepted_placebo_versions = PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS
+    else:
+        expected_placebo_version = HOST_PUBLICATION_LIBPLACEBO_VERSION
+        accepted_placebo_versions = HOST_PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS
     raw_placebo = runtime.get("libplacebo_version")
     if (
         not isinstance(raw_placebo, str)
-        or raw_placebo not in PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS
+        or raw_placebo not in accepted_placebo_versions
     ):
-        errors.append("libplacebo runtime identity was not 7.360.1")
+        errors.append(
+            f"libplacebo runtime identity was not {expected_placebo_version}"
+        )
     if runtime.get("ffmpeg_version") != PUBLICATION_FFMPEG_VERSION:
         errors.append("FFmpeg runtime identity was not 8.1.2")
     return tuple(errors)
@@ -1682,7 +1712,12 @@ def publication_state_errors(
             errors.append("actual GDK texture dimensions did not match the scaled widget")
         if texture.get("display_is_wayland") is not True or texture.get("surface_is_wayland") is not True:
             errors.append("actual GDK display/surface was not Wayland")
-    errors.extend(publication_runtime_errors(metrics.get("render_runtime")))
+    errors.extend(
+        publication_runtime_errors(
+            metrics.get("render_runtime"),
+            expected_api=expected_api,
+        )
+    )
     return tuple(errors)
 
 
@@ -1723,7 +1758,12 @@ def evaluate_publication_validation(
         errors.append("CineHDR observed FBO allocation failures")
     if str(final.get("hwdec", "")).lower() != "vaapi-copy":
         errors.append("active hardware decode was not vaapi-copy")
-    errors.extend(publication_runtime_errors(final.get("render_runtime")))
+    errors.extend(
+        publication_runtime_errors(
+            final.get("render_runtime"),
+            expected_api=expected_api,
+        )
+    )
     if pixel_oracle_result is not None:
         pixel_status, pixel_reasons = pixel_oracle_result
         if pixel_status != "PASS":

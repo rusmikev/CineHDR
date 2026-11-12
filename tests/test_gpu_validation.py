@@ -68,10 +68,12 @@ except Exception:
 
 from src.gpu_validation import (
     GpuValidationSession,
+    HOST_PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS,
     PUBLICATION_FFMPEG_VERSION,
     PUBLICATION_FIXTURE_PROFILE,
     PUBLICATION_FIXTURE_REVISION,
     PUBLICATION_HDR_SHA256,
+    PUBLICATION_LEGACY_MPV_VERSION,
     PUBLICATION_LIBMPV_PREFIX_SUFFIX,
     PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS,
     PUBLICATION_MPV_VERSION,
@@ -137,15 +139,19 @@ def settling_environment(**overrides):
     return environment
 
 
-def pinned_publication_runtime(*, is_flatpak: bool | None = None):
+def pinned_publication_runtime(*, is_flatpak: bool | None = None, expected_api: str = "opengl-next"):
     in_container = (
         is_flatpak if is_flatpak is not None else is_verified_flatpak_container()
     )
     base = FLATPAK_LIBMPV_DIR if in_container else HOST_LIBMPV_DIR
     return {
         "libmpv_path": str((base / "libmpv.so.2.5.0").resolve()),
-        "mpv_version": PUBLICATION_MPV_VERSION,
-        "libplacebo_version": "v7.360.1",
+        "mpv_version": (
+            PUBLICATION_LEGACY_MPV_VERSION
+            if expected_api == "opengl"
+            else PUBLICATION_MPV_VERSION
+        ),
+        "libplacebo_version": "v7.387.0" if in_container else "v7.360.1",
         "ffmpeg_version": PUBLICATION_FFMPEG_VERSION,
     }
 
@@ -165,7 +171,7 @@ def publication_metrics(signal: str, *, api: str = "opengl-next"):
         "gl_errors": 0,
         "fbo_failures": 0,
         "render_context_generation": 4,
-        "render_runtime": pinned_publication_runtime(),
+        "render_runtime": pinned_publication_runtime(expected_api=api),
         "publication_texture": {
             "available": True,
             "texture_is_gl_texture": True,
@@ -977,24 +983,67 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertEqual(ev_clamp["expected_height"], 700)
 
     def test_publication_libplacebo_version_strict_formats(self):
-        def make_runtime(placebo_val):
-            rt = dict(pinned_publication_runtime())
+        def make_runtime(placebo_val, *, is_flatpak: bool = True, expected_api: str = "opengl-next"):
+            rt = dict(pinned_publication_runtime(is_flatpak=is_flatpak, expected_api=expected_api))
             rt["libplacebo_version"] = placebo_val
             return rt
 
-        # Positive controls: All accepted exact formats pass without libplacebo error
+        # Positive controls (Flatpak container): 7.387.0 exact formats pass
         for accepted in PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS:
-            with self.subTest(accepted=accepted):
-                errs = publication_runtime_errors(make_runtime(accepted))
+            with self.subTest(context="flatpak", accepted=accepted):
+                errs = publication_runtime_errors(
+                    make_runtime(accepted, is_flatpak=True),
+                    is_flatpak_context=True,
+                )
                 self.assertEqual(errs, (), f"Unexpected rejection of accepted format: {accepted}")
 
-        # Specifically verify the exact string seen in Run 4 Flatpak container
-        run4_container_version = "v7.360.1 (v7.360.1)"
-        errs_run4 = publication_runtime_errors(make_runtime(run4_container_version))
-        self.assertEqual(errs_run4, ())
+        # Verify exact container runtime strings observed in built product Flatpak
+        errs_product = publication_runtime_errors(
+            make_runtime("v7.387.0 (v7.387.0)", is_flatpak=True, expected_api="opengl"),
+            is_flatpak_context=True,
+            expected_api="opengl",
+        )
+        self.assertEqual(errs_product, ())
 
-        # Negative controls: Variations and invalid formats must be rejected without free substring search
-        rejected_versions = (
+        # Positive controls (host mpv-gpu-next-prefix): 7.360.1 exact formats pass
+        for accepted in HOST_PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS:
+            with self.subTest(context="host", accepted=accepted):
+                errs = publication_runtime_errors(
+                    make_runtime(accepted, is_flatpak=False),
+                    is_flatpak_context=False,
+                )
+                self.assertEqual(errs, (), f"Unexpected rejection of host accepted format: {accepted}")
+
+        # Negative controls: Flatpak rejects 7.360.1 and invalid variations without free substring search
+        rejected_flatpak = (
+            "v7.360.1",
+            "v7.360.1 (v7.360.1)",
+            "v7.387.0-dirty",
+            "v7.387.0-1-gabcdef",
+            "v7.386.0",
+            "v7.387.09",
+            "7.387.09",
+            "libplacebo v7.387.0",
+            "v7.387.0 (v7.386.0)",
+            "v7.387.0 (v7.387.1)",
+            "",
+            None,
+            123,
+        )
+        for rejected in rejected_flatpak:
+            with self.subTest(context="flatpak", rejected=rejected):
+                errs = publication_runtime_errors(
+                    make_runtime(rejected, is_flatpak=True),
+                    is_flatpak_context=True,
+                )
+                self.assertTrue(
+                    any("libplacebo runtime identity was not 7.387.0" in e for e in errs),
+                    f"Expected rejection of invalid Flatpak libplacebo version format: {rejected!r}",
+                )
+
+        # Negative controls (host): reject 7.387.0 and invalid variations
+        rejected_host = (
+            "v7.387.0",
             "v7.360.1-dirty",
             "v7.360.1-1-gabcdef",
             "v7.359.0",
@@ -1008,13 +1057,27 @@ class PublicationEvidenceTests(unittest.TestCase):
             None,
             123,
         )
-        for rejected in rejected_versions:
-            with self.subTest(rejected=rejected):
-                errs = publication_runtime_errors(make_runtime(rejected))
+        for rejected in rejected_host:
+            with self.subTest(context="host", rejected=rejected):
+                errs = publication_runtime_errors(
+                    make_runtime(rejected, is_flatpak=False),
+                    is_flatpak_context=False,
+                )
                 self.assertTrue(
                     any("libplacebo runtime identity was not 7.360.1" in e for e in errs),
-                    f"Expected rejection of invalid libplacebo version format: {rejected!r}",
+                    f"Expected rejection of invalid host libplacebo version format: {rejected!r}",
                 )
+
+        # Legacy product opengl rejects dev-g97179bce7 mpv build
+        errs_wrong_mpv = publication_runtime_errors(
+            make_runtime("v7.387.0 (v7.387.0)", is_flatpak=True, expected_api="opengl-next"),
+            is_flatpak_context=True,
+            expected_api="opengl",
+        )
+        self.assertTrue(
+            any("mpv runtime identity was not the accepted v0.41.0 build" in e for e in errs_wrong_mpv),
+            errs_wrong_mpv,
+        )
 
     def test_missing_actual_texture_getter_is_unavailable_not_intended_state(self):
         class FakeTexture:
@@ -1100,54 +1163,56 @@ class PublicationEvidenceTests(unittest.TestCase):
     def test_flatpak_candidate_libmpv_path_and_foreign_substitution(self):
         """Candidate in Flatpak container loads /app/lib/libmpv.so.2.5.0, verified canonically."""
         # 1. Candidate in verified Flatpak container: /app/lib/libmpv.so.2.5.0 -> ACCEPTED
-        flatpak_runtime = pinned_publication_runtime()
+        flatpak_runtime = pinned_publication_runtime(is_flatpak=True)
         flatpak_runtime["libmpv_path"] = "/app/lib/libmpv.so.2.5.0"
         errors = publication_runtime_errors(flatpak_runtime, is_flatpak_context=True)
         self.assertEqual(errors, ())
 
         # Also with soname symlink /app/lib/libmpv.so.2 -> ACCEPTED
-        flatpak_symlink = pinned_publication_runtime()
+        flatpak_symlink = pinned_publication_runtime(is_flatpak=True)
         flatpak_symlink["libmpv_path"] = "/app/lib/libmpv.so.2"
         errors_sym = publication_runtime_errors(flatpak_symlink, is_flatpak_context=True)
         self.assertEqual(errors_sym, ())
 
         # 2. Outside container context (on host): /app/lib/ is strictly REJECTED
-        errors_on_host = publication_runtime_errors(flatpak_runtime, is_flatpak_context=False)
+        host_rejected_flatpak = pinned_publication_runtime(is_flatpak=False)
+        host_rejected_flatpak["libmpv_path"] = "/app/lib/libmpv.so.2.5.0"
+        errors_on_host = publication_runtime_errors(host_rejected_flatpak, is_flatpak_context=False)
         self.assertEqual(len(errors_on_host), 1)
         self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_on_host[0])
 
         # 3. Foreign library substitution: /usr/lib/libmpv.so.2 in container -> REJECTED
-        foreign_usr = pinned_publication_runtime()
+        foreign_usr = pinned_publication_runtime(is_flatpak=True)
         foreign_usr["libmpv_path"] = "/usr/lib/libmpv.so.2"
         errors_usr = publication_runtime_errors(foreign_usr, is_flatpak_context=True)
         self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_usr)
 
         # 4. Foreign library substitution: arbitrary /tmp in container -> REJECTED
-        foreign_tmp = pinned_publication_runtime()
+        foreign_tmp = pinned_publication_runtime(is_flatpak=True)
         foreign_tmp["libmpv_path"] = "/tmp/malicious/libmpv.so.2"
         errors_tmp = publication_runtime_errors(foreign_tmp, is_flatpak_context=True)
         self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_tmp)
 
         # 6. Path normalization: redundant slashes and relative segments within /app/lib/
-        norm_slashes = pinned_publication_runtime()
+        norm_slashes = pinned_publication_runtime(is_flatpak=True)
         norm_slashes["libmpv_path"] = "/app//lib///libmpv.so.2.5.0"
         self.assertEqual(publication_runtime_errors(norm_slashes, is_flatpak_context=True), ())
 
-        norm_dots = pinned_publication_runtime()
+        norm_dots = pinned_publication_runtime(is_flatpak=True)
         norm_dots["libmpv_path"] = "/app/lib/../lib/libmpv.so.2"
         self.assertEqual(publication_runtime_errors(norm_dots, is_flatpak_context=True), ())
 
-        norm_spaces = pinned_publication_runtime()
+        norm_spaces = pinned_publication_runtime(is_flatpak=True)
         norm_spaces["libmpv_path"] = "  /app/lib/libmpv.so.2.5.0  \n"
         self.assertEqual(publication_runtime_errors(norm_spaces, is_flatpak_context=True), ())
 
         # 7. Path traversal escaping /app/lib/ is strictly rejected
-        escaping_dots = pinned_publication_runtime()
+        escaping_dots = pinned_publication_runtime(is_flatpak=True)
         escaping_dots["libmpv_path"] = "/app/lib/../../usr/lib/libmpv.so.2"
         errors_escape = publication_runtime_errors(escaping_dots, is_flatpak_context=True)
         self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_escape))
 
-        subpath = pinned_publication_runtime()
+        subpath = pinned_publication_runtime(is_flatpak=True)
         subpath["libmpv_path"] = "/app/lib/subdir/libmpv.so.2"
         errors_subpath = publication_runtime_errors(subpath, is_flatpak_context=True)
         self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_subpath))
@@ -1163,12 +1228,12 @@ class PublicationEvidenceTests(unittest.TestCase):
             symlink_lib.symlink_to("libmpv.so.2.5.0")
 
             # Symlink resolves to real file within flatpak_prefix -> accepted
-            rt_sym = pinned_publication_runtime()
+            rt_sym = pinned_publication_runtime(is_flatpak=True)
             rt_sym["libmpv_path"] = str(symlink_lib)
             self.assertEqual(publication_runtime_errors(rt_sym, is_flatpak_context=True, flatpak_prefix=mock_lib), ())
 
             # Canonical target within flatpak_prefix -> accepted
-            rt_real = pinned_publication_runtime()
+            rt_real = pinned_publication_runtime(is_flatpak=True)
             rt_real["libmpv_path"] = str(real_lib)
             self.assertEqual(publication_runtime_errors(rt_real, is_flatpak_context=True, flatpak_prefix=mock_lib), ())
 
@@ -1178,7 +1243,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             outside_target.write_bytes(b"outside_binary")
             bad_sym = mock_lib / "bad_symlink.so"
             bad_sym.symlink_to(outside_target)
-            rt_bad_sym = pinned_publication_runtime()
+            rt_bad_sym = pinned_publication_runtime(is_flatpak=True)
             rt_bad_sym["libmpv_path"] = str(bad_sym)
             errors_bad_sym = publication_runtime_errors(rt_bad_sym, is_flatpak_context=True, flatpak_prefix=mock_lib)
             self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_bad_sym))

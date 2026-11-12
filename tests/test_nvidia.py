@@ -31,11 +31,16 @@ REPORT_SCHEMA = "cinehdr-vendor-smoke-v2"
 PLAY_DURATION = 8
 SHUTDOWN_TIMEOUT = 3
 
-PINNED_RUNTIME_TOKENS = (
-    "mpv=mpv v0.41.0-dev-g97179bce7",
-    "libplacebo=v7.360.1",
-    "ffmpeg=8.1.2",
+PINNED_LEGACY_MPV_TOKENS = (
+    "mpv=mpv v0.41.0-dirty ",
+    "mpv=mpv v0.41.0 ",
 )
+PINNED_GPU_NEXT_MPV_TOKEN = "mpv=mpv v0.41.0-dev-g97179bce7 "
+PINNED_FLATPAK_LIBPLACEBO_TOKENS = (
+    "libplacebo=v7.387.0 ",
+    "libplacebo=v7.387.0 (v7.387.0) ",
+)
+PINNED_FFMPEG_TOKEN = "ffmpeg=8.1.2 "
 
 FIXTURE_SPECS = {
     "hdr10": {
@@ -334,10 +339,17 @@ def parse_log_file(log_path: os.PathLike[str] | str) -> dict[str, object]:
     )
 
 
-def _runtime_matches(runtime_line: str | None) -> bool:
-    return bool(runtime_line) and all(
-        token.lower() in runtime_line.lower() for token in PINNED_RUNTIME_TOKENS
-    )
+def _runtime_matches(runtime_line: str | None, *, expected_api: str = "opengl-next") -> bool:
+    if not runtime_line:
+        return False
+    lower = runtime_line.lower()
+    if PINNED_FFMPEG_TOKEN.lower() not in lower:
+        return False
+    if not any(token.lower() in lower for token in PINNED_FLATPAK_LIBPLACEBO_TOKENS):
+        return False
+    if expected_api == "opengl":
+        return any(token.lower() in lower for token in PINNED_LEGACY_MPV_TOKENS)
+    return PINNED_GPU_NEXT_MPV_TOKEN.lower() in lower
 
 
 def evaluate_result(
@@ -396,7 +408,10 @@ def evaluate_result(
         )
 
     runtime_line = result.get("runtime_line")
-    if not _runtime_matches(runtime_line if isinstance(runtime_line, str) else None):
+    if not _runtime_matches(
+        runtime_line if isinstance(runtime_line, str) else None,
+        expected_api=expected_api,
+    ):
         return fail(
             "RUNTIME_MISMATCH",
             "the exact pinned mpv/libplacebo/FFmpeg stack was not observed",
