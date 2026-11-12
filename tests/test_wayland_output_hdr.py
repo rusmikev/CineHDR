@@ -25,6 +25,11 @@ subprocess.run(["glib-compile-schemas", _TEMP_SCHEMA_DIR], check=True)
 os.environ["GSETTINGS_SCHEMA_DIR"] = _TEMP_SCHEMA_DIR
 os.environ["GSETTINGS_BACKEND"] = "memory"
 
+import gi  # noqa: E402
+
+gi.require_version("GLib", "2.0")
+from gi.repository import GLib  # noqa: E402
+
 
 class TestClassificationAndModel(unittest.TestCase):
     """Pure classification logic and OutputHdrInfo fields/properties."""
@@ -552,6 +557,301 @@ class TestSynchronousProbe(unittest.TestCase):
         with patch.object(w, "_probe_outputs_unsafe", return_value={}):
             self.assertEqual(w.probe_outputs(), {})
         self.assertEqual(w._backend_error_count, 0)
+
+
+class TestAsyncSourceStateMachine(unittest.TestCase):
+    """WaylandOutputHdrSource end-to-end state transitions and cache updates."""
+
+    def setUp(self):
+        from src import wayland_cm_probe, wayland_output_hdr as w
+
+        self.w = w
+        self.cm_probe = wayland_cm_probe
+        w.invalidate(invalidate_caps=True)
+        wayland_cm_probe.invalidate()
+
+    def tearDown(self):
+        self.w.invalidate(invalidate_caps=True)
+        self.cm_probe.invalidate()
+
+    def test_init_failures_finish_with_tri_state_contract(self):
+        w = self.w
+        with patch.object(w, "_get_wl_display_ptr", return_value=None):
+            src = w.WaylandOutputHdrSource()
+            self.assertTrue(src._done)
+            self.assertIsNone(src.result)
+
+        fake_lib = _FakeWaylandLib({}, {})
+        with _PatchedInDll.install(fake_lib), \
+             patch.object(w, "_get_wl_display_ptr", return_value=0xD159), \
+             patch.object(w, "_load_libwayland", return_value=fake_lib), \
+             patch.object(w, "_configure_symbols", return_value=0xBEEF), \
+             patch.object(w, "_get_monitor_outputs", return_value=[]):
+            src = w.WaylandOutputHdrSource()
+            self.assertTrue(src._done)
+            self.assertEqual(src.result, {})
+
+    def test_async_source_full_roundtrip_updates_cache_and_closes_fd(self):
+        from src.wayland_output_hdr import (
+            PRIMARIES_BT2020,
+            STATE_DONE,
+            STATE_WAIT_DESCRIPTIONS,
+            STATE_WAIT_INFOS,
+            STATE_WAIT_REGISTRY,
+            TF_SRGB,
+            TF_ST2084_PQ,
+        )
+
+        w = self.w
+        r_fd, w_fd = os.pipe()
+        os.close(w_fd)
+        fake_lib = _FakeWaylandLib(
+            globals_map={"wp_color_manager_v1": (9, 2)},
+            mgr_caps={
+                "intents": [0],
+                "features": [2],
+                "tfs": [TF_SRGB, TF_ST2084_PQ],
+                "primaries": [1, PRIMARIES_BT2020],
+            },
+            per_output_behaviors={
+                0x901: {
+                    "ready": True,
+                    "icc_fd": r_fd,
+                    "tf": TF_ST2084_PQ,
+                    "primaries": PRIMARIES_BT2020,
+                    "luminances": (50, 1200, 203),
+                    "target_luminance": (50, 4000),
+                    "target_max_cll": 1200,
+                },
+                0x902: {"failed": True},
+            },
+        )
+        completed = []
+        with _PatchedInDll.install(fake_lib), \
+             patch("os.close", wraps=os.close) as close_spy, \
+             patch.object(w, "_get_wl_display_ptr", return_value=0xD159), \
+             patch.object(w, "_load_libwayland", return_value=fake_lib), \
+             patch.object(w, "_configure_symbols", return_value=0xBEEF), \
+             patch.object(
+                 w,
+                 "_get_monitor_outputs",
+                 return_value=[("DP-1", 0x901), ("eDP-1", 0x902)],
+             ):
+            src = w.WaylandOutputHdrSource(on_complete=completed.append, timeout_sec=5.0)
+            self.assertEqual(src.state, STATE_WAIT_REGISTRY)
+
+            # Tick 1: registry -> descriptions
+            self.assertTrue(src.check())
+            self.assertEqual(src.dispatch(None, None), GLib.SOURCE_CONTINUE)
+            self.assertEqual(src.state, STATE_WAIT_DESCRIPTIONS)
+            self.assertEqual(fake_lib.bound_version, 1)
+            self.assertTrue(self.cm_probe._cache_valid)
+            self.assertTrue(self.cm_probe._cached_result)
+
+            # Tick 2: descriptions -> infos
+            self.assertTrue(src.check())
+            self.assertEqual(src.dispatch(None, None), GLib.SOURCE_CONTINUE)
+            self.assertEqual(src.state, STATE_WAIT_INFOS)
+
+            # Tick 3: infos -> done
+            self.assertTrue(src.check())
+            self.assertEqual(src.dispatch(None, None), GLib.SOURCE_REMOVE)
+            self.assertEqual(src.state, STATE_DONE)
+
+        close_spy.assert_any_call(r_fd)
+        self.assertEqual(len(completed), 1)
+        res = completed[0]
+        self.assertTrue(res["DP-1"].hdr)
+        self.assertEqual(res["DP-1"].max_lum, 1200.0)
+        self.assertEqual(res["DP-1"].target_max_lum, 4000.0)
+        self.assertEqual(res["DP-1"].target_max_cll, 1200.0)
+        self.assertFalse(res["eDP-1"].hdr)
+        self.assertEqual(w.get_output_hdr_states(allow_probe=False), res)
+        self.assertIn(TF_ST2084_PQ, w.get_cm_caps(allow_probe=False).tfs)
+        self.assertEqual(
+            [k for k, _ in fake_lib.destroyed],
+            [
+                "sync_cb",
+                "sync_cb",
+                "sync_cb",
+                "info",
+                "img",
+                "cm_out",
+                "img",
+                "cm_out",
+                "mgr",
+                "registry",
+                "wrapper",
+                "queue",
+            ],
+        )
+
+    def test_async_refresh_output_hdr_states_handles_constructor_failure(self):
+        w = self.w
+        cb = MagicMock()
+        with patch.object(w, "WaylandOutputHdrSource", side_effect=RuntimeError("no loop")):
+            res = w.async_refresh_output_hdr_states(on_complete=cb)
+        self.assertIsNone(res)
+        cb.assert_called_once_with(None)
+
+
+class TestCacheAndPublicApiContract(unittest.TestCase):
+    """Cache invalidation, TTL expiry, public APIs, and Copy Report baseline."""
+
+    def setUp(self):
+        from src import wayland_output_hdr as w
+
+        self.w = w
+        w.invalidate(invalidate_caps=True)
+
+    def tearDown(self):
+        self.w.invalidate(invalidate_caps=True)
+
+    def test_invalidate_preserves_or_clears_cm_caps(self):
+        from src.gtk_cm_policy import CmCaps
+
+        w = self.w
+        caps = CmCaps(intents=frozenset([0]), features=frozenset(), tfs=frozenset([11]), primaries=frozenset([6]))
+        info = {"DP-1": w.OutputHdrInfo("DP-1", hdr=True)}
+        w._update_cache(info, caps)
+        self.assertIs(w.get_cm_caps(allow_probe=False), caps)
+
+        w.invalidate(invalidate_caps=False)
+        self.assertIs(w.get_cm_caps(allow_probe=False), caps)
+        self.assertIsNone(w.get_output_hdr_states(allow_probe=False))
+
+        w.invalidate(invalidate_caps=True)
+        self.assertIsNone(w.get_cm_caps(allow_probe=False))
+
+    def test_ttl_expiry_respects_allow_probe_flag(self):
+        w = self.w
+        first = {"DP-1": w.OutputHdrInfo("DP-1", hdr=False)}
+        second = {"DP-1": w.OutputHdrInfo("DP-1", hdr=True)}
+
+        with patch("src.wayland_output_hdr.time.monotonic", return_value=10.0):
+            w._update_cache(first)
+
+        # Within TTL -> returns cached value without probing.
+        with patch("src.wayland_output_hdr.time.monotonic", return_value=11.0), \
+             patch.object(w, "probe_outputs", return_value=second) as mock_probe:
+            self.assertEqual(w.get_output_hdr_states(allow_probe=True), first)
+            mock_probe.assert_not_called()
+
+        # Expired TTL -> allow_probe=False returns stale cache without blocking; allow_probe=True refreshes.
+        with patch("src.wayland_output_hdr.time.monotonic", return_value=10.0 + w.CACHE_TTL_SECONDS + 0.1), \
+             patch.object(w, "probe_outputs", return_value=second) as mock_probe:
+            self.assertEqual(w.get_output_hdr_states(allow_probe=False), first)
+            mock_probe.assert_not_called()
+            self.assertEqual(w.get_output_hdr_states(allow_probe=True), second)
+            mock_probe.assert_called_once()
+
+    def test_get_cm_caps_probes_only_when_allowed_and_empty(self):
+        from src.gtk_cm_policy import CmCaps
+
+        w = self.w
+        caps = CmCaps(intents=frozenset([0]), features=frozenset(), tfs=frozenset([9, 11]), primaries=frozenset([1, 6]))
+
+        def _fill():
+            w._cache_cm_caps = caps
+            return {}
+
+        with patch.object(w, "probe_outputs", side_effect=_fill) as mock_probe:
+            self.assertIsNone(w.get_cm_caps(allow_probe=False))
+            mock_probe.assert_not_called()
+            self.assertIs(w.get_cm_caps(allow_probe=True), caps)
+            mock_probe.assert_called_once()
+
+    def test_public_symbols_exported_on_wayland_output_hdr(self):
+        from src import wayland_output_hdr as w
+
+        expected = (
+            "TF_BT1886",
+            "TF_GAMMA22",
+            "TF_EXT_LINEAR",
+            "TF_SRGB",
+            "TF_ST2084_PQ",
+            "TF_HLG",
+            "TF_COMPOUND_POWER_2_4",
+            "PRIMARIES_SRGB",
+            "PRIMARIES_BT2020",
+            "CACHE_TTL_SECONDS",
+            "OutputHdrInfo",
+            "classify_hdr",
+            "_InterfaceTable",
+            "_make_listener",
+            "_marshal_destroy",
+            "_get_monitor_outputs",
+            "probe_outputs",
+            "_probe_outputs_unsafe",
+            "_query_one_output",
+            "WaylandOutputHdrSource",
+            "STATE_INIT",
+            "STATE_WAIT_REGISTRY",
+            "STATE_WAIT_DESCRIPTIONS",
+            "STATE_WAIT_INFOS",
+            "STATE_DONE",
+            "_update_cache",
+            "invalidate",
+            "get_cm_caps",
+            "refresh_output_hdr_states",
+            "async_refresh_output_hdr_states",
+            "get_output_hdr_states",
+            "get_monitor_hdr_state",
+        )
+        for name in expected:
+            self.assertTrue(hasattr(w, name), f"Missing exported symbol: {name}")
+
+    def test_diagnostic_copy_report_integration_unchanged(self):
+        from gi.repository import Gio
+
+        from src.diagnostics_report import generate_video_output_report
+        from src.wayland_output_hdr import PRIMARIES_BT2020, TF_ST2084_PQ, OutputHdrInfo
+
+        gres = os.environ.get("CINEHDR_GRESOURCE")
+        if gres and os.path.exists(gres):
+            Gio.resources_register(Gio.Resource.load(gres))
+
+        dp1 = OutputHdrInfo(
+            connector="DP-1",
+            hdr=True,
+            tf=TF_ST2084_PQ,
+            primaries=PRIMARIES_BT2020,
+            min_lum=0.005,
+            max_lum=1000.0,
+            reference_lum=203.0,
+            target_max_lum=4000.0,
+            target_max_cll=1500.0,
+        )
+        mock_mpv = MagicMock()
+        mock_mpv.__getitem__ = MagicMock(side_effect=KeyError)
+        ctrl = MagicMock()
+        ctrl.is_hdr_active = True
+        ctrl.hdr_mode = "auto"
+        ctrl.effective_peak_source = "auto"
+        ctrl.output_hint = "DP-1"
+        ctrl.last_video_params = {"colormatrix": "bt.2020-ncl", "gamma": "pq", "primaries": "bt.2020"}
+        gl_area = MagicMock()
+        gl_area.mpv = mock_mpv
+        gl_area.hdr_controller = ctrl
+        gl_area.render_runtime = {}
+        win = MagicMock()
+        win.gl_area = gl_area
+        win._video_area = gl_area
+
+        with patch("src.wayland_output_hdr.get_output_hdr_states", return_value={"DP-1": dp1}), \
+             patch("src.hdr_detection.check_hdr_support", return_value=True), \
+             patch("src.hdr_detection.get_compositor_cm_support", return_value=True), \
+             patch("src.hdr_detection.hdr_output_allowed", return_value=(True, "allowed")), \
+             patch("src.diagnostics_facts.read_flatpak_info", return_value={}):
+            report = generate_video_output_report(win)
+
+        self.assertIn(
+            "Monitor HDR State: Compositor reports HDR on DP-1 "
+            "(st2084_pq, reported color-volume max ~1000 nits; "
+            "panel luminance not measured; reported target max 4000 nits; "
+            "reported target MaxCLL 1500 nits)",
+            report,
+        )
 
 
 if __name__ == "__main__":
