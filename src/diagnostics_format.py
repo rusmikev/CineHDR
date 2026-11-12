@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from gettext import gettext as _
 import math
+from typing import Any
 
 _MEDIA_PATH_FIELDS = {"media path", "media_path", "file", "filename"}
 
@@ -110,3 +111,122 @@ def build_video_output_report(
                 continue
             lines.append(f"{name}: {_single_line(value)}")
     return "\n".join(lines) + "\n"
+
+
+def format_renderer_ui_labels(
+    configured: str,
+    requested_value: object,
+    source_value: object,
+    active: Any,
+    session_status: str,
+    fallback_reason: Any,
+    failure_reason: Any,
+    restart_reason: Any,
+    preference_restart: bool,
+    is_env_source: bool,
+    runtime: dict[str, Any],
+    target_format: Any,
+    target_depth: Any,
+    gpu_next_status: str,
+    dovi_status: str,
+) -> dict[str, str]:
+    """Format UI presentation labels for the renderer section."""
+    configured_label = _("GPU Next · Experimental") if configured == "gpu-next" else _("Standard · OpenGL")
+    requested_label = _("{renderer} (source: {source})").format(renderer=requested_value, source=source_value)
+    active_label = {
+        "opengl": _("Standard · OpenGL"),
+        "opengl-next": _("GPU Next · Experimental"),
+    }.get(active, _("Not initialized"))
+    if session_status in ("initialization-failure", "runtime-failure", "lifecycle-failure"):
+        active_label = _("{renderer} — stopped; restart required").format(renderer=active_label)
+    if gl_device := runtime.get("gl_renderer"):
+        active_label = f"{active_label} ({gl_device})"
+
+    if failure_reason or restart_reason:
+        visible_status = _("Stopped · Restart required")
+    elif fallback_reason:
+        visible_status = _("Fallback to Standard")
+    elif preference_restart:
+        visible_status = _("Restart required")
+    elif is_env_source:
+        visible_status = _("Environment override active")
+    else:
+        visible_status = _("Running normally")
+
+    dependency_summary = _("Not initialized")
+    if runtime:
+        dependency_summary = (
+            f"{runtime.get('mpv_version', 'unknown')} · "
+            f"libplacebo {runtime.get('libplacebo_version', 'unknown')} · "
+            f"FFmpeg {runtime.get('ffmpeg_version', 'unknown')} · "
+            f"{runtime.get('libmpv_path', 'unknown')}"
+        )
+
+    if target_format == "GL_RGBA16F" and target_depth == 16:
+        target_summary = _("RGBA16F · 16-bit float")
+    elif target_format == "GL_RGBA8" and target_depth == 8:
+        target_summary = _("RGBA8 · 8-bit")
+    elif target_format and target_depth:
+        target_summary = f"{str(target_format).removeprefix('GL_')} · {target_depth}-bit"
+    else:
+        target_summary = _("Waiting for first frame")
+
+    return {
+        "renderer_configured_row": configured_label,
+        "renderer_requested_row": requested_label,
+        "renderer_active_row": active_label,
+        "renderer_reason_row": visible_status,
+        "renderer_dependency_row": dependency_summary,
+        "renderer_target_row": target_summary,
+        "gpu_next_capability_row": gpu_next_status,
+        "dovi_capability_row": dovi_status,
+    }
+
+
+def format_hwdec_str(hw_current: Any, hw_config_str: str) -> str:
+    """Format hardware/software decoding status for diagnostics."""
+    if hw_current and str(hw_current).lower() not in ("no", "none", ""):
+        return f"{hw_current} ({_('GPU Acceleration active')}; configured: {hw_config_str})"
+    if hw_current and str(hw_current).lower() in ("no", "none"):
+        return f"{_('Software / CPU Decoding')} (active: no; configured: {hw_config_str})"
+    if hw_current is None or str(hw_current).strip() == "":
+        if hw_config_str != "unknown" and hw_config_str.lower() not in ("no", "none", ""):
+            return f"{_('Unknown (configured: ')}{hw_config_str})"
+        return _("Unknown")
+    return f"{_('Software / CPU Decoding')} (active: {hw_current}; configured: {hw_config_str})"
+
+
+def format_dovi_profile_desc(
+    dovi: dict[str, Any],
+    mapped_to_next: bool,
+    active: Any,
+    session_status: str,
+) -> str:
+    """Format Dolby Vision profile/level and RPU processing status string."""
+    profile = dovi.get("profile")
+    level = dovi.get("level")
+    if profile is None:
+        if mapped_to_next:
+            desc = _("Detected — RPU metadata mapped to GPU Next (profile unknown; validation pending)")
+        elif active == "opengl-next":
+            desc = _("Detected — profile unknown; RPU mapping is not verified for this build")
+        else:
+            desc = _("Detected — profile unknown (RPU not processed)")
+    elif dovi.get("unsupported"):
+        if mapped_to_next:
+            desc = _("Profile {p} — RPU path observed, but blocked pending color validation; forced to SDR").format(p=profile)
+        elif active == "opengl-next" and session_status == "active":
+            desc = _("Profile {p} — blocked pending GPU Next validation; forced to SDR").format(p=profile)
+        else:
+            desc = _("Profile {p} — unsupported by the current renderer; forced to SDR").format(p=profile)
+    elif mapped_to_next and profile == 7:
+        desc = _("Profile 7 — RPU metadata mapped to GPU Next; enhancement layer unsupported; validation pending")
+    elif mapped_to_next:
+        desc = _("Profile {p} — RPU metadata mapped to GPU Next (validation pending)").format(p=profile)
+    elif profile == 7:
+        desc = _("Profile 7 — base layer only (RPU / enhancement layer not processed)")
+    elif profile == 8:
+        desc = _("Profile 8 — base-layer fallback (RPU not processed; compatibility ID unknown)")
+    else:
+        desc = _("Profile {p} (RPU not processed)").format(p=profile)
+    return f"{desc} · Level {level}" if level else desc
