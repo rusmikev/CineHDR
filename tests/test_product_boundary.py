@@ -20,8 +20,12 @@ class ProductBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.build_dir = Path(sys.argv[1])
+        cls.source_root = Path(__file__).resolve().parent.parent
         cls.schema_dir = tempfile.TemporaryDirectory(prefix="cinehdr-c22-schema-")
-        for schema in (cls.build_dir.parent / "data").glob("*.gschema.xml"):
+        schemas = list((cls.source_root / "data").glob("*.gschema.xml"))
+        if not schemas:
+            raise RuntimeError(f"No .gschema.xml files found in {cls.source_root / 'data'}")
+        for schema in schemas:
             shutil.copy2(schema, cls.schema_dir.name)
         subprocess.run(["glib-compile-schemas", cls.schema_dir.name], check=True)
         os.environ["GSETTINGS_SCHEMA_DIR"] = cls.schema_dir.name
