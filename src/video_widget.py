@@ -72,7 +72,7 @@ from .render_backend import (
     should_render_frame,
     target_configuration_requires_redraw,
 )
-from .utils import idle_add_once, get_display_param
+from .utils import get_display_param, idle_add_once, mpv_prop
 
 # CPU-side wait budget for the GTK < 4.16 fallback path (no
 # GdkGLTextureBuilder.set_sync). glClientWaitSync takes a real timeout in
@@ -342,12 +342,12 @@ class MpvVideoWidget(Gtk.Widget):
                 isinstance(current_video, (int, str)) and str(current_video).isdigit() is False
             ):
                 return
-            try:
-                configured_video = str(
-                    self.mpv._get_property("options/vid")
-                ).strip().lower()
-            except Exception:
-                configured_video = ""
+            configured_val = mpv_prop(self.mpv, "options/vid", "")
+            configured_video = (
+                str(configured_val).strip().lower()
+                if configured_val is not None
+                else ""
+            )
             self._video_selection_for_context_restore = (
                 "auto"
                 if configured_video in ("auto", "-1")

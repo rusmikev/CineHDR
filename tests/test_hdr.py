@@ -3040,7 +3040,7 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
                 self.dovi_rpu_warning_count = 0
                 self.dovi_rpu_warning_text = None
                 self._dovi_rpu_logged = False
-                self.mpv = MagicMock()
+                self.mpv = MagicMock(spec=[])
         return DummyOwner()
 
     def test_first_warning_saved_and_text_captured(self):
@@ -3057,11 +3057,8 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
             owner.dovi_rpu_warning_text,
             "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 42",
         )
-        self.assertEqual(owner.mpv._dovi_rpu_warning_count, 1)
-        self.assertEqual(
-            owner.mpv._dovi_rpu_warning_text,
-            "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 42",
-        )
+        self.assertFalse(hasattr(owner.mpv, "_dovi_rpu_warning_count"))
+        self.assertFalse(hasattr(owner.mpv, "_dovi_rpu_warning_text"))
         mock_logger.warning.assert_called_once()
         warning_args = mock_logger.warning.call_args[0]
         self.assertIn("further duplicate RPU warnings suppressed", warning_args[0])
@@ -3081,7 +3078,7 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
 
         self.assertEqual(owner.dovi_rpu_warning_count, 9)
         self.assertEqual(owner.dovi_rpu_warning_text, first_text)
-        self.assertEqual(owner.mpv._dovi_rpu_warning_count, 9)
+        self.assertFalse(hasattr(owner.mpv, "_dovi_rpu_warning_count"))
         self.assertEqual(mock_logger.warning.call_count, 1)
         mock_logger.log.assert_not_called()
 
@@ -3181,8 +3178,6 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
                 mock_win.dovi_rpu_warning_count = count
                 mock_win.dovi_rpu_warning_text = text
                 mock_mpv = MagicMock()
-                mock_mpv._dovi_rpu_warning_count = count
-                mock_mpv._dovi_rpu_warning_text = text
                 mock_mpv.get_property.return_value = None
                 mock_mpv.__getitem__.side_effect = KeyError
                 mock_win.mpv = mock_mpv
@@ -3268,8 +3263,6 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
         mock_win.dovi_rpu_warning_count = 1
         mock_win.dovi_rpu_warning_text = "ffmpeg: Multiple Dolby Vision RPUs found in frame 1"
         mock_mpv = MagicMock()
-        mock_mpv._dovi_rpu_warning_count = 1
-        mock_mpv._dovi_rpu_warning_text = mock_win.dovi_rpu_warning_text
         mock_mpv.get_property.return_value = None
         mock_mpv.__getitem__.side_effect = KeyError
         mock_win.mpv = mock_mpv
@@ -3287,7 +3280,6 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
 
         # 2. A new warning arrives in background (count becomes 2)
         mock_win.dovi_rpu_warning_count = 2
-        mock_mpv._dovi_rpu_warning_count = 2
 
         # 3. Export Copy Report without calling update_diagnostics()
         report_1 = diag._copy_report()
@@ -3346,8 +3338,6 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
         mock_win.dovi_rpu_warning_count = 0
         mock_win.dovi_rpu_warning_text = None
         mock_mpv = MagicMock()
-        mock_mpv._dovi_rpu_warning_count = 0
-        mock_mpv._dovi_rpu_warning_text = None
 
         props = {"hwdec": "vaapi-copy", "hwdec-current": "vaapi-copy"}
 
@@ -4634,6 +4624,392 @@ class TestWindowShutdownLifecycle(unittest.TestCase):
         mock_warn.assert_called_once()
         self.assertIn("timed out", mock_warn.call_args[0][0].lower())
         win.app.uninhibit.assert_called_once_with(42)
+
+
+class TestMpvProp(unittest.TestCase):
+    """Behavioral tests for utils.mpv_prop per AGENTS.md §6.2."""
+
+    def test_none_player_returns_default(self):
+        from src.utils import mpv_prop
+
+        self.assertIsNone(mpv_prop(None, "path"))
+        self.assertEqual(mpv_prop(None, "path", default="fallback"), "fallback")
+
+    def test_dict_access_and_falsy_preservation(self):
+        from src.utils import mpv_prop
+
+        data = {
+            "path": "/media/test.mkv",
+            "vid": 1,
+            "zero": 0,
+            "false": False,
+            "empty": "",
+            "options/vid": "auto",
+        }
+        self.assertEqual(mpv_prop(data, "path"), "/media/test.mkv")
+        self.assertEqual(mpv_prop(data, "vid"), 1)
+        self.assertEqual(mpv_prop(data, "zero"), 0)
+        self.assertIs(mpv_prop(data, "false"), False)
+        self.assertEqual(mpv_prop(data, "empty"), "")
+        self.assertEqual(mpv_prop(data, "missing", default=42), 42)
+
+    def test_options_prefix_handling(self):
+        from src.utils import mpv_prop
+
+        data = {"options/sub": 2}
+        self.assertEqual(mpv_prop(data, "options/sub"), 2)
+
+        data_stripped = {"sub": 2}
+        self.assertEqual(mpv_prop(data_stripped, "options/sub"), 2)
+
+    def test_pure_subscriptable_player(self):
+        from src.utils import mpv_prop
+
+        class SubscriptableOnly:
+            def __init__(self, items):
+                self._items = items
+
+            def __getitem__(self, key):
+                if key in self._items:
+                    return self._items[key]
+                raise KeyError(key)
+
+        player = SubscriptableOnly({"video-params": {"gamma": "pq"}, "time-pos": 10.0})
+        self.assertEqual(mpv_prop(player, "video-params"), {"gamma": "pq"})
+        self.assertEqual(mpv_prop(player, "time-pos"), 10.0)
+        self.assertIsNone(mpv_prop(player, "nonexistent"))
+        self.assertEqual(mpv_prop(player, "nonexistent", default="def"), "def")
+
+    def test_mock_get_property(self):
+        from src.utils import mpv_prop
+
+        class GetPropertyMock:
+            def __init__(self, items):
+                self._items = items
+
+            def get_property(self, name):
+                return self._items.get(name)
+
+        player = GetPropertyMock({"track-list": [{"type": "video"}]})
+        self.assertEqual(mpv_prop(player, "track-list"), [{"type": "video"}])
+        self.assertIsNone(mpv_prop(player, "missing"))
+
+    def test_attribute_fallback(self):
+        from src.utils import mpv_prop
+
+        class AttrPlayer:
+            path = "/media/sample.mp4"
+            video_params = {"primaries": "bt.2020"}
+            _private_attr = "should_not_leak"
+
+        player = AttrPlayer()
+        self.assertEqual(mpv_prop(player, "path"), "/media/sample.mp4")
+        self.assertEqual(mpv_prop(player, "video-params"), {"primaries": "bt.2020"})
+        # Private attribute access is blocked
+        self.assertIsNone(mpv_prop(player, "_private_attr"))
+
+    def test_raising_exceptions_return_default(self):
+        from src.utils import mpv_prop
+
+        class FailingPlayer:
+            def __getitem__(self, key):
+                raise RuntimeError("mpv failure")
+
+            def get_property(self, name):
+                raise AttributeError("mpv attribute error")
+
+        player = FailingPlayer()
+        self.assertIsNone(mpv_prop(player, "video-params"))
+        self.assertEqual(mpv_prop(player, "video-params", default="safe"), "safe")
+
+    def test_python_mpv_style_getitem_options_prefix_and_nested_runtime_props(self):
+        """Regression: runtime & nested props must work when __getitem__ prepends options/."""
+        from src.diagnostics_report import get_mpv_prop
+        from src.hdr_detection import get_dovi_info
+        from src.render_backend import media_frame_evidence, render_runtime_diagnostics
+        from src.utils import mpv_prop
+
+        class PythonMpvPublicDouble:
+            """Faithfully models installed mpv.py: __getitem__ -> options/, __getattr__ -> runtime props."""
+
+            def __init__(self, options, props):
+                object.__setattr__(self, "_options", dict(options))
+                object.__setattr__(self, "_props", dict(props))
+                object.__setattr__(self, "getattr_names", [])
+
+            def __getitem__(self, name, file_local=False):
+                prefix = "file-local-options/" if file_local else "options/"
+                if name in self._options:
+                    return self._options[name]
+                raise AttributeError("mpv property does not exist", -8, prefix + name)
+
+            def __getattr__(self, name):
+                self.getattr_names.append(name)
+                mpv_name = name.replace("_", "-")
+                if mpv_name in self._props:
+                    return self._props[mpv_name]
+                if mpv_name.startswith("options/"):
+                    opt = mpv_name[8:]
+                    if opt in self._options:
+                        return self._options[opt]
+                raise AttributeError("mpv property does not exist", -8, mpv_name)
+
+        player = PythonMpvPublicDouble(
+            options={"vid": "auto", "hwdec": ["auto"]},
+            props={
+                "path": "/media/dovi_p5.mkv",
+                "vid": 1,
+                "time-pos": 0.0,
+                "hwdec-current": "vaapi",
+                "mpv-version": "mpv v0.41.0",
+                "ffmpeg-version": "9.0.2",
+                "mpv-configuration": "-Dlibmpv=true",
+                "video-params": {"w": 3840, "h": 2160, "gamma": "pq", "sig-peak": 10.0},
+                "video-params/w": 3840,
+                "video-params/gamma": "pq",
+                "video-params/sig-peak": 10.0,
+                # libmpv returns None for bare 'current-tracks' and expects subproperties
+                "current-tracks": None,
+                "current-tracks/video/dolby-vision-profile": 5,
+                "current-tracks/video/dolby-vision-level": 6,
+                "track-list": [{"id": 1, "type": "video", "selected": True}],
+            },
+        )
+
+        # Must distinguish option ('auto') vs runtime track (1)
+        self.assertEqual(mpv_prop(player, "options/vid"), "auto")
+        self.assertEqual(mpv_prop(player, "vid"), 1)
+        # Runtime top-level properties (unavailable through __getitem__)
+        self.assertEqual(mpv_prop(player, "path"), "/media/dovi_p5.mkv")
+        self.assertEqual(mpv_prop(player, "hwdec-current"), "vaapi")
+        self.assertEqual(mpv_prop(player, "time-pos"), 0.0)
+        # Nested slash runtime properties
+        self.assertEqual(mpv_prop(player, "video-params/w"), 3840)
+        self.assertEqual(mpv_prop(player, "video-params/gamma"), "pq")
+        self.assertEqual(mpv_prop(player, "video-params/sig-peak"), 10.0)
+        self.assertEqual(mpv_prop(player, "current-tracks/video/dolby-vision-profile"), 5)
+        self.assertEqual(mpv_prop(player, "current-tracks/video/dolby-vision-level"), 6)
+        self.assertEqual(get_mpv_prop(player, "video-params/w"), 3840)
+
+        # Caller integration without _get_property or track-list fallback shortcuts
+        dovi_info = get_dovi_info(
+            {"colormatrix": "dolbyvision", "primaries": "bt.2020", "gamma": "pq"},
+            player,
+        )
+        self.assertEqual(dovi_info, {"profile": 5, "level": 6, "unsupported": True})
+
+        evidence = media_frame_evidence(player)
+        self.assertIsNotNone(evidence)
+        self.assertEqual((evidence.source_width, evidence.source_height, evidence.time_pos), (3840, 2160, 0.0))
+
+        class FakeMpvMod:
+            backend_name = "legacy"
+            __file__ = "/nonexistent/mpv.py"
+
+        runtime = render_runtime_diagnostics(FakeMpvMod, player)
+        self.assertEqual(runtime["mpv_version"], "mpv v0.41.0")
+        self.assertEqual(runtime["ffmpeg_version"], "9.0.2")
+        self.assertEqual(runtime["mpv_configuration"], "-Dlibmpv=true")
+
+        # Registered _MPV_TYPES fast path must hit option __getitem__ / runtime getattr
+        # directly in one read without probing non-existent get_property.
+        import src.utils as utils_mod
+
+        mpv_like = PythonMpvPublicDouble(
+            options={"vid": "auto"},
+            props={
+                "vid": 1,
+                "current-tracks/video/dolby-vision-profile": 5,
+            },
+        )
+        with patch.object(utils_mod, "_MPV_TYPES", (PythonMpvPublicDouble,)):
+            self.assertEqual(mpv_prop(mpv_like, "options/vid"), "auto")
+            self.assertEqual(mpv_prop(mpv_like, "vid"), 1)
+            self.assertEqual(mpv_prop(mpv_like, "current-tracks/video/dolby-vision-profile"), 5)
+        self.assertEqual(mpv_like.getattr_names, ["vid", "current-tracks/video/dolby-vision-profile"])
+
+    def test_python_mpv_style_top_level_attr_nested_container_traversal(self):
+        """Nested paths also resolve via parent dict/list containers when '/' is rejected in getattr."""
+        from src.hdr_detection import get_dovi_info
+        from src.utils import mpv_prop
+
+        class TopLevelOnlyAttrDouble:
+            def __init__(self):
+                object.__setattr__(self, "_options", {"vid": "auto"})
+                object.__setattr__(
+                    self,
+                    "_props",
+                    {
+                        "video-params": {"w": 1920, "h": 1080, "gamma": "hlg"},
+                        "current-tracks": {
+                            "video": {
+                                "dolby-vision-profile": 8,
+                                "dolby-vision-level": 4,
+                            }
+                        },
+                        "track-list": [
+                            {"id": 1, "type": "video", "selected": True, "dolby-vision-profile": 8}
+                        ],
+                    },
+                )
+
+            def __getitem__(self, name):
+                if name in self._options:
+                    return self._options[name]
+                raise AttributeError("mpv property does not exist", -8, f"options/{name}")
+
+            def __getattr__(self, name):
+                if "/" in name:
+                    raise AttributeError(f"slash path unsupported in top-level attr: {name}")
+                mpv_name = name.replace("_", "-")
+                if mpv_name in self._props:
+                    return self._props[mpv_name]
+                raise AttributeError(mpv_name)
+
+        player = TopLevelOnlyAttrDouble()
+        self.assertEqual(mpv_prop(player, "options/vid"), "auto")
+        self.assertEqual(mpv_prop(player, "video-params/w"), 1920)
+        self.assertEqual(mpv_prop(player, "video-params/gamma"), "hlg")
+        self.assertEqual(mpv_prop(player, "current-tracks/video/dolby-vision-profile"), 8)
+        self.assertEqual(mpv_prop(player, "current-tracks/video/dolby-vision-level"), 4)
+        self.assertEqual(mpv_prop(player, "track-list/0/dolby-vision-profile"), 8)
+        self.assertIsNone(mpv_prop(player, "video-params/nonexistent"))
+        self.assertEqual(
+            get_dovi_info({"colormatrix": "dolbyvision"}, player),
+            {"profile": 8, "level": 4, "unsupported": False},
+        )
+
+    def test_shutdown_error_aborts_lookup_immediately(self):
+        """ShutdownError during lookup must stop fallbacks and return default cleanly."""
+        import src.utils as utils_mod
+
+        class FakeShutdownError(SystemError):
+            pass
+
+        class DyingPlayer:
+            def __init__(self):
+                object.__setattr__(self, "calls", 0)
+
+            def __getitem__(self, key):
+                object.__setattr__(self, "calls", self.calls + 1)
+                raise FakeShutdownError("libmpv core has been shutdown")
+
+            def __getattr__(self, name):
+                object.__setattr__(self, "calls", self.calls + 1)
+                raise FakeShutdownError("libmpv core has been shutdown")
+
+        player = DyingPlayer()
+        with patch.object(utils_mod, "_MPV_SHUTDOWN_ERRORS", (FakeShutdownError,)):
+            self.assertIsNone(utils_mod.mpv_prop(player, "current-tracks/video/dolby-vision-profile"))
+            self.assertEqual(player.calls, 1)
+            self.assertEqual(utils_mod.mpv_prop(player, "options/vid", default="offline"), "offline")
+            self.assertEqual(player.calls, 2)
+
+    def test_mpv_prop_works_when_mpv_module_unavailable(self):
+        """src.utils must handle missing python-mpv/libmpv cleanly without depending on libmpv."""
+        import importlib.util
+        import pathlib
+        import sys
+
+        utils_path = pathlib.Path(__file__).resolve().parents[1] / "src" / "utils.py"
+        spec = importlib.util.spec_from_file_location("_test_utils_no_mpv", utils_path)
+        mod = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"mpv": None}):
+            spec.loader.exec_module(mod)
+        self.assertEqual(mod._MPV_SHUTDOWN_ERRORS, ())
+        self.assertEqual(mod._MPV_TYPES, ())
+        self.assertEqual(mod.mpv_prop({"path": "/x.mkv", "video-params": {"w": 1920}}, "video-params/w"), 1920)
+        self.assertEqual(mod.mpv_prop(None, "path", default="fallback"), "fallback")
+
+    def test_options_crop_changed_reads_video_params_via_mpv_prop(self):
+        """OptionsMenuButton._on_crop_changed must work via mpv_prop without _get_property."""
+        from types import SimpleNamespace
+        from src.options import OptionsMenuButton
+
+        commands = []
+
+        class CropPlayerDouble:
+            def __getitem__(self, name):
+                raise AttributeError("mpv property does not exist", -8, f"options/{name}")
+
+            def __getattr__(self, name):
+                if name == "video-params/w":
+                    return 3840
+                if name == "video-params/h":
+                    return 2160
+                raise AttributeError(name)
+
+            def command_async(self, *args):
+                commands.append(args)
+
+        menu = SimpleNamespace(
+            crop_reset_btn=MagicMock(),
+            _win=SimpleNamespace(mpv=CropPlayerDouble()),
+            _set_sensitive=MagicMock(),
+        )
+        # Index 2 in RATIOS is 4/3 (2160 * 4 / 3 = 2880 -> "2880x2160").
+        dropdown = SimpleNamespace(get_selected=lambda: 2)
+        OptionsMenuButton._on_crop_changed(menu, dropdown)
+        self.assertEqual(commands, [("set", "video-crop", "2880x2160")])
+        menu._set_sensitive.assert_called_once_with(menu.crop_reset_btn, True)
+
+
+@unittest.skipUnless(
+    os.environ.get("CINEHDR_RUN_MPV_INTEGRATION") == "1",
+    "Optional real libmpv integration test; set CINEHDR_RUN_MPV_INTEGRATION=1 to run",
+)
+class TestMpvPropRealMpvIntegration(unittest.TestCase):
+    """Optional out-of-process integration test against installed libmpv with no user config."""
+
+    def test_real_python_mpv_player_lifecycle_isolated(self):
+        import site
+        import subprocess
+        import sys
+        import tempfile
+
+        code = """
+import sys
+try:
+    import mpv
+except (ImportError, OSError):
+    sys.exit(77)
+
+from src.utils import mpv_prop
+
+p = mpv.MPV(vo="null", ao="null", config=False, input_default_bindings=False)
+try:
+    assert mpv_prop(p, "options/vid") == "auto"
+    assert mpv_prop(p, "vid") == "auto"
+    ver = mpv_prop(p, "mpv-version")
+    assert isinstance(ver, str) and ver.startswith("mpv")
+    assert mpv_prop(p, "path") is None
+    assert mpv_prop(p, "path", default="fallback") == "fallback"
+    assert mpv_prop(p, "current-tracks/video/dolby-vision-profile") is None
+finally:
+    p.terminate()
+
+assert mpv_prop(p, "vid") is None
+assert mpv_prop(p, "vid", default="offline") == "offline"
+assert mpv_prop(p, "path") is None
+"""
+        pythonpath_parts = [p for p in (os.environ.get("PYTHONPATH", ""), os.getcwd(), site.getusersitepackages()) if p]
+        with tempfile.TemporaryDirectory() as empty_cfg:
+            env = {
+                **os.environ,
+                "HOME": empty_cfg,
+                "XDG_CONFIG_HOME": empty_cfg,
+                "MPV_HOME": empty_cfg,
+                "PYTHONPATH": os.pathsep.join(pythonpath_parts),
+            }
+            proc = subprocess.run(
+                [sys.executable, "-c", code],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+        if proc.returncode == 77:
+            self.skipTest("python-mpv or libmpv unavailable")
+        self.assertEqual(proc.returncode, 0, f"Subprocess failed:\n{proc.stderr}")
 
 
 if __name__ == "__main__":

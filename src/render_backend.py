@@ -24,6 +24,8 @@ import hashlib
 import os
 from typing import TypeVar
 
+from .utils import mpv_prop
+
 
 RENDER_BACKEND_ENV = "CINEHDR_RENDER_BACKEND"
 
@@ -261,18 +263,9 @@ def media_frame_evidence(player: object) -> MediaFrameEvidence | None:
     string is represented by a SHA-256 token for comparison by the launcher.
     """
 
-    getter = getattr(player, "_get_property", None)
-    if not callable(getter):
-        getter = getattr(player, "get_property", None)
-    if not callable(getter):
-        return None
-
-    try:
-        path = getter("path")
-        video_params = getter("video-params")
-        time_pos = getter("time-pos")
-    except Exception:
-        return None
+    path = mpv_prop(player, "path")
+    video_params = mpv_prop(player, "video-params")
+    time_pos = mpv_prop(player, "time-pos")
 
     if not isinstance(path, str) or not path.strip():
         return None
@@ -410,19 +403,14 @@ def render_runtime_diagnostics(mpv_module, player) -> dict[str, str]:
         "mpv_configuration": "unknown",
     }
 
-    get_property = getattr(player, "_get_property", None)
-    if get_property:
-        for property_name, field_name in (
-            ("mpv-version", "mpv_version"),
-            ("ffmpeg-version", "ffmpeg_version"),
-            ("mpv-configuration", "mpv_configuration"),
-        ):
-            try:
-                value = get_property(property_name)
-            except Exception:
-                value = None
-            if value is not None:
-                diagnostics[field_name] = str(value)
+    for property_name, field_name in (
+        ("mpv-version", "mpv_version"),
+        ("ffmpeg-version", "ffmpeg_version"),
+        ("mpv-configuration", "mpv_configuration"),
+    ):
+        value = mpv_prop(player, property_name)
+        if value is not None:
+            diagnostics[field_name] = str(value)
 
     try:
         placebo_name = ctypes.util.find_library("placebo")

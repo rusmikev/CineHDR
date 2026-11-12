@@ -20,6 +20,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from .utils import mpv_prop
+
 logger = logging.getLogger(__name__)
 
 _MEDIA_PATH_FIELDS = {"media path", "media_path", "file", "filename"}
@@ -72,28 +74,8 @@ def _source_peak_nits(params: dict) -> int | None:
 
 
 def get_mpv_prop(mpv: Any, name: str, default: Any = None) -> Any:
-    """Safely query an mpv property via method, item, or attribute access."""
-    if mpv is None:
-        return default
-    if hasattr(mpv, "get_property"):
-        try:
-            res = mpv.get_property(name)
-            return res if res is not None else default
-        except Exception:
-            pass
-    try:
-        res = mpv[name]
-        return res if res is not None else default
-    except Exception:
-        pass
-    try:
-        attr_name = name.replace("-", "_")
-        if hasattr(mpv, attr_name):
-            res = getattr(mpv, attr_name)
-            return res if res is not None else default
-    except Exception:
-        pass
-    return default
+    """Safely query an mpv property via utils.mpv_prop."""
+    return mpv_prop(mpv, name, default)
 
 
 def format_dovi_rpu_warnings(count: int | None, text: str | None) -> str:
@@ -108,16 +90,12 @@ def format_dovi_rpu_warnings(count: int | None, text: str | None) -> str:
     return msg
 
 
-def get_dovi_rpu_warning_state(win: Any, mpv: Any = None) -> tuple[int | None, str | None]:
-    """Retrieve player-instance tracked RPU warning state safely."""
-    count = None
-    text = None
-    if win is not None:
-        count = getattr(win, "dovi_rpu_warning_count", None)
-        text = getattr(win, "dovi_rpu_warning_text", None)
-    if count is None and mpv is not None:
-        count = getattr(mpv, "_dovi_rpu_warning_count", None)
-        text = getattr(mpv, "_dovi_rpu_warning_text", None)
+def get_dovi_rpu_warning_state(win: Any, _mpv: Any = None) -> tuple[int | None, str | None]:
+    """Retrieve window-tracked RPU warning state cleanly."""
+    if win is None:
+        return None, None
+    count = getattr(win, "dovi_rpu_warning_count", None)
+    text = getattr(win, "dovi_rpu_warning_text", None)
     return count, text
 
 

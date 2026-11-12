@@ -36,6 +36,7 @@ from gi.repository import Gdk, Gtk
 from . import wayland_cm_probe
 from . import wayland_output_hdr
 from .gtk_cm_policy import gtk_cm_opted_in, gtk_color_managed, gtk_can_tag_hdr, TF_PQ
+from .utils import mpv_prop
 
 
 _cached_support = None
@@ -317,31 +318,8 @@ DOVI_UNSUPPORTED_PROFILES = (5,)
 
 
 def _query_mpv_prop(mpv_player: Any, name: str) -> Any:
-    """
-    Read a single mpv property; return None if unset, unavailable or erroring.
-
-    Each accessor is attempted independently: python-mpv raises when a property
-    is unavailable (the normal case for `dolby-vision-profile` on non-DV files),
-    and a raising first accessor must not stop the remaining ones from running.
-    """
-    if mpv_player is None:
-        return None
-
-    for getter in ("_get_property", "get_property"):
-        fn = getattr(mpv_player, getter, None)
-        if not callable(fn):
-            continue
-        try:
-            res = fn(name)
-        except Exception:
-            continue
-        if res is not None:
-            return res
-
-    try:
-        return mpv_player[name]
-    except Exception:
-        return None
+    """Read a single mpv property via utils.mpv_prop; return None if unavailable."""
+    return mpv_prop(mpv_player, name)
 
 
 def _coerce_profile(value: Any) -> Optional[int]:

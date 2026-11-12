@@ -99,9 +99,6 @@ def make_mpv_log_handler(owner, mpv_logger=None):
                     owner.dovi_rpu_warning_text = f"{prefix}: {clean_msg}"
                 else:
                     owner.dovi_rpu_warning_text = clean_msg
-            if hasattr(owner, "mpv") and owner.mpv is not None:
-                owner.mpv._dovi_rpu_warning_count = owner.dovi_rpu_warning_count
-                owner.mpv._dovi_rpu_warning_text = owner.dovi_rpu_warning_text
             if not owner._dovi_rpu_logged:
                 owner._dovi_rpu_logged = True
                 mpv_logger.warning(
@@ -280,8 +277,6 @@ class CineWindow(Adw.ApplicationWindow):
             save_watch_history=True,
             watch_history_path=WATCH_HISTORY_JSONL,
         )
-        self.mpv._dovi_rpu_warning_count = self.dovi_rpu_warning_count
-        self.mpv._dovi_rpu_warning_text = self.dovi_rpu_warning_text
 
         self._video_area = MpvVideoWidget(
             self.mpv,
