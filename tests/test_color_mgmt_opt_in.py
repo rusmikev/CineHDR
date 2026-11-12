@@ -14,6 +14,8 @@ import ast
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -36,9 +38,11 @@ from src.gtk_cm_policy import (  # noqa: E402
     TF_SRGB,
     CmCaps,
     apply_color_mgmt_opt_in,
+    apply_gsk_renderer_policy,
     color_mgmt_opt_out_requested,
     gdk_debug_excludes_color_mgmt,
     gdk_debug_enables_color_mgmt,
+    get_gtk_version,
     gtk_can_tag_hdr,
     gtk_cm_opted_in,
     gtk_color_managed,
@@ -497,6 +501,83 @@ class TestGtkColorManagedCaps(unittest.TestCase):
         ok, reason = gtk_color_managed(empty_caps, env={"GDK_DEBUG": "color-mgmt"})
         self.assertFalse(ok)
         self.assertFalse(gtk_can_tag_hdr(empty_caps))
+
+
+class TestGtkVersionAndGskRendererPolicy(unittest.TestCase):
+    """Hermetic tests for get_gtk_version() and apply_gsk_renderer_policy()."""
+
+    def test_get_gtk_version_reads_major_minor(self):
+        fake_lib = SimpleNamespace(
+            gtk_get_major_version=lambda: 4,
+            gtk_get_minor_version=lambda: 24,
+        )
+        with patch("ctypes.CDLL", return_value=fake_lib) as cdll_mock:
+            self.assertEqual(get_gtk_version(), (4, 24))
+        cdll_mock.assert_called_once_with("libgtk-4.so.1")
+
+    def test_get_gtk_version_returns_none_and_warns_on_oserror(self):
+        with (
+            patch("ctypes.CDLL", side_effect=OSError("libgtk-4.so.1: cannot open")),
+            self.assertLogs("src.gtk_cm_policy", level="WARNING") as captured,
+        ):
+            self.assertIsNone(get_gtk_version())
+        self.assertTrue(any("libgtk-4.so.1" in msg for msg in captured.output))
+
+    def test_get_gtk_version_returns_none_and_warns_on_attribute_error(self):
+        with (
+            patch("ctypes.CDLL", return_value=SimpleNamespace()),
+            self.assertLogs("src.gtk_cm_policy", level="WARNING") as captured,
+        ):
+            self.assertIsNone(get_gtk_version())
+        self.assertTrue(any("Failed to detect GTK version" in msg for msg in captured.output))
+
+    def test_apply_gsk_renderer_policy_respects_existing_env_override(self):
+        env = {"GSK_RENDERER": "vulkan"}
+        with patch("src.gtk_cm_policy.get_gtk_version") as version_mock:
+            result = apply_gsk_renderer_policy(env)
+        self.assertEqual(result, "vulkan")
+        self.assertEqual(env["GSK_RENDERER"], "vulkan")
+        version_mock.assert_not_called()
+
+    def test_apply_gsk_renderer_policy_niri_socket_forces_gl(self):
+        env = {"NIRI_SOCKET": "/run/user/1000/niri.sock"}
+        with patch("src.gtk_cm_policy.get_gtk_version", return_value=(4, 24)) as version_mock:
+            result = apply_gsk_renderer_policy(env)
+        self.assertEqual(result, "gl")
+        self.assertEqual(env["GSK_RENDERER"], "gl")
+        version_mock.assert_called_once_with()
+
+    def test_apply_gsk_renderer_policy_niri_unknown_version_leaves_env_unset(self):
+        env = {"NIRI_SOCKET": "/run/user/1000/niri.sock"}
+        with patch("src.gtk_cm_policy.get_gtk_version", return_value=None):
+            result = apply_gsk_renderer_policy(env)
+        self.assertIsNone(result)
+        self.assertNotIn("GSK_RENDERER", env)
+
+    def test_apply_gsk_renderer_policy_leaves_env_unset_when_version_unknown(self):
+        env = {}
+        with (
+            patch("ctypes.CDLL", side_effect=OSError("missing libgtk-4")),
+            self.assertLogs("src.gtk_cm_policy", level="WARNING"),
+        ):
+            result = apply_gsk_renderer_policy(env)
+        self.assertIsNone(result)
+        self.assertNotIn("GSK_RENDERER", env)
+
+    def test_apply_gsk_renderer_policy_selects_renderer_by_gtk_version(self):
+        cases = [
+            ((4, 14), "ngl"),
+            ((4, 16), "ngl"),
+            ((4, 18), "gl"),
+            ((4, 24), "gl"),
+        ]
+        for version, expected in cases:
+            with self.subTest(version=version):
+                env = {}
+                with patch("src.gtk_cm_policy.get_gtk_version", return_value=version):
+                    result = apply_gsk_renderer_policy(env)
+                self.assertEqual(result, expected)
+                self.assertEqual(env["GSK_RENDERER"], expected)
 
 
 if __name__ == "__main__":

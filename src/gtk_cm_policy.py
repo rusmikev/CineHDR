@@ -1,7 +1,11 @@
-from typing import Mapping, MutableMapping, Optional, Sequence, Tuple
+import ctypes
 from dataclasses import dataclass
+import logging
 import os
 import re
+from typing import Mapping, MutableMapping, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 INTENT_PERCEPTUAL = 0
 FEAT_PARAMETRIC = 1
@@ -123,33 +127,39 @@ def apply_color_mgmt_opt_in(
     return OPT_IN_APPLIED
 
 
-def get_gtk_version() -> Tuple[int, int]:
+def get_gtk_version() -> Optional[Tuple[int, int]]:
     """Read GTK major and minor version without importing or initializing Gtk."""
     try:
-        import ctypes
         lib = ctypes.CDLL("libgtk-4.so.1")
         return (int(lib.gtk_get_major_version()), int(lib.gtk_get_minor_version()))
-    except Exception:
-        return (4, 18)
+    except (OSError, AttributeError) as exc:
+        logger.warning("Failed to detect GTK version from libgtk-4.so.1: %s", exc)
+        return None
 
 
 def apply_gsk_renderer_policy(env: MutableMapping[str, str]) -> Optional[str]:
     """Configure modern OpenGL renderer if not explicitly overridden by user.
 
-    In GTK >= 4.18, 'gl' is the modern NGL renderer supporting Gdk.ColorState
-    and 16-bit float textures. In GTK < 4.18, 'ngl' is the modern renderer.
-    GTK 4.22+ defaults to 'vulkan', which cannot sample OpenGL textures from
-    GLArea without severe cross-API synchronization penalties and 4K stutter.
-    Setting GSK_RENDERER ensures GTK uses its OpenGL renderer sharing the GPU
-    context with GLArea.
+    Per GTK 4.18 NEWS (GTK 4.17.4 dropped the old GL renderer, leaving the
+    unified NGL renderer as the modern GL backend; see also GTK 4.19.1 NEWS),
+    in GTK >= 4.18 'gl' refers to the new NGL renderer supporting
+    Gdk.ColorState and 16-bit float textures, whereas in GTK < 4.18 'ngl' is
+    the modern renderer and 'gl' selects the legacy 8-bit renderer. GTK 4.16+
+    on Wayland (and GTK 4.22+) defaults to 'vulkan', which cannot sample
+    OpenGL textures from GLArea without cross-API synchronization penalties
+    and 4K stutter. Setting GSK_RENDERER ensures GTK uses its OpenGL renderer
+    sharing the GPU context with GLArea. If GTK version detection fails,
+    GSK_RENDERER is left unset so GTK chooses its default.
     """
     if "GSK_RENDERER" in env:
         return env["GSK_RENDERER"]
+    version = get_gtk_version()
+    if version is None:
+        return None
     if env.get("NIRI_SOCKET"):
         env["GSK_RENDERER"] = "gl"
         return "gl"
-    major, minor = get_gtk_version()
-    renderer = "gl" if (major, minor) >= (4, 18) else "ngl"
+    renderer = "gl" if version >= (4, 18) else "ngl"
     env["GSK_RENDERER"] = renderer
     return renderer
 
@@ -171,4 +181,3 @@ def gtk_color_managed(caps: Optional[CmCaps], env=os.environ) -> Tuple[bool, str
 
 def gtk_can_tag_hdr(caps: Optional[CmCaps], tf: int = TF_PQ) -> bool:
     return caps is not None and (PRIM_BT2020 in caps.primaries or FEAT_SET_PRIMARIES in caps.features) and tf in caps.tfs
-
