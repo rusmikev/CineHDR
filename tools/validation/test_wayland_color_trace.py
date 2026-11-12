@@ -19,8 +19,10 @@ from parse_wayland_color_trace import (
     MULTIPHASE_SCOPE,
     PRIMARY_COMPOSITE_REVISION,
     PRIMARY_COMPOSITE_SCOPE,
+    SDR_FALLBACK_REVISION,
     TRACE_ONLY_FAIL_SCOPE,
     TRACE_ONLY_L3P_SCOPE,
+    TRACE_ONLY_SDR_FALLBACK_SCOPE,
     TRACE_ONLY_UNKNOWN_SCOPE,
     TRACE_REVISION,
     TRACE_SCHEMA,
@@ -34,6 +36,7 @@ from parse_wayland_color_trace import (
     main,
     validate_composite_window_trace,
     validate_multiphase_trace,
+    validate_sdr_fallback_trace,
     validate_trace,
 )
 
@@ -5337,6 +5340,145 @@ class TestTaggedConnectionTraceValidation(unittest.TestCase):
             data = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertEqual(data["status"], "UNKNOWN")
             self.assertIn("missing socket fd in connection tag", data["reason"])
+
+
+SYNTHETIC_KDE_SDR_FALLBACK_TRACE = """
+[conn#1 fd#9] [ 1042.001]  wl_registry#2.global(14, "wp_color_manager_v1", 2)
+[conn#1 fd#9] [ 1042.002]  -> wl_registry#2.bind(14, "wp_color_manager_v1", 2, new id [unknown]#3)
+[conn#1 fd#9] [ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
+[conn#1 fd#9] [ 1042.004]  wp_color_manager_v1#3.supported_primaries_named(1)
+[conn#1 fd#9] [ 1042.005]  wp_color_manager_v1#3.supported_tf_named(1)
+[conn#1 fd#9] [ 1042.006]  wp_color_manager_v1#3.supported_tf_named(2)
+[conn#1 fd#9] [ 1042.007]  wp_color_manager_v1#3.supported_tf_named(11)
+[conn#1 fd#9] [ 1042.008]  wp_color_manager_v1#3.supported_tf_named(13)
+[conn#1 fd#9] [ 1042.009]  wp_color_manager_v1#3.supported_feature(1)
+[conn#1 fd#9] [ 1042.010]  wp_color_manager_v1#3.done()
+[conn#1 fd#9] [ 1042.011]  -> wp_color_manager_v1#3.destroy()
+[conn#1 fd#9] [ 1042.012]  wl_display#1.delete_id(3)
+[conn#2 fd#14] [ 1042.013]  wl_registry#2.global(14, "wp_color_manager_v1", 2)
+[conn#2 fd#14] [ 1042.014]  -> wl_registry#2.bind(14, "wp_color_manager_v1", 2, new id [unknown]#3)
+[conn#2 fd#14] [ 1042.015]  wp_color_manager_v1#3.supported_tf_named(2)
+[conn#2 fd#14] [ 1042.016]  wp_color_manager_v1#3.done()
+[conn#1 fd#9] [ 1042.020]  -> wl_compositor#4.create_surface(new id wl_surface#20)
+[conn#1 fd#9] [ 1042.021]  -> xdg_wm_base#5.get_xdg_surface(new id xdg_surface#21, wl_surface#20)
+[conn#1 fd#9] [ 1042.022]  -> xdg_surface#21.get_toplevel(new id xdg_toplevel#22)
+[conn#1 fd#9] [ 1042.023]  -> xdg_toplevel#22.set_app_id("io.github.rusmikev.CineHDR")
+[conn#1 fd#9] [ 1042.024]  -> wl_surface#20.attach(wl_buffer#55, 0, 0)
+[conn#1 fd#9] [ 1042.025]  -> wl_surface#20.commit()
+""".strip()
+
+
+class SdrFallbackOracleTests(unittest.TestCase):
+    def _run_cli(self, trace_text: str) -> tuple[int, dict]:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            trace_path = root / "trace.log"
+            out_path = root / "out.json"
+            trace_path.write_text(trace_text, encoding="utf-8")
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                rc = main([
+                    "--trace-only",
+                    "--oracle", "sdr_fallback",
+                    "--trace", str(trace_path),
+                    "--app-id", "io.github.rusmikev.CineHDR",
+                    "--output", str(out_path),
+                ])
+            return rc, json.loads(out_path.read_text(encoding="utf-8"))
+
+    def test_kde_sdr_fallback_positive_control(self):
+        rc, data = self._run_cli(SYNTHETIC_KDE_SDR_FALLBACK_TRACE)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["status"], "PASS")
+        self.assertEqual(data["oracle"], "sdr_fallback")
+        self.assertEqual(data["revision"], SDR_FALLBACK_REVISION)
+        self.assertEqual(data["scope"], TRACE_ONLY_SDR_FALLBACK_SCOPE)
+        self.assertEqual(data["selected_connection_id"], 1)
+        self.assertEqual(data["total_connections_observed"], 2)
+        self.assertTrue(data["matched"]["manager"]["tf_srgb_absent"])
+        self.assertEqual(data["matched"]["color_management"]["cm_surface_count"], 0)
+        self.assertEqual(data["matched"]["surface"]["effective_buffer_id"], 55)
+
+    def test_kde_sdr_fallback_accepts_named_tf_strings(self):
+        named = SYNTHETIC_KDE_SDR_FALLBACK_TRACE.replace(
+            "supported_tf_named(2)", "supported_tf_named(gamma22)"
+        )
+        rep = validate_sdr_fallback_trace(named, trace_only=True)
+        self.assertEqual(rep["status"], "PASS")
+        self.assertIn(2, rep["matched"]["manager"]["supported_tfs"])
+
+    def test_kde_sdr_fallback_rejects_advertised_tf_srgb(self):
+        bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.010]  wp_color_manager_v1#3.done()",
+            "[conn#1 fd#9] [ 1042.009]  wp_color_manager_v1#3.supported_tf_named(9)\n"
+            "[conn#1 fd#9] [ 1042.010]  wp_color_manager_v1#3.done()",
+        )
+        rc, data = self._run_cli(bad)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "FAIL")
+        self.assertIn("TF srgb (9)", data["error"])
+
+    def test_kde_sdr_fallback_rejects_missing_gamma22_and_compound_power(self):
+        bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.006]  wp_color_manager_v1#3.supported_tf_named(2)\n", ""
+        )
+        rc, data = self._run_cli(bad)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "FAIL")
+        self.assertIn("gamma22", data["error"])
+
+    def test_kde_sdr_fallback_rejects_cm_get_surface_call(self):
+        bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE + (
+            "\n[conn#1 fd#9] [ 1042.026]  -> wp_color_manager_v1#3.get_surface("
+            "new id wp_color_management_surface_v1#30, wl_surface#20)"
+        )
+        rc, data = self._run_cli(bad)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "FAIL")
+        self.assertIn("get_surface", data["error"])
+
+    def test_kde_sdr_fallback_rejects_missing_destroy(self):
+        bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.011]  -> wp_color_manager_v1#3.destroy()\n"
+            "[conn#1 fd#9] [ 1042.012]  wl_display#1.delete_id(3)\n",
+            "",
+        )
+        rc, data = self._run_cli(bad)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "FAIL")
+        self.assertIn("not cleanly destroyed", data["error"])
+
+    def test_kde_sdr_fallback_rejects_fatal_display_error(self):
+        bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE + (
+            "\n[conn#1 fd#9] [ 1042.026]  wl_display#1.error(wl_surface#20, 0, \"bad\")"
+        )
+        with self.assertRaisesRegex(TraceValidationError, "fatal/protocol rejection"):
+            validate_sdr_fallback_trace(bad, trace_only=True)
+        rc, data = self._run_cli(bad)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "FAIL")
+        self.assertTrue(data["error"])
+
+    def test_kde_sdr_fallback_rejects_missing_window_buffer(self):
+        bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.024]  -> wl_surface#20.attach(wl_buffer#55, 0, 0)\n", ""
+        )
+        rc, data = self._run_cli(bad)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "FAIL")
+
+    def test_kde_sdr_fallback_untagged_trace_returns_unknown(self):
+        untagged = "\n".join(
+            line.replace("[conn#1 fd#9] ", "")
+            for line in SYNTHETIC_KDE_SDR_FALLBACK_TRACE.splitlines()
+            if "[conn#1 fd#9]" in line
+        )
+        rc, data = self._run_cli(untagged)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "UNKNOWN")
+        self.assertIn("connection tags", data["reason"])
 
 
 if __name__ == "__main__":
