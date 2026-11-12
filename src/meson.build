@@ -57,6 +57,7 @@ cine_sources = [
   'shaders/flip-h.glsl',
   'shaders/flip-v.glsl',
   '__init__.py',
+  'diagnostics_format.py',
   'diagnostics_report.py',
   'gl_bindings.py',
   'gl_renderer.py',
