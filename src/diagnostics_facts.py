@@ -18,6 +18,11 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk
+
 from .diagnostics_format import (
     _hdr_status_text,
     _positive_float,
@@ -452,7 +457,6 @@ def _format_graphics_offload_state(win: Any) -> str:
         enabled = None
 
     try:
-        from gi.repository import Gtk
         has_offload_enum = hasattr(Gtk, "GraphicsOffloadEnabled")
         offload_disabled = Gtk.GraphicsOffloadEnabled.DISABLED if has_offload_enum else None
         offload_enabled = Gtk.GraphicsOffloadEnabled.ENABLED if has_offload_enum else None
