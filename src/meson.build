@@ -82,6 +82,7 @@ cine_sources = [
   'wayland_cm_probe.py',
   'wayland_cm_protocol.py',
   'wayland_output_hdr.py',
+  'wayland_output_hdr_sync.py',
   'window.py',
   'window_controls.py',
   'window_diagnostics.py',
