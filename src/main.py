@@ -84,7 +84,16 @@ class CineApplication(Adw.Application):
         if os.environ.get("CINEHDR_NON_UNIQUE", "").strip():
             application_flags |= Gio.ApplicationFlags.NON_UNIQUE
         if os.environ.get("CINEHDR_GPU_VALIDATION", "").strip():
-            from .gpu_validation import validation_config_from_env
+            try:
+                from .validation.gpu_validation import validation_config_from_env
+            except ModuleNotFoundError as error:
+                if error.name in {
+                    f"{__package__}.validation",
+                    f"{__package__}.validation.gpu_validation",
+                }:
+                    logger.error("GPU validation is unavailable; install with -Dvalidation=true")
+                    raise SystemExit(2) from error
+                raise
 
             self.gpu_validation_config = validation_config_from_env(os.environ)
             # A validation run must not be forwarded to an already-open normal
@@ -226,13 +235,13 @@ class CineApplication(Adw.Application):
 
         is_fixed_fixture_validation = False
         if self.gpu_validation_config is not None:
-            from .gpu_validation import _uses_publication_fixture_contract
+            from .validation.gpu_validation import _uses_publication_fixture_contract
 
             is_fixed_fixture_validation = _uses_publication_fixture_contract(
                 self.gpu_validation_config.mode
             )
             if self._gpu_validation_session is None:
-                from .gpu_validation import prepare_validation_player
+                from .validation.gpu_validation import prepare_validation_player
 
                 self._gpu_validation_setup_failures = prepare_validation_player(
                     win.mpv, self.gpu_validation_config.mode
@@ -257,7 +266,7 @@ class CineApplication(Adw.Application):
             self.gpu_validation_config is not None
             and self._gpu_validation_session is None
         ):
-            from .gpu_validation import GpuValidationSession
+            from .validation.gpu_validation import GpuValidationSession
 
             self._gpu_validation_session = GpuValidationSession(
                 win, self.gpu_validation_config

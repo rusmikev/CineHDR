@@ -35,7 +35,7 @@ gi.require_version("Gdk", "4.0")
 
 from gi.repository import Gdk, GLib
 
-from .gl_bindings import (
+from ..gl_bindings import (
     get_gl_error_count,
     glReadPixels,
     GL_RGBA,
@@ -92,7 +92,7 @@ HOST_PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS = _accepted_libplacebo_versions(
     HOST_PUBLICATION_LIBPLACEBO_VERSION
 )
 PUBLICATION_FFMPEG_VERSION = "8.1.2"
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 HOST_LIBMPV_DIR = REPO_ROOT.parent / "mpv-gpu-next-prefix" / "lib64"
 FLATPAK_LIBMPV_DIR = Path("/app/lib")
 PUBLICATION_LIBMPV_PREFIX_SUFFIX = "/mpv-gpu-next-prefix/lib64/"

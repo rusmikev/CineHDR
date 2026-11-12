@@ -60,7 +60,6 @@ cine_sources = [
   'diagnostics_report.py',
   'gl_bindings.py',
   'gl_renderer.py',
-  'gpu_validation.py',
   'gtk_cm_policy.py',
   'hdr_controller.py',
   'hdr_detection.py',
@@ -82,5 +81,11 @@ cine_sources = [
   'wayland_output_hdr.py',
   'window.py',
 ]
+
+if get_option('validation')
+  install_data('validation/__init__.py', install_dir: moduledir / 'validation')
+  install_data('../tools/validation/gpu_validation.py', install_dir: moduledir / 'validation')
+  install_data('../tools/validation/diagnostics_export.py', install_dir: moduledir / 'validation')
+endif
 
 install_data(cine_sources, install_dir: moduledir)

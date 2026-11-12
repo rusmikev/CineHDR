@@ -38,7 +38,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("GObject", "2.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from .diagnostics_report import DiagnosticsExporter
+from .diagnostics_report import DIAGNOSTICS_EXPORT_DIR_ENV, DIAGNOSTICS_EXPORT_PATH_ENV
 from .hdr_menu import HdrMenuButton
 from .history import HistoryDialog
 from .mpris import MPRIS
@@ -232,7 +232,19 @@ class CineWindow(Adw.ApplicationWindow):
         self._dovi_rpu_logged: bool = False
         self._shutting_down: bool = False
         self._media_load_generation: int = 0
-        self._diagnostics_exporter = DiagnosticsExporter.from_env()
+        self._diagnostics_exporter = None
+        if os.environ.get(DIAGNOSTICS_EXPORT_PATH_ENV) or os.environ.get(DIAGNOSTICS_EXPORT_DIR_ENV):
+            try:
+                from .validation.diagnostics_export import exporter_from_env
+            except ModuleNotFoundError as error:
+                if error.name in {
+                    f"{__package__}.validation",
+                    f"{__package__}.validation.diagnostics_export",
+                }:
+                    logger.error("Diagnostics export is unavailable; install with -Dvalidation=true")
+                    raise SystemExit(2) from error
+                raise
+            self._diagnostics_exporter = exporter_from_env()
 
         self._mpv_log_handler = make_mpv_log_handler(self, mpv_logger)
 

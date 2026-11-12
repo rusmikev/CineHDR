@@ -42,6 +42,8 @@ explicit live capture remains available through the shell command above.
 | Паузовый автосценарий `SDR → HDR → SDR`, проверка первого опубликованного кадра и чистое завершение (`GpuValidationSession` в режиме `publication`, `validation_steps("publication")`, `publication_texture_evidence`, `evaluate_publication_validation`, лаунчер) | `src/gpu_validation.py`, `tools/validation/run_wayland_publication_validation.sh` (до `C3`: в корне; тесты: `tests/test_gpu_validation.py`, `tests/test_wayland_publication_scenario.py`, `tests/test_hdr.py`) | `tools/validation/gpu_validation.py` (`C4a`) и `tools/validation/run_wayland_publication_validation.sh` (`C3`) |
 | Автоматический экспорт диагностического снимка первого опубликованного медиа-кадра (`DiagnosticsExporter`) | `src/diagnostics_report.py` (тесты: `tests/test_diagnostics_export.py`, `tests/test_attempt3_regressions.py`) | `tools/validation/diagnostics_export.py` (`C4b`); функции `collect_video_output_facts` и `build_video_output_report` остаются в `src/diagnostics_report.py` |
 
+Текущее состояние переноса C4: `gpu_validation.py` и `DiagnosticsExporter` находятся в `tools/validation/`. Обычная сборка (`-Dvalidation=false`) не устанавливает пакет `cinehdr.validation`; для запуска инструментальных сценариев нужна сборка с `-Dvalidation=true`. Сбор фактов и форматирование Copy Report остаются в `src/diagnostics_report.py`. Исторические пути в таблице выше относятся к этапу C0.
+
 ---
 
 ## Известные дефекты и их проверки

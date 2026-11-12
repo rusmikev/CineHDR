@@ -1,0 +1,2 @@
+option('validation', type: 'boolean', value: false,
+       description: 'Install optional GPU validation modules')

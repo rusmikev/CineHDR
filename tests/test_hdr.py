@@ -17,7 +17,7 @@ import time
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.gpu_validation import read_fbo_patch_samples  # noqa: E402
+from src.validation.gpu_validation import read_fbo_patch_samples  # noqa: E402
 
 # Make tests hermetic and isolated (F13)
 import shutil
@@ -3811,7 +3811,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         }
 
     def _make_capture(self, phase: str, *, is_hdr: bool = False, delta: float = 0.0, patches: dict = None, epoch: int | None = None):
-        from src.gpu_validation import FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import FboPixelCapture, compute_samples_hash
         patch_samples = patches if patches is not None else self._sample_patches(is_hdr=is_hdr, delta=delta)
         samples_hash = compute_samples_hash(patch_samples)
         if epoch is None:
@@ -3842,7 +3842,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         )
 
     def test_complete_capture_and_successful_evaluation(self):
-        from src.gpu_validation import (
+        from src.validation.gpu_validation import (
             PausedTransitionPixelOracle,
             DEFAULT_SDR_REPEAT_TOLERANCE,
             DEFAULT_MIN_HDR_DISTINCTION,
@@ -3862,7 +3862,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_strict_canonical_8_patches_required(self):
         """Oracle strictly requires the full set of 8 canonical patches, rejecting subsets or missing keys."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         # Incomplete patches (missing neutral_gradient)
         incomplete = dict(self._sample_patches(is_hdr=False))
@@ -3877,7 +3877,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_strict_channel_count_and_provenance(self):
         """Oracle strictly verifies channel length (exactly 4 components per patch) and provenance."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         # Corrupt one patch to have 3 channels instead of 4
         corrupted = dict(self._sample_patches(is_hdr=False))
@@ -3892,7 +3892,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_provenance_dimension_mismatch_fails(self):
         """Oracle rejects captures with mismatched dimensions."""
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
         oracle = PausedTransitionPixelOracle()
         sdr_patches = self._sample_patches(is_hdr=False)
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
@@ -3911,12 +3911,12 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         self.assertTrue(any("dimension mismatch" in r for r in reasons))
 
     def test_hdr_not_distinguishable_from_sdr_fails(self):
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         # HDR capture erroneously containing SDR values (< 0.150 difference)
         sdr_as_hdr_patches = self._sample_patches(is_hdr=False)
-        from src.gpu_validation import FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import FboPixelCapture, compute_samples_hash
         oracle.record_capture(FboPixelCapture(
             phase="hdr", slot_id=123, epoch=2, frame_generation=2,
             fbo_format="GL_RGBA16F", is_float=True, width=1920, height=1080,
@@ -3932,7 +3932,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         self.assertTrue(any("not distinguishable from SDR reference" in r for r in reasons))
 
     def test_missing_captures_return_unverified(self):
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         status, reasons = oracle.evaluate()
@@ -3941,7 +3941,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_calibrated_tolerance_boundary(self):
         """Test calibrated tolerance (0.020): delta 0.018 passes, delta 0.025 fails."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         oracle.record_capture(self._make_capture("hdr", is_hdr=True))
@@ -3963,7 +3963,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
     def test_negative_control_substituting_hdr_pixels_fails(self):
         """ADR-0007 negative control: substitute HDR pixels into SDR evaluation.
         Even though metadata is valid SDR, pixel evaluation MUST fail deterministically."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         oracle.record_capture(self._make_capture("hdr", is_hdr=True))
@@ -4044,7 +4044,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         mock_builder = MagicMock()
         with patch("src.video_widget.should_render_frame", return_value=True), \
              patch("src.video_widget.glBindFramebuffer", side_effect=bind_framebuffer), \
-             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
              patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
             widget._render_pending_frame()
 
@@ -4076,7 +4076,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         """
         from types import SimpleNamespace
         from src.hdr_controller import HdrController
-        from src.gpu_validation import (
+        from src.validation.gpu_validation import (
             GpuValidationSession, PausedTransitionPixelOracle, compute_patch_centers,
         )
 
@@ -4137,8 +4137,8 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
                      patch("src.video_widget.glFenceSync", return_value=None), \
                      patch("src.video_widget.glFlush"), \
                      patch("src.video_widget.idle_add_once"), \
-                     patch("src.gpu_validation.glReadPixels", side_effect=read_pixels), \
-                     patch("src.gpu_validation.publication_texture_evidence", side_effect=texture_evidence), \
+                     patch("src.validation.gpu_validation.glReadPixels", side_effect=read_pixels), \
+                     patch("src.validation.gpu_validation.publication_texture_evidence", side_effect=texture_evidence), \
                      patch("src.video_widget.Gdk.GLTextureBuilder"):
                     for step_index, phase in enumerate(("initial_sdr", "hdr", "return_sdr")):
                         is_hdr = phase == "hdr"
@@ -4233,7 +4233,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         # 1. Single paused render event occurs
         with patch("src.video_widget.should_render_frame", return_value=True), \
              patch("src.video_widget.glBindFramebuffer"), \
-             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
              patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
             widget._render_pending_frame()
 
@@ -4314,7 +4314,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         mock_builder = MagicMock()
         with patch("src.video_widget.should_render_frame", return_value=True), \
              patch("src.video_widget.glBindFramebuffer"), \
-             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
              patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
             widget._render_pending_frame()
 
@@ -4333,7 +4333,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         Rec.2100 PQ pixels in the FBO, failing the pixel oracle.
         With ADR-0007, forced render updates the FBO to SDR pixels, passing the oracle.
         """
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
 
         oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
         sdr_ref = self._sample_patches(is_hdr=False)
@@ -4384,7 +4384,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_invalid_phase(self):
         """Oracle strictly rejects invalid phase strings."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         oracle.record_capture(self._make_capture("invalid_phase", is_hdr=False))
         self.assertEqual(len(oracle.provenance_errors), 1)
@@ -4394,7 +4394,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_stale_or_non_advancing_epoch(self):
         """Oracle rejects captures with non-advancing or stale epochs."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         # Case 1: hdr epoch <= initial_sdr epoch
         oracle1 = PausedTransitionPixelOracle()
         oracle1.record_capture(self._make_capture("initial_sdr", is_hdr=False, epoch=2))
@@ -4415,7 +4415,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_fixture_hash_and_media_mismatch(self):
         """Oracle rejects fixture hash mismatch and media_path mismatch."""
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
         # Fixture hash mismatch between initial_sdr and return_sdr
         oracle1 = PausedTransitionPixelOracle()
         oracle1.record_capture(self._make_capture("initial_sdr", is_hdr=False))
@@ -4451,7 +4451,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_empty_or_unconfirmed_target_properties(self):
         """Oracle rejects empty, unconfirmed, or non-matching target properties."""
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
         sdr_patches = self._sample_patches(is_hdr=False)
         # Empty properties
         oracle = PausedTransitionPixelOracle()
@@ -4470,7 +4470,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_overwrite_attempt(self):
         """Oracle strictly rejects overwrite attempts on already accepted phases."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         # Second attempt to record initial_sdr
@@ -4483,7 +4483,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_unknown_provenance_returns_unverified(self):
         """Unknown provenance yields UNVERIFIED, not PASS or FAIL."""
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
         sdr_patches = self._sample_patches(is_hdr=False)
         # Unknown fixture hash
         oracle1 = PausedTransitionPixelOracle()

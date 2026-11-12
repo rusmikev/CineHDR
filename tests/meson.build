@@ -12,6 +12,22 @@ test('hdr_tests', python3,
   depends: [cinehdr_resources]
 )
 
+if not get_option('validation')
+  test('product_boundary_tests', python3,
+    args: [
+      meson.current_source_dir() / 'test_product_boundary.py',
+      meson.project_build_root(),
+      cinehdr_resources.full_path(),
+    ],
+    env: [
+      'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+      'GSETTINGS_BACKEND=memory',
+      'PYTHONPATH=' + meson.project_source_root(),
+    ],
+    depends: [cinehdr_resources],
+  )
+endif
+
 test('render_backend_tests', python3,
   args: [
     meson.current_source_dir() / 'test_render_backend.py'

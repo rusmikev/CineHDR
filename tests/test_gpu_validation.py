@@ -66,7 +66,7 @@ try:
 except Exception:
     pass
 
-from src.gpu_validation import (
+from src.validation.gpu_validation import (
     GpuValidationSession,
     HOST_PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS,
     PUBLICATION_FFMPEG_VERSION,
@@ -835,7 +835,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             props=SimpleNamespace(scale_factor=2),
             get_native=lambda: SimpleNamespace(get_surface=lambda: surface),
         )
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             evidence = publication_texture_evidence(area)
         self.assertTrue(evidence["available"])
         self.assertTrue(evidence["texture_is_gl_texture"])
@@ -847,7 +847,7 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertTrue(evidence["surface_is_wayland"])
 
         area.get_width = lambda: 641
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             mismatched = publication_texture_evidence(area)
         self.assertFalse(mismatched["dimensions_match"])
 
@@ -938,7 +938,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             _cached_max_height=0,
             get_native=lambda: SimpleNamespace(get_surface=lambda: surface),
         )
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev = publication_texture_evidence(area)
         self.assertTrue(ev["available"])
         self.assertEqual(ev["width"], 1400)
@@ -949,19 +949,19 @@ class PublicationEvidenceTests(unittest.TestCase):
 
         # Negative control 1: 1-pixel width mismatch (1401x788)
         area.current_texture = FakeTexture(1401, 788)
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev_bad_w = publication_texture_evidence(area)
         self.assertFalse(ev_bad_w["dimensions_match"])
 
         # Negative control 2: 1-pixel height rounding mismatch (1400x787)
         area.current_texture = FakeTexture(1400, 787)
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev_bad_h = publication_texture_evidence(area)
         self.assertFalse(ev_bad_h["dimensions_match"])
 
         # Negative control 3: Old unscaled integer multiplication assumption (2240x1260)
         area.current_texture = FakeTexture(2240, 1260)
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev_old_bug = publication_texture_evidence(area)
         self.assertFalse(ev_old_bug["dimensions_match"])
 
@@ -976,7 +976,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             _cached_max_height=700,
             get_native=lambda: SimpleNamespace(get_surface=lambda: surface),
         )
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev_clamp = publication_texture_evidence(area_clamp)
         self.assertFalse(ev_clamp["dimensions_match"])
         self.assertEqual(ev_clamp["expected_width"], 1200)
@@ -1085,7 +1085,7 @@ class PublicationEvidenceTests(unittest.TestCase):
 
         fake_gdk = SimpleNamespace(GLTexture=FakeTexture)
         area = SimpleNamespace(current_texture=FakeTexture())
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             evidence = publication_texture_evidence(area)
         self.assertFalse(evidence["available"])
         self.assertIn("getter", str(evidence["error"]))
@@ -1387,7 +1387,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             connect=lambda *args: 1,
         )
         session._finish = failures.append
-        with self.assertLogs("src.gpu_validation", level="ERROR"):
+        with self.assertLogs("src.validation.gpu_validation", level="ERROR"):
             session.start()
         self.assertEqual(len(failures), 1)
         self.assertIn("could not prepare publication validation", failures[0])
@@ -1517,7 +1517,7 @@ class PublicationEvidenceTests(unittest.TestCase):
         )
 
         with patch(
-            "src.gpu_validation.GLib.timeout_add", return_value=99
+            "src.validation.gpu_validation.GLib.timeout_add", return_value=99
         ) as timeout_add:
             session._apply_step(
                 ValidationStep("GL context cycle 1", "context-cycle", 10, 1)
@@ -1578,7 +1578,7 @@ class PublicationEvidenceTests(unittest.TestCase):
                 render_target_depth=16,
                 render_color_state="rec2100-pq",
             )
-            with patch("src.gpu_validation.GLib.timeout_add", return_value=99):
+            with patch("src.validation.gpu_validation.GLib.timeout_add", return_value=99):
                 s._apply_step(step)
             s.video_area.render_context_generation = 2
             s.video_area.mpv_ctx = new_ctx
@@ -2291,7 +2291,7 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertNotIn("DRI_PRIME=", launcher)
 
     def test_resource_settling_report_is_machine_readable_and_bounded(self):
-        source = (ROOT / "src/gpu_validation.py").read_text(encoding="utf-8")
+        source = (ROOT / "tools/validation/gpu_validation.py").read_text(encoding="utf-8")
         self.assertIn('"schema": SETTLING_SCHEMA', source)
         self.assertIn('"status": overall', source)
         self.assertIn('"hdr_endpoints": list(endpoint_results)', source)
@@ -2396,7 +2396,7 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertNotIn("mpv_logging", window)
 
     def test_report_source_omits_media_path_and_records_gl_identity(self):
-        source = (ROOT / "src/gpu_validation.py").read_text(encoding="utf-8")
+        source = (ROOT / "tools/validation/gpu_validation.py").read_text(encoding="utf-8")
         self.assertIn('"Media path: omitted"', source)
         self.assertNotIn("path-expanded", source)
         self.assertIn("OpenGL renderer:", source)
@@ -2478,7 +2478,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
 
         session._renderer_facts = lambda: ("opengl", "active")
         session._expected_active_api = lambda: "opengl"
-        with patch("src.gpu_validation.publication_state_errors", return_value=()):
+        with patch("src.validation.gpu_validation.publication_state_errors", return_value=()):
             status, reason = session._verify_step(step, {"render_frame_generation": 3})
             self.assertEqual((status, reason), ("FAIL", "no newer frame was published for the initial SDR capture"))
             status, _ = session._verify_step(step, {"render_frame_generation": 4})
@@ -2497,7 +2497,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         )
         session.video_area.current_texture = object()
         texture_patch = patch(
-            "src.gpu_validation.publication_texture_evidence",
+            "src.validation.gpu_validation.publication_texture_evidence",
             return_value={"available": True, "format": "R8G8B8A8",
                           "color_state_srgb": True, "dimensions_match": True},
         )
@@ -2604,7 +2604,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         session.video_area.render_frame_generation = 1
         correct_tag = {"available": True, "format": "R8G8B8A8",
                        "color_state_srgb": True, "dimensions_match": True}
-        with patch("src.gpu_validation.publication_texture_evidence", side_effect=[
+        with patch("src.validation.gpu_validation.publication_texture_evidence", side_effect=[
             {**correct_tag, "color_state_srgb": False}, correct_tag
         ]):
             session._on_fbo_pixel_capture(**good_fbo)
@@ -2662,7 +2662,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
             "dimensions_match": True,
         }
 
-        with patch("src.gpu_validation.publication_texture_evidence", side_effect=[
+        with patch("src.validation.gpu_validation.publication_texture_evidence", side_effect=[
             unavailable_evidence, available_evidence
         ]):
             # Frame 1: published with unavailable GDK texture evidence
@@ -2811,7 +2811,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
                 "dimensions_match": True,
             }
 
-        texture_patch = patch("src.gpu_validation.publication_texture_evidence", side_effect=actual_texture)
+        texture_patch = patch("src.validation.gpu_validation.publication_texture_evidence", side_effect=actual_texture)
         texture_patch.start()
         self.addCleanup(texture_patch.stop)
 
@@ -3130,7 +3130,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
             patch_samples=sdr_samples2, raw_samples_hash=compute_samples_hash(sdr_samples2),
         ))
 
-        from src.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
+        from src.validation.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
         data = serialize_fbo_pixel_measurements(
             oracle, backend="gpu-next", session_id="test-session-99", overall_result="PASS"
         )
@@ -3173,7 +3173,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
             patch_samples=sdr_samples, raw_samples_hash=compute_samples_hash(sdr_samples),
         ))
         # Phases 'hdr' and 'return_sdr' were never captured
-        from src.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
+        from src.validation.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
         data = serialize_fbo_pixel_measurements(
             oracle, backend="legacy", session_id="test-session-fail", overall_result="FAIL"
         )
@@ -3196,7 +3196,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
 
     def test_verify_fbo_pixel_measurements_negative_cases(self):
         """Negative tests for verify_fbo_pixel_measurements_artifact: tampering, truncation, invalid schema."""
-        from src.gpu_validation import (
+        from src.validation.gpu_validation import (
             serialize_fbo_pixel_measurements,
             verify_fbo_pixel_measurements_artifact,
             compute_samples_hash,
@@ -3352,7 +3352,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         session.pixel_oracle.evaluate = lambda: ("PASS", [])
 
         # Mock verify_fbo_pixel_measurements_artifact to fail
-        with patch("src.gpu_validation.verify_fbo_pixel_measurements_artifact", return_value=(False, "simulated tampering")), \
+        with patch("src.validation.gpu_validation.verify_fbo_pixel_measurements_artifact", return_value=(False, "simulated tampering")), \
              patch.object(Path, "write_text", autospec=True, side_effect=mock_write):
             session._finish(None)
 
@@ -3368,7 +3368,7 @@ class TestStartupFixtureContract(unittest.TestCase):
     def test_do_open_preserves_publication_pause_contract(self):
         """do_open must not clear the pause established for publication/settling fixtures."""
         from src.main import CineApplication
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         app = CineApplication.__new__(CineApplication)
         app.gpu_validation_config = GpuValidationConfig(
@@ -3385,7 +3385,7 @@ class TestStartupFixtureContract(unittest.TestCase):
             return ()
 
         with patch("src.main.CineWindow", return_value=mock_win), \
-             patch("src.gpu_validation.prepare_validation_player", side_effect=fake_prepare):
+             patch("src.validation.gpu_validation.prepare_validation_player", side_effect=fake_prepare):
             app.props = MagicMock()
             app.props.active_window = None
             app.get_windows = MagicMock(return_value=[mock_win])
@@ -3434,7 +3434,7 @@ class TestStartupFixtureContract(unittest.TestCase):
 
     def test_wait_until_ready_rejects_playlist_pos_not_zero(self):
         """_wait_until_ready must reject readiness and terminate when playlist-pos is not 0."""
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.config = GpuValidationConfig(
@@ -3487,7 +3487,7 @@ class TestStartupFixtureContract(unittest.TestCase):
 
     def test_wait_until_ready_rejects_unpaused_initial_playback(self):
         """_wait_until_ready must reject readiness and terminate when initial fixture is not paused."""
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.config = GpuValidationConfig(
@@ -3540,7 +3540,7 @@ class TestStartupFixtureContract(unittest.TestCase):
 
     def test_wait_until_ready_accepts_paused_position_zero(self):
         """_wait_until_ready accepts readiness when playlist count is 2, pos is 0, and paused."""
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.config = GpuValidationConfig(
@@ -3664,7 +3664,7 @@ class TestGradientFboValidation(unittest.TestCase):
                 buf[4 * px + 2] = val
                 buf[4 * px + 3] = 1.0
 
-        with patch("src.gpu_validation.glReadPixels", side_effect=mock_gl_read_pixels):
+        with patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_gl_read_pixels):
             res = read_fbo_gradient_samples(1920, 1080, is_float=True, num_samples=32)
 
         self.assertEqual(res["width"], 1920)
@@ -3694,7 +3694,7 @@ class TestGradientFboValidation(unittest.TestCase):
                 buf[4 * px + 2] = b
                 buf[4 * px + 3] = 255
 
-        with patch("src.gpu_validation.glReadPixels", side_effect=mock_gl_read_pixels):
+        with patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_gl_read_pixels):
             res = read_fbo_gradient_samples(640, 360, is_float=False, num_samples=16)
 
         self.assertFalse(res["is_float"])
@@ -3703,7 +3703,7 @@ class TestGradientFboValidation(unittest.TestCase):
         self.assertAlmostEqual(res["top_half"]["sampled_values"][-1], 1.0, places=4)
 
     def test_read_fbo_gradient_samples_requires_gl_binding(self):
-        with patch("src.gpu_validation.glReadPixels", None):
+        with patch("src.validation.gpu_validation.glReadPixels", None):
             with self.assertRaises(RuntimeError) as ctx:
                 read_fbo_gradient_samples(1920, 1080, is_float=True)
             self.assertIn("unavailable", str(ctx.exception))
@@ -3807,7 +3807,7 @@ class TestGradientFboValidation(unittest.TestCase):
             self.assertEqual(samples, {"custom": "samples"})
 
     def test_gpu_validation_session_gradient_mode_lifecycle(self):
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.config = GpuValidationConfig(mode="gradient", report_dir=Path("/tmp/test"), expected_backend="legacy")
