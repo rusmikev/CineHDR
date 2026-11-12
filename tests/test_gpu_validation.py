@@ -273,12 +273,6 @@ class ValidationConfigTests(unittest.TestCase):
         )
         self.assertEqual(config.mode, "transition")
 
-    def test_sdr_soak_mode_is_explicitly_supported(self):
-        config = validation_config_from_env(
-            {"CINEHDR_GPU_VALIDATION": "sdr-soak"}
-        )
-        self.assertEqual(config.mode, "sdr-soak")
-
     def test_publication_requires_exact_backend_and_fixture_provenance(self):
         config = validation_config_from_env(
             publication_environment(
@@ -322,7 +316,7 @@ class ValidationConfigTests(unittest.TestCase):
             )
 
     def test_playlist_count_expectation_is_mode_specific(self):
-        self.assertEqual(validation_expected_playlist_count("sdr-soak"), 1)
+        self.assertEqual(validation_expected_playlist_count("gradient"), 1)
         self.assertEqual(validation_expected_playlist_count("transition"), 2)
         self.assertEqual(validation_expected_playlist_count("publication"), 2)
         self.assertEqual(validation_expected_playlist_count("settling"), 2)
@@ -439,14 +433,6 @@ class ValidationPlanTests(unittest.TestCase):
         self.assertEqual(steps[-1].wait_seconds, SETTLING_COOLDOWN_SECONDS)
         self.assertNotIn("play", {step.action for step in steps})
         self.assertNotIn("context-cycle", {step.action for step in steps})
-
-    def test_sdr_soak_requires_sdr_state_before_thirty_minutes(self):
-        steps = validation_steps("sdr-soak")
-        self.assertEqual(steps[0].action, "signal-state")
-        self.assertEqual(steps[0].value, (0, "sdr"))
-        soak = next(step for step in steps if step.wait_seconds == 1800)
-        self.assertEqual(soak.name, "30-minute soak playback")
-        self.assertLess(steps.index(steps[0]), steps.index(soak))
 
     def test_readiness_rejects_saved_position_jump(self):
         self.assertTrue(position_sample_is_stable(100.0, 100.5, 0.5))
@@ -2346,7 +2332,6 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertIn('CINEHDR_RENDER_BACKEND="gpu-next"', launcher)
         self.assertIn('CINEHDR_GPU_VALIDATION="${validation_mode}"', launcher)
         self.assertIn('validation_mode="transition"', launcher)
-        self.assertIn('"$2" == "sdr-soak"', launcher)
         self.assertIn('"${video_files[@]}"', launcher)
         self.assertIn('sdr_transfer="$(ffprobe', launcher)
         self.assertIn('hdr_transfer="$(ffprobe', launcher)

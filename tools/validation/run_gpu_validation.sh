@@ -9,12 +9,12 @@ gpu_next_lib="${gpu_next_lib_dir}/libmpv.so.2"
 
 usage() {
     echo "Использование:" >&2
-    echo "  tools/validation/run_gpu_validation.sh <видеофайл> [sdr-soak|lifecycle|gradient]" >&2
+    echo "  tools/validation/run_gpu_validation.sh <видеофайл> [lifecycle|gradient]" >&2
     echo "  tools/validation/run_gpu_validation.sh <SDR-файл> <HDR-файл> transition" >&2
 }
 
 video_files=()
-if [[ $# -eq 2 && ( "$2" == "sdr-soak" || "$2" == "lifecycle" || "$2" == "gradient" ) ]]; then
+if [[ $# -eq 2 && ( "$2" == "lifecycle" || "$2" == "gradient" ) ]]; then
     video_files=("$1")
     validation_mode="$2"
 elif [[ $# -eq 3 && "$3" == "transition" ]]; then
@@ -32,7 +32,7 @@ for video_file in "${video_files[@]}"; do
     fi
 done
 
-if [[ "${validation_mode}" == "transition" || "${validation_mode}" == "sdr-soak" ]]; then
+if [[ "${validation_mode}" == "transition" ]]; then
     sdr_transfer="$(ffprobe -v error -select_streams v:0 \
         -show_entries stream=color_transfer -of default=nw=1:nk=1 \
         "${video_files[0]}" | head -n 1)"

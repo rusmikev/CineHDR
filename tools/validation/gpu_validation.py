@@ -162,7 +162,7 @@ def is_verified_flatpak_container(
     return True
 
 VALIDATION_MODES = (
-    "sdr-soak", "lifecycle", "transition", "publication",
+    "lifecycle", "transition", "publication",
     "settling", "gradient",
 )
 READY_STABLE_SECONDS = 4.0
@@ -1032,7 +1032,7 @@ def verify_fbo_pixel_measurements_artifact(
 def validation_expected_playlist_count(mode: str) -> int | None:
     if mode in ("transition", "publication", "settling"):
         return 2
-    if mode in ("sdr-soak", "gradient"):
+    if mode == "gradient":
         return 1
     return None
 
@@ -1189,28 +1189,7 @@ def validation_steps(mode: str) -> tuple[ValidationStep, ...]:
             )
         )
         return tuple(steps)
-    steps = [
-        ValidationStep("normalize start position", "seek", 4, 0.05),
-        ValidationStep("warm playback", "play", 8),
-        ValidationStep("pause", "pause", 3),
-        ValidationStep("resume", "play", 8),
-        ValidationStep("seek to 25%", "seek", 7, 0.25),
-        ValidationStep("resize to 960×540", "resize", 5, (960, 540)),
-        ValidationStep("resize to 1280×720", "resize", 5, (1280, 720)),
-        ValidationStep("enter fullscreen", "fullscreen", 7, True),
-        ValidationStep("leave fullscreen", "fullscreen", 5, False),
-        ValidationStep("seek to 75%", "seek", 7, 0.75),
-        ValidationStep("seek back to 10%", "seek", 7, 0.10),
-    ]
-    if mode == "sdr-soak":
-        steps.insert(
-            0, ValidationStep("initial SDR output", "signal-state", 3, (0, "sdr"))
-        )
-        steps.insert(
-            4,
-            ValidationStep("30-minute soak playback", "play", 1800),
-        )
-    return tuple(steps)
+    raise ValueError(f"unsupported GPU validation mode: {mode}")
 
 
 def prepare_validation_player(player, mode: str | None = None) -> tuple[str, ...]:
@@ -2023,7 +2002,7 @@ class GpuValidationSession:
                     f"could not prepare {self.config.mode} validation: {error}"
                 )
                 return
-        elif self.config.mode in ("transition", "sdr-soak", "gradient"):
+        elif self.config.mode in ("transition", "gradient"):
             controller = self.video_area.hdr_controller
             self._transition_original_hdr_mode = controller.hdr_mode
             # An SDR file intentionally stays on the HDR surface in force-hdr.
@@ -2218,7 +2197,7 @@ class GpuValidationSession:
             self.resource_samples.clear()
             self._sample_memory()
             self.baseline = self._metrics_snapshot()
-            if self.config.mode in ("transition", "sdr-soak"):
+            if self.config.mode == "transition":
                 self._transition_context_generation = int(
                     getattr(self.video_area, "render_context_generation", 0)
                 )
@@ -3207,7 +3186,7 @@ class GpuValidationSession:
             "Validation HDR mode: "
             + (
                 "auto (temporary; saved preference unchanged)"
-                if self.config.mode in ("transition", "sdr-soak")
+                if self.config.mode == "transition"
                 else "unchanged"
             ),
             "Render context generation: "
