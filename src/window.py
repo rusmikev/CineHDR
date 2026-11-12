@@ -17,7 +17,6 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import bisect
 import logging
 import re
 import shlex
@@ -42,7 +41,7 @@ from .options import OptionsMenuButton
 from .playlist import PlaylistItemObj
 from .preferences import settings, sync_mpv_with_settings
 from .save_session import (
-    is_same_playlist,
+    is_same_playlist as is_same_playlist,
     restore_last_playlist,
     save_last_playlist_file as save_last_playlist_file,
 )
@@ -57,10 +56,9 @@ from .utils import (
     PrimaryClick,
     SecondaryClick,
     append_modifiers,
-    format_time,
     get_mouse_bindings,
     has_host_permission as has_host_permission,
-    idle_add_once,
+    idle_add_once as idle_add_once,
     is_local_path as is_local_path,
     load_optional_validation,
     parse_bindings,
@@ -68,6 +66,24 @@ from .utils import (
     timeout_add_seconds_once,
 )
 from .video_widget import MpvVideoWidget
+from .window_controls import (
+    hide_time_tooltip,
+    on_ab_loop_btn_toggled,
+    on_loop_toggled,
+    on_progress_motion,
+    on_progress_pressed,
+    on_progress_released,
+    on_progress_scroll,
+    set_time_tooltip,
+    setup_playback_control_widgets,
+    setup_thumb_preview as controls_setup_thumb_preview,
+    toggle_elapsed_remaining,
+    update_duration,
+    update_loop_state,
+    update_play_pause_icon,
+    update_progress,
+    update_volume_icon,
+)
 from .window_diagnostics import (
     handle_first_media_frame_published,
     handle_first_video_frame,
@@ -408,121 +424,18 @@ class CineWindow(Adw.ApplicationWindow):
         present_history(self)
 
     def _setup_widgets(self):
-        for widget in [
-            self.controls_wrap_box,
-            self.volume_box,
-            self.volume_scale,
-            self.progress_box,
-            self.video_progress_scale,
-            self.time_elapsed_label,
-        ]:
-            widget.set_direction(Gtk.TextDirection.LTR)
+        setup_playback_control_widgets(self)
 
-        max_vol = cast(int, self.mpv.volume_max)
-        self.volume_scale_adj.set_upper(max_vol)
-
-        self.mute_handler_id = self.mute_toggle_btn.connect(
-            "toggled",
-            lambda btn: self.mpv.command_async("set", "mute", btn.get_active()),
-        )
-
-        vol_mid_click = Gtk.GestureClick(button=2)
-        vol_mid_click.connect(
-            "pressed",
-            lambda *a: self.mpv.command_async("cycle", "mute"),
-        )
-        self.volume_menu_btn.add_controller(vol_mid_click)
-
-        self.fullscreen_btn.connect(
-            "clicked",
-            lambda *a: self.mpv.command_async("cycle", "fullscreen"),
-        )
-
-        vc_adj = self.volume_scale_adj
-        self.volume_handler_id = self.volume_scale.connect(
-            "value-changed",
-            lambda *a: self.mpv.command_async("set", "volume", vc_adj.props.value),
-        )
-
-        if max_vol > 100:
-            self.volume_scale.add_mark(100.0, Gtk.PositionType.BOTTOM, None)
-
-        self.ab_loop_btn.connect("toggled", self._on_ab_loop_btn_toggled)
-        self.loop_btn.connect("toggled", self._on_loop_toggled)
-
-        self.video_progress_adj.connect("value-changed", self._on_progress_adjusted)
-        self.popover_content_box = Gtk.Box()
-        self.popover_content_box.props.orientation = Gtk.Orientation.VERTICAL
-
-        self.time_tooltip_label = Gtk.Label()
-        self.time_tooltip_label.set_use_markup(True)
-        self.time_tooltip_label.set_justify(Gtk.Justification.CENTER)
-        self.time_tooltip_label.add_css_class("numeric")
-
-        def create_layer_and_revealer(child, margin_bottom):
-            layer = Gtk.Fixed(
-                valign=Gtk.Align.END,
-                margin_bottom=margin_bottom,
-                can_focus=False,
-                can_target=False,
-            )
-            revealer = Gtk.Revealer(
-                css_name="time-tooltip",
-                transition_duration=175,
-                transition_type=Gtk.RevealerTransitionType.CROSSFADE,
-            )
-            revealer.set_child(child)
-            layer.put(revealer, 0, 0)
-            self.video_overlay.add_overlay(layer)
-            return layer, revealer
-
-        self.tooltip_label_layer, self.tooltip_label_revealer = (
-            create_layer_and_revealer(self.time_tooltip_label, 38)
-        )
-
-        self.thumb_frame = Gtk.Frame()
-        self.tooltip_thumb_layer, self.tooltip_thumb_revealer = (
-            create_layer_and_revealer(self.thumb_frame, 72)
-        )
-
-        self._set_time_margin()
-        self._set_time_tooltip()
         key_controller = Gtk.EventControllerKey()
         key_controller.connect("key-pressed", self._on_key_event, "keypress")
         key_controller.connect("key-released", self._on_key_event, "keyup")
         key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         self.add_controller(key_controller)
 
-        progress_hover = Gtk.EventControllerMotion()
-        progress_hover.connect("enter", self._set_time_tooltip)
-        progress_hover.connect("motion", self._on_progress_motion)
-        progress_hover.connect("leave", self._hide_time_tooltip)
-        self.video_progress_scale.add_controller(progress_hover)
-
-        prog_mid_click = Gtk.GestureClick(button=2)
-        prog_mid_click.connect("pressed", self._go_to_chapter_start)
-        self.video_progress_scale.add_controller(prog_mid_click)
-
-        for c in self.video_progress_scale.observe_controllers():
-            if isinstance(c, Gtk.GestureDrag):
-                c.connect("drag-begin", self._on_progress_pressed)
-                c.connect("drag-end", self._on_progress_released)
-            if isinstance(c, Gtk.GestureLongPress):
-                c.connect("pressed", lambda *a: setattr(self, "_prog_fine_tune", True))
-                c.connect("end", lambda *a: setattr(self, "_prog_fine_tune", False))
-
         ecs_flags = Gtk.EventControllerScrollFlags
-
-        progress_ecs = Gtk.EventControllerScroll.new(ecs_flags.VERTICAL)
-        progress_ecs.connect("scroll", self._on_progress_scroll)
-        self.video_progress_scale.add_controller(progress_ecs)
-
         overlay_ecs = Gtk.EventControllerScroll.new(ecs_flags.BOTH_AXES)
-        volume_ecs = Gtk.EventControllerScroll.new(ecs_flags.VERTICAL)
         self.video_overlay.add_controller(overlay_ecs)
         overlay_ecs.connect("scroll", self._on_mouse_scroll)
-        self.volume_scale.add_controller(volume_ecs)
-        volume_ecs.connect("scroll", self._on_mouse_scroll_volume)
 
         self.clk_rect = Gdk.Rectangle()
         for btn_num, MBTN in MBTN_MAP.items():
@@ -589,29 +502,6 @@ class CineWindow(Adw.ApplicationWindow):
 
         self.connect("notify::fullscreened", self._set_fs_state)
 
-        buttons = [
-            self.primary_menu_btn,
-            self.open_menu_btn,
-            self.options_menu_btn,
-            self.hdr_menu_btn,
-            self.volume_menu_btn,
-            self.subtitles_menu_btn,
-            self.audio_tracks_menu_btn,
-            self.video_tracks_menu_btn,
-            self.chapters_menu_btn,
-        ]
-        for btn in buttons:
-            popover = btn.props.popover
-            popover.connect("closed", self.hide_ui_timeout)
-
-            if btn == self.open_menu_btn:
-
-                def on_popv_closed(*args):
-                    if is_same_playlist(self.mpv.playlist):
-                        self.mpv.write_watch_later_config()
-
-                popover.connect("closed", on_popv_closed)
-
 
     def _set_fs_state(self, _window, _gparam):
         is_fullscreen = self.props.fullscreened
@@ -632,13 +522,6 @@ class CineWindow(Adw.ApplicationWindow):
             layout = "close:" if "close" in left_side else ":close"
 
         self.headerbar.set_decoration_layout(layout)
-
-    def _hide_time_tooltip(self, *args):
-        def hide():
-            self.tooltip_thumb_revealer.set_reveal_child(False)
-            self.tooltip_label_revealer.set_reveal_child(False)
-
-        idle_add_once(hide)
 
     def _show_ui(self):
         self.set_cursor_from_name(None)
@@ -766,176 +649,36 @@ class CineWindow(Adw.ApplicationWindow):
         return Gdk.EVENT_STOP
 
     def setup_thumb_preview(self):
-        if not self.thumb_area:
-            self.thumb_area = ThumbPreviewGLArea(self.mpv.hwdec)
-            self.thumb_frame.set_child(self.thumb_area)
-            self.thumb_area.realize()
-
-        v_width, v_height = 1280, 720
-
-        try:
-            if self.mpv.vid:
-                self.mpv.wait_for_property("width", timeout=2)
-                self.mpv.wait_for_property("height", timeout=2)
-                v_width = cast(int, self.mpv.width)
-                v_height = cast(int, self.mpv.height)
-        except Exception:
-            logger.exception("Failed to get video w/h")
-
-        if v_width >= v_height:  # Horizontal or square
-            width = 200
-            height = int((v_height / v_width) * width)
-            if height == width:
-                width, height = 168, 168
-        else:  # Vertical
-            height = 168
-            width = int((v_width / v_height) * height)
-
-        self._thumb_w = width
-        self.thumb_area.set_size_request(width, height)
-        a = self.thumb_area
-        a.stop() if self._is_audio else a.load_file(self._video_path)
+        controls_setup_thumb_preview(self)
 
     def _hide_time_tooltip(self, *args):
-        self._prev_reveal = False
-        self.tooltip_thumb_revealer.set_reveal_child(False)
-        self.tooltip_label_revealer.set_reveal_child(False)
+        hide_time_tooltip(self)
 
     def _set_time_tooltip(self, *args):
-        self._prev_prog_motion_xy = (-1, -1)  # triggers _on_progress_motion
-        self._width = self.get_width()
-        self._prog_width = self.video_progress_scale.get_width()
-        self._prev_reveal = False
-
-    def _move_time_tooltip(self, revealer, layer: Gtk.Fixed, x, tooltip_w):
-        x_pos = max(0, min(x - (tooltip_w / 2) + 23, self._width - tooltip_w))
-        layer.move(revealer, x_pos, 0)
+        set_time_tooltip(self)
 
     def _on_progress_motion(self, _controller, x, y):
-        if (x, y) == self._prev_prog_motion_xy:
-            return
-        self._prev_prog_motion_xy = (x, y)
-
-        if self._prog_fine_tune:
-            self._hide_time_tooltip()
-            return
-
-        show_thumb = self.thumb_area is not None and not self._is_audio
-
-        if not self._prev_reveal:
-            self.tooltip_thumb_revealer.set_reveal_child(show_thumb)
-            self.tooltip_label_revealer.set_reveal_child(True)
-            self._prev_reveal = True
-
-        if self._prog_width <= 0:
-            return
-
-        percentage = max(0, min(1, x / self._prog_width))
-        self._hover_time = percentage * self._duration
-
-        title = None
-        if self._chapters:
-            idx = bisect.bisect_right(self.chapter_times, self._hover_time) - 1
-            if idx >= 0:
-                self._curr_chapter_time = self.chapter_times[idx]
-                title = self.chapter_titles[idx]
-        else:
-            self._curr_chapter_time = None
-
-        time_str = format_time(self._hover_time)
-        text = f"{time_str} ‐ <b>{title}</b>" if title else time_str
-        self.time_tooltip_label.set_markup(text)
-        label_w = self.tooltip_label_revealer.get_preferred_size()[1].width
-
-        self._move_time_tooltip(
-            self.tooltip_label_revealer, self.tooltip_label_layer, x, label_w
-        )
-
-        if self.thumb_area is None:
-            return
-
-        self._move_time_tooltip(
-            self.tooltip_thumb_revealer, self.tooltip_thumb_layer, x, self._thumb_w + 12
-        )
-
-        idle_add_once(self.thumb_area.seek, self._hover_time)
+        on_progress_motion(self, x, y)
 
     def _go_to_chapter_start(self, *args):
         if self._curr_chapter_time is not None:
             self.mpv.command_async("seek", self._curr_chapter_time, "absolute")
 
     def _on_progress_scroll(self, controller, _dx, dy):
-        event: Gdk.ScrollEvent = controller.get_current_event()
-        state = event.get_modifier_state()
-
-        if state & Gdk.ModifierType.CONTROL_MASK:
-            return True
-
-        direction: Gdk.ScrollDirection = event.get_direction()
-        rel_dir: Gdk.ScrollRelativeDirection = event.get_relative_direction()  # type: ignore
-        is_natural: bool = rel_dir == Gdk.ScrollRelativeDirection.INVERTED  # type: ignore
-        step = dy if direction == Gdk.ScrollDirection.SMOOTH else dy * 10
-
-        if is_natural:
-            step = -step
-
-        adj = self.video_progress_scale.get_adjustment()
-        progress = adj.get_value()
-        new_progress = progress - step
-        adj.set_value(new_progress)
-
-        return True
+        return on_progress_scroll(controller, dy, self.video_progress_scale)
 
     def _update_volume_icon(self):
-        volume = cast(float, self.mpv.volume)
-        is_muted = self.mpv.mute
-
-        if is_muted or volume == 0:
-            icon = "cine-volume-mute-symbolic"
-        elif volume < 33:
-            icon = "cine-volume-low-symbolic"
-        elif volume < 66:
-            icon = "cine-volume-mid-symbolic"
-        elif volume <= 100.5:
-            icon = "cine-volume-max-symbolic"
-        else:
-            icon = "cine-volume-overamp-symbolic"
-
-        self.volume_menu_btn.props.icon_name = icon
+        update_volume_icon(self)
 
     def _set_time_margin(self):
         self.time_elapsed_label.props.margin_end = 3 if self._show_remaining else 0
 
     @Gtk.Template.Callback()
     def _toggle_elapsed_remaining(self, _btn):
-        self._show_remaining = not self._show_remaining
-        settings.set_boolean("show-remaining", self._show_remaining)
-        pos = float(self.mpv.time_pos or 0)
-        self._update_progress(pos, update_bar=False)
-        self._set_time_margin()
+        toggle_elapsed_remaining(self)
 
     def _update_progress(self, curr_time, update_bar=True):
-        curr_time = round(curr_time, 1)
-
-        if update_bar and curr_time == self._prev_prog_time:
-            return
-
-        if update_bar:
-            self.video_progress_adj.handler_block_by_func(self._on_progress_adjusted)
-            self.video_progress_adj.props.value = curr_time
-            self.video_progress_adj.handler_unblock_by_func(self._on_progress_adjusted)
-
-        try:
-            if self._show_remaining:
-                duration = float(self.mpv.duration or 0)
-                remaining = (duration - curr_time) if duration > curr_time else 0
-                self.time_elapsed_label.props.label = f"-{format_time(remaining)}"
-            else:
-                self.time_elapsed_label.props.label = format_time(curr_time)
-        except mpv.ShutdownError:
-            pass
-
-        self._prev_prog_time = curr_time
+        update_progress(self, curr_time, update_bar=update_bar)
 
     def _update_chapter_marks_and_menu(self, chapters):
         update_chapter_marks_and_menu(self, chapters)
@@ -977,69 +720,20 @@ class CineWindow(Adw.ApplicationWindow):
             )
 
     def _update_play_pause_icon(self, paused):
-        if self._shutting_down:
-            return
-        play = "cine-playback-start-symbolic"
-        pause = "cine-playback-pause-symbolic"
-
-        btn_icon = play if paused else pause
-        self.play_pause_btn.set_icon_name(btn_icon)
-
-        text = _("Play") if paused else _("Pause")
-        self.play_pause_btn.update_property([Gtk.AccessibleProperty.LABEL], [text])
-
-        self.icon_indicator.props.icon_name = pause if paused else play
-        self._show_icon_indicator()
-        self._mpris.update_playback_status(paused)
+        update_play_pause_icon(self, paused)
 
     def _update_duration(self, duration):
-        self.time_total_label.set_text(format_time(duration))
-
-        if duration == 0:
-            self.video_progress_scale.set_can_target(False)
-            self.video_progress_scale.set_can_focus(False)
-            self._hide_time_tooltip()
-            return
-
-        self.video_progress_scale.set_can_target(True)
-        self.video_progress_scale.set_can_focus(True)
-
-        self.video_progress_adj.set_upper(duration)
-
-        if duration >= 86400:
-            chars = 10
-        elif duration >= 3600:
-            chars = 7
-        elif duration >= 600:
-            chars = 6
-        else:
-            chars = 5
-
-        self.time_elapsed_label.set_width_chars(chars)
+        update_duration(self, duration)
 
     @Gtk.Template.Callback()
     def _cycle_pause(self, *args):
         self.mpv.command_async("cycle", "pause")
 
     def _on_progress_pressed(self, *args):
-        try:
-            self._playing_on_press = not self.mpv.pause
-            if self._playing_on_press:
-                self.skip_pause_obs_count += 1
-                self.mpv.command_async("set", "pause", "yes")
-        except Exception:
-            logger.exception("_on_progress_pressed failed")
-            self.skip_pause_obs_count = 0
+        on_progress_pressed(self)
 
     def _on_progress_released(self, *args):
-        try:
-            if self._playing_on_press:
-                self.skip_pause_obs_count += 1
-                self._playing_on_press = False
-                self.mpv.command_async("set", "pause", "no")
-        except Exception:
-            logger.exception("_on_progress_released failed")
-            self.skip_pause_obs_count = 0
+        on_progress_released(self)
 
     def _on_progress_adjusted(self, adjustment):
         self.mpv.command_async("seek", adjustment.props.value, "absolute")
@@ -1049,50 +743,13 @@ class CineWindow(Adw.ApplicationWindow):
         media_on_shuffle_toggled(self, button)
 
     def _on_ab_loop_btn_toggled(self, button):
-        if not button or not button.get_active():
-            self.mpv.ab_loop_a = False
-            self.mpv.ab_loop_b = False
-        else:
-            self.mpv.command_async("ab-loop")
+        on_ab_loop_btn_toggled(self, button)
 
     def _update_loop_state(self):
-        icon_loop = "cine-playlist-repeat-symbolic"
-        icon_loop_file = "cine-repeat-file-symbolic"
-        is_file = self.mpv.loop_file
-        is_playlist = self.mpv.loop_playlist
-
-        if is_playlist:
-            self._loop_mode = "playlist"
-            icon, tooltip, active = icon_loop, _("Loop Playlist"), True
-        elif is_file:
-            self._loop_mode = "file"
-            icon, tooltip, active = icon_loop_file, _("Loop File"), True
-        else:
-            self._loop_mode = "off"
-            icon, tooltip, active = icon_loop, _("Loop"), False
-
-        settings.set_string("loop-state", self._loop_mode)
-
-        self.loop_btn.handler_block_by_func(self._on_loop_toggled)
-        self.loop_btn.set_active(active)
-        self.loop_btn.handler_unblock_by_func(self._on_loop_toggled)
-
-        self.loop_btn.set_icon_name(icon)
-        self.loop_btn.set_tooltip_text(tooltip)
+        update_loop_state(self)
 
     def _on_loop_toggled(self, _button):
-        next_modes = {"off": "playlist", "playlist": "file", "file": "off"}
-        curr_mode = self._loop_mode
-        target_mode = next_modes[curr_mode]
-        if target_mode == "playlist":
-            self.mpv.loop_file = "no"
-            self.mpv.loop_playlist = "inf"
-        elif target_mode == "file":
-            self.mpv.loop_file = "inf"
-            self.mpv.loop_playlist = "no"
-        elif target_mode == "off":
-            self.mpv.loop_file = "no"
-            self.mpv.loop_playlist = "no"
+        on_loop_toggled(self)
 
     def _sync_can_prev_next(self):
         sync_can_prev_next(self)
