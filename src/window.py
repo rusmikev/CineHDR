@@ -223,7 +223,34 @@ class CineWindow(Adw.ApplicationWindow):
         )
 
         Gtk.WindowGroup().add_window(self)
+        self._init_window_state()
 
+        mpv_logger = logging.getLogger("mpv")
+        self._diagnostics_exporter = init_diagnostics_exporter(
+            __package__, logger, load_optional_validation
+        )
+        self._mpv_log_handler = make_mpv_log_handler(self, mpv_logger)
+        self.mpv = self._create_mpv_player()
+
+        self._video_area = MpvVideoWidget(
+            self.mpv,
+            render_backend_selection=self.app.render_backend_selection,  # type: ignore
+        )
+        self._configure_video_offload_and_mpv_defaults()
+        self._setup_actions()
+        self._setup_widgets()
+        self._setup_observers()
+        self._load_input_bindings()
+        sync_mpv_with_settings(self)
+
+        if (
+            settings.get_boolean("save-session")
+            and is_activate
+            and not self._is_gpu_validation
+        ):
+            restore_last_playlist(self, self.app, self.mpv)
+
+    def _init_window_state(self):
         self._visible_dialog: Adw.Dialog | None = None
         self.playlist_ls: Gio.ListStore = Gio.ListStore.new(PlaylistItemObj)
         self._playlist_debounce_id: int = 0
@@ -272,21 +299,14 @@ class CineWindow(Adw.ApplicationWindow):
         self._is_fullscreen: bool = False
         self._is_inactive: bool = False
         self._mpv_ctx: mpv.MpvRenderContext
-
-        mpv_logger = logging.getLogger("mpv")
-
         self.dovi_rpu_warning_count: int = 0
         self.dovi_rpu_warning_text: str | None = None
         self._dovi_rpu_logged: bool = False
         self._shutting_down: bool = False
         self._media_load_generation: int = 0
-        self._diagnostics_exporter = init_diagnostics_exporter(
-            __package__, logger, load_optional_validation
-        )
 
-        self._mpv_log_handler = make_mpv_log_handler(self, mpv_logger)
-
-        self.mpv = mpv.MPV(
+    def _create_mpv_player(self):
+        return mpv.MPV(
             log_handler=self._mpv_log_handler,
             loglevel="warn",
             audio_client_name=_("CineHDR"),
@@ -328,10 +348,7 @@ class CineWindow(Adw.ApplicationWindow):
             watch_history_path=WATCH_HISTORY_JSONL,
         )
 
-        self._video_area = MpvVideoWidget(
-            self.mpv,
-            render_backend_selection=self.app.render_backend_selection,  # type: ignore
-        )
+    def _configure_video_offload_and_mpv_defaults(self):
         if hasattr(self._video_area, "setup_window_integration"):
             self._video_area.setup_window_integration(self)
         self.offload: Gtk.GraphicsOffload = Gtk.GraphicsOffload(child=self._video_area)
@@ -350,17 +367,10 @@ class CineWindow(Adw.ApplicationWindow):
         self.mpv["vo"] = "libmpv"
         self.mpv["osc"] = "no"
         self.mpv["load-console"] = "no"
-        self.mpv.command("change-list", "watch-later-options", "remove", "vid")
-        self.mpv.command("change-list", "watch-later-options", "remove", "aid")
-        self.mpv.command("change-list", "watch-later-options", "remove", "volume")
-        self.mpv.command("change-list", "watch-later-options", "remove", "sub-scale")
-        self.mpv.command("change-list", "watch-later-options", "remove", "ab-loop-a")
-        self.mpv.command("change-list", "watch-later-options", "remove", "ab-loop-b")
+        for opt in ("vid", "aid", "volume", "sub-scale", "ab-loop-a", "ab-loop-b"):
+            self.mpv.command("change-list", "watch-later-options", "remove", opt)
 
-        self._setup_actions()
-        self._setup_widgets()
-        self._setup_observers()
-
+    def _load_input_bindings(self):
         try:
             self.mpv.command("load-input-conf", f"memory://{INTERNAL_BINDINGS}")
             self.mpv.command("load-input-conf", INPUT_CONF)
@@ -372,15 +382,6 @@ class CineWindow(Adw.ApplicationWindow):
         self._nonrepeat_keys, self._has_enter_binding, self._has_kp_enter_binding = (
             parse_bindings(self._input_bindings)
         )
-
-        sync_mpv_with_settings(self)
-
-        if (
-            settings.get_boolean("save-session")
-            and is_activate
-            and not self._is_gpu_validation
-        ):
-            restore_last_playlist(self, self.app, self.mpv)
 
     def _setup_actions(self):
         self._create_action("clear-and-add", self._on_clear_and_add)

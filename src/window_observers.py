@@ -179,7 +179,7 @@ def _register_playlist_and_ab_observers(win: Any, win_mod: Any) -> None:
         win_mod.idle_add_once(sync_ab_loop, name)
 
 
-def _register_playback_and_audio_observers(win: Any, win_mod: Any) -> None:
+def _register_loop_and_playback_observers(win: Any, win_mod: Any) -> None:
     def sync_loop(name, value):
         new_mode = "no"
         if name == "loop-playlist" and value == "inf":
@@ -233,6 +233,8 @@ def _register_playback_and_audio_observers(win: Any, win_mod: Any) -> None:
         win._duration = val
         win_mod.idle_add_once(win._update_duration, val)
 
+
+def _register_audio_volume_observers(win: Any, win_mod: Any) -> None:
     def sync_mute(muted):
         win.mute_toggle_btn.handler_block(win.mute_handler_id)
         win.mute_toggle_btn.set_active(muted)
@@ -313,7 +315,7 @@ def _register_track_and_chapter_observers(win: Any, win_mod: Any) -> None:
             win_mod.idle_add_once(win._sync_chapter_menu_selected)
 
 
-def _register_state_and_shutdown_observers(win: Any, win_mod: Any) -> None:
+def _register_pause_idle_title_observers(win: Any, win_mod: Any) -> None:
     @win.mpv.property_observer("pause")
     def on_pause_change(_name, paused):
         if win._shutting_down:
@@ -391,6 +393,8 @@ def _register_state_and_shutdown_observers(win: Any, win_mod: Any) -> None:
         if title:
             win_mod.idle_add_once(sync_title, title)
 
+
+def _register_media_track_icon_observers(win: Any, win_mod: Any) -> None:
     @win.mpv.property_observer("sub-scale")
     def on_sub_scale_change(_name, value):
         if win._visible_dialog is None:
@@ -451,6 +455,8 @@ def _register_state_and_shutdown_observers(win: Any, win_mod: Any) -> None:
             else:
                 win_mod.idle_add_once(win._video_area.queue_render)
 
+
+def _register_video_vo_and_shutdown_observers(win: Any, win_mod: Any) -> None:
     @win.mpv.property_observer("video-zoom")
     def on_zoom_change(_name, value):
         if round(value, 2) == 0.00:
@@ -478,6 +484,9 @@ def setup_window_observers(win: Any) -> None:
 
     _register_file_observers(win, win_mod)
     _register_playlist_and_ab_observers(win, win_mod)
-    _register_playback_and_audio_observers(win, win_mod)
+    _register_loop_and_playback_observers(win, win_mod)
+    _register_audio_volume_observers(win, win_mod)
     _register_track_and_chapter_observers(win, win_mod)
-    _register_state_and_shutdown_observers(win, win_mod)
+    _register_pause_idle_title_observers(win, win_mod)
+    _register_media_track_icon_observers(win, win_mod)
+    _register_video_vo_and_shutdown_observers(win, win_mod)
