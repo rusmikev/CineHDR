@@ -38,15 +38,11 @@ from typing import Any, Optional
 
 from .gl_bindings import (
     GL_FRAMEBUFFER,
-    GL_RENDERER,
     GL_RGBA16F,
     GL_RGBA8,
-    GL_SHADING_LANGUAGE_VERSION,
     GL_SYNC_GPU_COMMANDS_COMPLETE,
     GL_SYNC_FLUSH_COMMANDS_BIT,
     GL_TIMEOUT_EXPIRED,
-    GL_VENDOR,
-    GL_VERSION,
     GL_WAIT_FAILED,
     glFenceSync,
     glFlush,
@@ -73,6 +69,18 @@ from .render_backend import (
     target_configuration_requires_redraw,
 )
 from .utils import get_display_param, idle_add_once, mpv_prop
+from .video_widget_lifecycle import (
+    capture_video_selection_for_context_restore,
+    connect_realize_signals,
+    handle_first_frame_confirmed,
+    handle_hdr_controller_change,
+    push_output_hint,
+    record_realized_runtime,
+    reset_realized_frame_flags,
+    reset_render_session_state,
+    update_cached_hdr_support,
+    update_cached_scale_and_limits,
+)
 
 # CPU-side wait budget for the GTK < 4.16 fallback path (no
 # GdkGLTextureBuilder.set_sync). glClientWaitSync takes a real timeout in
@@ -172,96 +180,18 @@ class MpvVideoWidget(Gtk.Widget):
         self._window = window
 
     def _update_cached_hdr_support(self, *args):
-        from .hdr_detection import invalidate_hdr_support_cache
-        invalidate_hdr_support_cache(invalidate_compositor=False)
-        old_support = getattr(self, "_cached_hdr_support", None)
-        self._cached_hdr_support = check_hdr_support(allow_probe=False)
-        self._cached_hdr_support_valid = True
-        self._push_output_hint()
-        self._update_cached_scale_and_limits()
-        if hasattr(self, "hdr_controller"):
-            self.hdr_controller.request_monitor_probe()
-            if old_support is not None and old_support != self._cached_hdr_support:
-                self.hdr_controller.apply_hdr_settings()
-                self.queue_draw()
+        update_cached_hdr_support(self, check_hdr_support)
 
     def _update_cached_scale_and_limits(self):
-        scale = float(self.props.scale_factor) if hasattr(self, "props") and hasattr(self.props, "scale_factor") else 1.0
-        max_w = 0
-        max_h = 0
-        try:
-            native = self.get_native()
-            surface = native.get_surface() if native and hasattr(native, "get_surface") else None
-            display = self.get_display()
-            if surface and display and hasattr(display, "get_monitor_at_surface"):
-                monitor = display.get_monitor_at_surface(surface)
-                if monitor:
-                    if hasattr(monitor, "get_scale"):
-                        scale = float(monitor.get_scale())
-                    elif hasattr(monitor, "get_scale_factor"):
-                        scale = float(monitor.get_scale_factor())
-                    geom = monitor.get_geometry()
-                    if geom and geom.width > 0 and geom.height > 0:
-                        max_w = int(round(geom.width * scale))
-                        max_h = int(round(geom.height * scale))
-        except Exception:
-            pass
-        self._cached_scale = scale
-        self._cached_max_width = max_w
-        self._cached_max_height = max_h
+        update_cached_scale_and_limits(self)
 
     def _on_hdr_controller_change(self):
-        """Consume a completed controller probe without starting another one.
-
-        The widget keeps a small render-path cache in addition to
-        ``hdr_detection``'s process cache. A monitor probe completes after the
-        initial conservative value may already have been latched here, so a
-        redraw alone is insufficient: refresh this cache from the now-populated
-        non-blocking capability cache before selecting the next FBO format.
-
-        Per ADR-0007: check the controller's committed output state and epoch.
-        If publication is suppressed, keep the last-known texture visible and
-        do not force a render. If a new committed state differs from the last
-        rendered epoch, request a forced redraw so paused playback republishes
-        the new FBO format and GDK color state even with zero mpv update flags.
-        """
-        from .hdr_detection import invalidate_support_decision
-        invalidate_support_decision()
-        self._cached_hdr_support = check_hdr_support(allow_probe=False)
-        self._cached_hdr_support_valid = True
-
-        controller = getattr(self, "hdr_controller", None)
-        if controller:
-            if getattr(controller, "is_publication_suppressed", False):
-                self.queue_draw()
-                return
-            committed = getattr(controller, "committed_output_state", None)
-            if committed is not None:
-                if getattr(self, "_committed_render_epoch", None) != committed.epoch:
-                    self._schedule_render(force_redraw=True)
-        self.queue_draw()
+        """Consume a completed controller probe without starting another one."""
+        handle_hdr_controller_change(self, check_hdr_support)
 
     def _push_output_hint(self):
-        """Tell HdrController which monitor the widget currently sits on, so
-        the auto-mode monitor gate reads the right output's image description
-        on multi-monitor setups (SDR laptop panel + HDR TV)."""
-        if not hasattr(self, "hdr_controller"):
-            return
-        connector = None
-        try:
-            native = self.get_native()
-            surface = native.get_surface() if native and hasattr(native, "get_surface") else None
-            display = self.get_display()
-            if surface and display and hasattr(display, "get_monitor_at_surface"):
-                monitor = display.get_monitor_at_surface(surface)
-                if monitor and hasattr(monitor, "get_connector"):
-                    connector = monitor.get_connector()
-        except Exception:
-            connector = None
-        try:
-            self.hdr_controller.set_output_hint(connector)
-        except Exception:
-            pass
+        """Tell HdrController which monitor the widget currently sits on."""
+        push_output_hint(self)
 
     @property
     def is_hdr_supported(self) -> bool:
@@ -335,28 +265,7 @@ class MpvVideoWidget(Gtk.Widget):
 
     def _capture_video_selection_for_context_restore(self):
         """Remember the active video selection before libmpv tears its VO down."""
-        self._video_selection_for_context_restore = None
-        try:
-            current_video = getattr(self.mpv, "vid", None)
-            if current_video in (False, None, "no", "auto") or (
-                isinstance(current_video, (int, str)) and str(current_video).isdigit() is False
-            ):
-                return
-            configured_val = mpv_prop(self.mpv, "options/vid", "")
-            configured_video = (
-                str(configured_val).strip().lower()
-                if configured_val is not None
-                else ""
-            )
-            self._video_selection_for_context_restore = (
-                "auto"
-                if configured_video in ("auto", "-1")
-                else str(int(current_video))
-            )
-        except Exception:
-            logging.exception(
-                "Failed to capture the video track before context recreation"
-            )
+        capture_video_selection_for_context_restore(self, mpv_prop)
 
     def _restore_video_selection_after_context_recreation(self) -> bool:
         """Reattach the video chain removed by mpv_render_context_free()."""
@@ -401,15 +310,7 @@ class MpvVideoWidget(Gtk.Widget):
         # Clear facts owned by the previous context before touching a new GL
         # context. If make_current itself fails, diagnostics must not continue
         # to describe the previous renderer or render target as active.
-        self.render_backend_active = None
-        self.render_backend_fallback_reason = None
-        self.render_session_status = "not-initialized"
-        self.render_failure_reason = None
-        self.render_runtime = {}
-        self.render_target_format = None
-        self.render_target_depth = None
-        self.render_color_state = None
-        self._render_restart_required_reason = None
+        reset_render_session_state(self)
 
         area.make_current()
         area_error = area.get_error()
@@ -419,40 +320,9 @@ class MpvVideoWidget(Gtk.Widget):
             )
             return
 
-        self._shutting_down = False
-        self._render_failed = False
-        self._first_frame_logged = False
-        self._first_media_frame_logged = False
-        self._first_media_frame_exported = False
-        self._exported_media_generation = None
-        self._committed_render_epoch = None
+        reset_realized_frame_flags(self)
         self._update_cached_hdr_support()
-
-        display = self.get_display()
-        if display and hasattr(display, "get_monitors"):
-            monitors = display.get_monitors()
-            if monitors and hasattr(monitors, "connect"):
-                try:
-                    self._monitor_signal_id = monitors.connect("items-changed", self._update_cached_hdr_support)
-                    self._connected_monitors = monitors
-                except Exception:
-                    pass
-
-        try:
-            native = self.get_native()
-            if native and hasattr(native, "get_surface"):
-                surface = native.get_surface()
-                if surface:
-                    if hasattr(surface, "connect"):
-                        self._connected_surface = surface
-                        for signal_name in ("enter-monitor", "leave-monitor"):
-                            self._surface_signal_ids.append(
-                                surface.connect(
-                                    signal_name, self._update_cached_hdr_support
-                                )
-                            )
-        except Exception:
-            pass
+        connect_realize_signals(self)
 
         proc_address_fn = mpv.MpvGlGetProcAddressFn(
             lambda _inst, name: get_proc_address(name)
@@ -487,45 +357,13 @@ class MpvVideoWidget(Gtk.Widget):
             raise
         self.render_context_generation += 1
         self.render_backend_active = backend_state.active
-        self.render_backend_fallback_reason = backend_state.fallback_reason
-        self.render_session_status = (
-            "startup-fallback"
-            if backend_state.fallback_reason
-            else "active"
+        record_realized_runtime(
+            self,
+            mpv,
+            backend_state,
+            render_runtime_diagnostics_fn=render_runtime_diagnostics,
+            get_gl_string_fn=get_gl_string,
         )
-        logging.info(
-            "libmpv render backend requested=%s active=%s fallback_reason=%s",
-            backend_state.requested.value,
-            backend_state.active,
-            backend_state.fallback_reason or "none",
-        )
-        runtime = render_runtime_diagnostics(mpv, self.mpv)
-        runtime.update(
-            {
-                "gl_vendor": get_gl_string(GL_VENDOR),
-                "gl_renderer": get_gl_string(GL_RENDERER),
-                "gl_version": get_gl_string(GL_VERSION),
-                "glsl_version": get_gl_string(GL_SHADING_LANGUAGE_VERSION),
-            }
-        )
-        self.render_runtime = runtime
-        logging.info(
-            "Render runtime libmpv=%s mpv=%s libplacebo=%s ffmpeg=%s "
-            "configuration=%s OpenGL=%s / %s / %s",
-            runtime["libmpv_path"],
-            runtime["mpv_version"],
-            runtime["libplacebo_version"],
-            runtime["ffmpeg_version"],
-            runtime["mpv_configuration"],
-            runtime["gl_vendor"],
-            runtime["gl_renderer"],
-            runtime["gl_version"],
-        )
-        if backend_state.fallback_reason and self._window:
-            app = getattr(self._window, "app", None)
-            notify = getattr(app, "notify_render_fallback_once", None)
-            if notify:
-                notify(self._window, backend_state.fallback_reason)
 
         def on_mpv_update():
             self._schedule_render()
@@ -902,12 +740,7 @@ class MpvVideoWidget(Gtk.Widget):
         return GLib.SOURCE_REMOVE
 
     def _handle_first_frame_confirmed(self):
-        window = getattr(self, "_window", None)
-        if window and hasattr(window, "on_first_video_frame"):
-            try:
-                idle_add_once(window.on_first_video_frame)
-            except Exception:
-                logging.exception("Failed to schedule first video frame notification")
+        handle_first_frame_confirmed(self, idle_add_once)
 
     def _shutdown_render_context_for_area(self, area: Gtk.GLArea) -> bool:
         """Free GL resources using the GLArea context that owns them."""
