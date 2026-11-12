@@ -19,7 +19,6 @@
 
 import logging
 import re
-import shlex
 from gettext import gettext as _
 from typing import Any, cast
 
@@ -49,13 +48,8 @@ from .shortcuts import INTERNAL_BINDINGS
 from .utils import (
     CONFIG_DIR,
     INPUT_CONF,
-    KEY_REMAP,
-    MBTN_MAP,
     SCREENSHOT_DIR,
     WATCH_HISTORY_JSONL,
-    PrimaryClick,
-    SecondaryClick,
-    append_modifiers,
     get_mouse_bindings,
     has_host_permission as has_host_permission,
     idle_add_once as idle_add_once,
@@ -89,6 +83,25 @@ from .window_diagnostics import (
     handle_first_video_frame,
     init_diagnostics_exporter,
     notify_diagnostics_shutdown,
+)
+from .window_input import (
+    cancel_click_hold,
+    hide_ui,
+    hide_ui_timeout as input_hide_ui_timeout,
+    is_hovering_ui,
+    on_click_hold,
+    on_click_pressed,
+    on_click_released,
+    on_key_event,
+    on_mouse_motion,
+    on_mouse_scroll,
+    on_mouse_scroll_volume,
+    run_mpv_command,
+    set_fs_state,
+    set_space_holding,
+    setup_input_controllers_and_window_signals,
+    show_ui,
+    sync_fullscreen,
 )
 from .window_media import (
     handle_drop,
@@ -425,161 +438,22 @@ class CineWindow(Adw.ApplicationWindow):
 
     def _setup_widgets(self):
         setup_playback_control_widgets(self)
-
-        key_controller = Gtk.EventControllerKey()
-        key_controller.connect("key-pressed", self._on_key_event, "keypress")
-        key_controller.connect("key-released", self._on_key_event, "keyup")
-        key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        self.add_controller(key_controller)
-
-        ecs_flags = Gtk.EventControllerScrollFlags
-        overlay_ecs = Gtk.EventControllerScroll.new(ecs_flags.BOTH_AXES)
-        self.video_overlay.add_controller(overlay_ecs)
-        overlay_ecs.connect("scroll", self._on_mouse_scroll)
-
-        self.clk_rect = Gdk.Rectangle()
-        for btn_num, MBTN in MBTN_MAP.items():
-            click_gesture = Gtk.GestureClick(button=btn_num)
-            click_gesture.connect("pressed", self._on_click_pressed, MBTN)
-            click_gesture.connect("released", self._on_click_released, MBTN)
-            self.toast_overlay.add_controller(click_gesture)
-
-        long_press = Gtk.GestureLongPress.new()
-        long_press.connect("pressed", self._on_click_hold)
-        long_press.connect("end", self._cancel_click_hold)
-        long_press.connect("cancelled", self._cancel_click_hold)
-        self.window_handle.add_controller(long_press)
-
-        for c in self.window_handle.observe_controllers():
-            if isinstance(c, Gtk.GestureClick):
-                c.set_propagation_phase(Gtk.PropagationPhase.NONE)
-                c.set_button(9)
-
-        @self._connect("notify::visible-dialog")
-        def on_vis_dialog_change(*args):
-            if dialog := self.get_visible_dialog():
-                self._visible_dialog = dialog
-                self.set_cursor_from_name(None)
-                self._cancel_click_hold()
-                self._space_holding = False
-                self._set_space_holding(False)
-            else:
-                self._visible_dialog = None
-            self.hide_ui_timeout()
-
-        @self._connect("notify::is-active")
-        def on_is_active_change(*args):
-            if self.props.is_active:
-                timeout_add_once(200, setattr, self, "_is_inactive", False)
-            else:
-                self._cancel_click_hold()
-                self._space_holding = False
-                self._set_space_holding(False)
-                self._is_inactive = True
-
-        drop_target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
-        drop_target.set_gtypes([Gdk.FileList, str])
-        drop_target.connect("enter", self._on_drop_enter)
-        drop_target.connect("leave", self._on_drop_leave)
-        drop_target.connect("drop", self._on_drop)
-        self.video_overlay.add_controller(drop_target)
-
-        self.motion_header_controls = Gtk.EventControllerMotion()
-        self.motion_header_controls.connect("motion", self._on_mouse_motion)
-        self.revealer_ui.add_controller(self.motion_header_controls)
-
-        self.motion_header = Gtk.EventControllerMotion()
-        self.motion_controls = Gtk.EventControllerMotion()
-        self.headerbar.add_controller(self.motion_header)
-        self.controls_box.add_controller(self.motion_controls)
-
-        self.motion_controls_separator = Gtk.EventControllerMotion()
-        self.controls_separator.add_controller(self.motion_controls_separator)
-
-        @self._connect("notify::maximized")
-        def on_maximized_change(*args):
-            settings.set_boolean("is-maximized", self.props.maximized)
-
-        self.connect("notify::fullscreened", self._set_fs_state)
-
+        setup_input_controllers_and_window_signals(self)
 
     def _set_fs_state(self, _window, _gparam):
-        is_fullscreen = self.props.fullscreened
-
-        try:
-            if not is_fullscreen:
-                self.mpv.fullscreen = is_fullscreen
-        except mpv.ShutdownError:
-            pass
-
-        if not gtk_setts:
-            return
-
-        layout = gtk_setts.get_property("gtk-decoration-layout")
-
-        if is_fullscreen:
-            left_side, _colon, _right_side = layout.partition(":")
-            layout = "close:" if "close" in left_side else ":close"
-
-        self.headerbar.set_decoration_layout(layout)
+        set_fs_state(self)
 
     def _show_ui(self):
-        self.set_cursor_from_name(None)
-        self.revealer_ui.set_reveal_child(True)
+        show_ui(self)
 
     def hide_ui_timeout(self, *args, s=2):
-        if self._hide_timeout_id:
-            GLib.source_remove(self._hide_timeout_id)
-        self._hide_timeout_id = timeout_add_seconds_once(s, self._hide_ui)
+        input_hide_ui_timeout(self, s=s)
 
     def _hide_ui(self, *args):
-        try:
-            self._hide_timeout_id = 0
-            controls_hover = self.motion_controls.props.contains_pointer
-            header_hover = self.motion_header.props.contains_pointer
-
-            active_or_hover = (
-                self.mpv.idle_active
-                or header_hover
-                or controls_hover
-                or self.primary_menu_btn.props.active
-                or self.open_menu_btn.props.active
-                or self.options_menu_btn.props.active
-                or self.hdr_menu_btn.props.active
-                or self.volume_menu_btn.props.active
-                or self.subtitles_menu_btn.props.active
-                or self.audio_tracks_menu_btn.props.active
-                or self.video_tracks_menu_btn.props.active
-                or self.chapters_menu_btn.props.active
-            )
-            if not active_or_hover:
-                self.revealer_ui.set_reveal_child(False)
-                self._hide_time_tooltip()
-
-            if (
-                (self._is_fullscreen or not self.mpv["cursor-autohide-fs-only"])
-                and not active_or_hover
-                and not self.props.dialogs
-            ):
-                self.set_cursor_from_name("none")
-        except mpv.ShutdownError:
-            return
+        hide_ui(self)
 
     def _on_mouse_motion(self, controller: Gtk.EventControllerMotion, x, y):
-        if None not in (x, y):
-            if (x, y) == self._prev_motion_xy or self._click_holding:
-                return
-
-            self._prev_motion_xy = (x, y)
-            self._show_ui()
-            self.hide_ui_timeout()
-
-            if event := controller.get_current_event():
-                state = event.get_modifier_state()
-                if state & Gdk.ModifierType.CONTROL_MASK:
-                    mpv_x = int(x * self.props.scale_factor)
-                    mpv_y = int(y * self.props.scale_factor)
-                    self.mpv.command_async("mouse", mpv_x, mpv_y)
+        on_mouse_motion(self, controller, x, y)
 
     def _update_track_menus(self, track_list):
         update_track_menus(self, track_list)
@@ -765,275 +639,37 @@ class CineWindow(Adw.ApplicationWindow):
         handle_drop(self, value)
 
     def _sync_fullscreen(self, mpv_is_fs: bool):
-        self._is_fullscreen = mpv_is_fs
-        self.fullscreen() if mpv_is_fs else self.unfullscreen()
+        sync_fullscreen(self, mpv_is_fs)
 
     def _set_space_holding(self, hold):
-        if hold:
-            self._space_hold_id = 0
-            if self._click_holding:
-                return
-
-            # prevent being able to open menus when clicking buttons while holding spacebar
-            # because that causes issues with the internal gtk button handling (space activates it)
-            # and it becomes impossible to activate anything again in the window with mouse clicks
-            # unless a menu popover is opened again (with keyboard enter)
-            self.set_can_target(False)
-
-            self._space_holding = True
-
-            try:
-                self.mpv.pause = False
-                self._prev_speed = cast(float, self.mpv.speed)
-                new_speed = self._prev_speed * 2
-                self.mpv.speed = new_speed
-                self.mpv.show_text(f"{new_speed:g}× ⯈⯈", "100000000")
-            except mpv.ShutdownError:
-                pass
-        else:
-            self.set_can_target(True)
-
-            if self._space_hold_id:
-                GLib.source_remove(self._space_hold_id)
-                self._space_hold_id = 0
-
-            if self._space_pressed:
-                self._space_pressed = False
-                try:
-                    self.mpv.speed = self._prev_speed
-                    self.mpv.show_text(f"{self.mpv.speed:g}×")
-                except mpv.ShutdownError:
-                    pass
+        set_space_holding(self, hold)
 
     def _on_key_event(self, _controller, keyval, _keycode, state, event_type):
-        self.skip_pause_obs_count = 0
-        key_name = Gdk.keyval_name(keyval)
-
-        if self._space_holding and event_type == "keyup":
-            self._set_space_holding(False)
-
-        enter = key_name == "Return" and not self._has_enter_binding
-        kp_enter = key_name == "KP_Enter" and not self._has_kp_enter_binding
-
-        if key_name in ("Tab", "ISO_Left_Tab") or (enter or kp_enter):
-            self.revealer_ui.set_reveal_child(True)
-            self.hide_ui_timeout(s=3)
-            self._set_space_holding(False)
-            return
-
-        clean_state = state & Gtk.accelerator_get_default_mod_mask()
-        accel = Gtk.accelerator_name(keyval, clean_state)
-        shortcuts_accel = "<Shift><Control>question"
-        if self.app.get_actions_for_accel(accel) or accel == shortcuts_accel:
-            self._set_space_holding(False)
-            return
-
-        mpv_key = chr(Gdk.keyval_to_unicode(keyval))
-        mpv_key = KEY_REMAP.get(key_name, mpv_key)
-
-        mods = []
-        append_modifiers(state, mods)
-
-        combo = "+".join(mods + [mpv_key])
-
-        if event_type == "keypress":
-            if combo in self._nonrepeat_keys and combo in self._pressed_combos:
-                return True
-            self._pressed_combos.add(combo)
-        elif event_type == "keyup":
-            self._pressed_combos.discard(combo)
-
-        if combo == "SPACE":
-            if event_type == "keypress":
-                if self._space_pressed:
-                    return True
-
-                self._space_pressed = True
-
-                self._space_hold_id = timeout_add_once(
-                    500, self._set_space_holding, True
-                )
-            elif event_type == "keyup":
-                if self._space_hold_id:
-                    GLib.source_remove(self._space_hold_id)
-                    self._space_hold_id = 0
-
-                if not self._space_holding:
-                    self.mpv.command_async("keypress", "SPACE")
-                    if self._space_pressed:
-                        self._space_pressed = False
-
-            self._space_holding = False
-            return True
-
-        try:
-            self.mpv.command_async(event_type, combo)
-            return True
-        except mpv.ShutdownError:
-            pass
+        return on_key_event(self, keyval, state, event_type)
 
     def _on_click_pressed(self, gesture, _n_press, x, y, button):
-        self.skip_pause_obs_count = 0
-
-
-        if button == "MBTN_LEFT":
-            self._left_clk = settings.get_int("left-click")
-        elif button == "MBTN_RIGHT":
-            self._right_clk = settings.get_int("right-click")
-            if (
-                self._right_clk == SecondaryClick.CONTEXT_MENU
-                and not self.start_page.props.visible
-            ):
-                rect = Gdk.Rectangle()
-                rect.x = x
-                rect.y = y
-                self.context_popover_menu.set_pointing_to(rect)
-                self.context_popover_menu.popup()
-                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-                return
-
-        if button != "MBTN_LEFT":
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        # Back and forward dont trigger _on_click_released when video is playing (??)
-        if button in ("MBTN_BACK", "MBTN_FORWARD"):
-            self.mpv.command_async("keypress", button)
-            return
-
-        self._show_ui()
-        self.hide_ui_timeout()
+        on_click_pressed(self, gesture, x, y, button)
 
     def _on_click_hold(self, gesture, *args):
-        try:
-            if self._space_holding or self._is_hovering_ui():
-                return
-
-            self._click_holding = True
-            self.mpv.pause = False
-            self._prev_speed = cast(float, self.mpv.speed)
-            new_speed = self._prev_speed * 2
-            self.mpv.speed = new_speed
-            self.mpv.show_text(f"{new_speed:g}× ⯈⯈", "100000000")
-        except mpv.ShutdownError:
-            pass
+        on_click_hold(self)
 
     def _run_command(self, cmd):
-        try:
-            for sub_cmd in cmd.split(";"):
-                args = shlex.split(sub_cmd.strip())
-                self.mpv.command_async(*args)
-        except Exception:
-            logger.exception("_run_command failed")
+        run_mpv_command(self, cmd)
 
     def _on_click_released(self, gesture, n_press, _x, _y, button):
-        ignored_btn = button in ("MBTN_BACK", "MBTN_FORWARD")
-        ignore_left = (
-            self._is_inactive
-            and button == "MBTN_LEFT"
-            and self._left_clk == PrimaryClick.FOCUS_PLAY_PAUSE
-        )
-
-        if ignored_btn or ignore_left or self._is_hovering_ui():
-            return
-
-        is_secondary_pause = (
-            button == "MBTN_RIGHT" and self._right_clk == SecondaryClick.PLAY_PAUSE
-        )
-
-        if self._click_delay_id:
-            GLib.source_remove(self._click_delay_id)
-            self._click_delay_id = 0
-
-        if n_press == 1 and not self._click_holding:
-            if button == "MBTN_LEFT" and self._left_clk != PrimaryClick.BYPASS:
-
-                def click():
-                    self._cycle_pause()
-                    self._click_delay_id = 0
-
-                self._click_delay_id = timeout_add_once(self._click_time, click)
-                return
-        elif n_press == 2 and (cmd_str_dbl := self._mouse_binds.get(f"{button}_DBL")):
-            self._run_command(cmd_str_dbl)
-            return
-
-        if is_secondary_pause:
-            self._cycle_pause()
-        elif cmd_str := self._mouse_binds.get(button):
-            self._run_command(cmd_str)
+        on_click_released(self, n_press, button)
 
     def _cancel_click_hold(self, *args):
-        if not self._click_holding:
-            return
-        try:
-            self.mpv.speed = self._prev_speed
-            self.mpv.show_text(f"{self.mpv.speed:g}×")
-            self._click_holding = False
-        except mpv.ShutdownError:
-            pass
+        cancel_click_hold(self)
 
     def _on_mouse_scroll(self, controller, dx, dy):
-        self.skip_pause_obs_count = 0
-        event: Gdk.ScrollEvent = controller.get_current_event()
-        state = event.get_modifier_state()
-
-        if event.get_unit() == Gdk.ScrollUnit.SURFACE:  # Touchpad
-            # Scale it down so it doesn't fire rapidly
-            dx *= 0.1
-            dy *= 0.1
-
-        self._wheel_accum_x += dx
-        self._wheel_accum_y += dy
-
-        rel_dir: Gdk.ScrollRelativeDirection = event.get_relative_direction()  # type: ignore
-        is_natural: bool = rel_dir == Gdk.ScrollRelativeDirection.INVERTED  # type: ignore
-        UP: str = "WHEEL_DOWN" if is_natural else "WHEEL_UP"
-        DOWN: str = "WHEEL_UP" if is_natural else "WHEEL_DOWN"
-        LEFT: str = "WHEEL_RIGHT" if is_natural else "WHEEL_LEFT"
-        RIGHT: str = "WHEEL_LEFT" if is_natural else "WHEEL_RIGHT"
-        wheel: str | None = None
-
-        mods = []
-        append_modifiers(state, mods)
-
-        # Only trigger if scrolled a full 'unit'
-        if abs(self._wheel_accum_y) >= 1:
-            wheel = UP if self._wheel_accum_y < 0 else DOWN
-            self._wheel_accum_y = 0.0
-        elif abs(self._wheel_accum_x) >= 1:
-            wheel = RIGHT if self._wheel_accum_x > 0 else LEFT
-            self._wheel_accum_x = 0.0
-
-        if wheel:
-            combo = "+".join(mods + [wheel])
-            self.mpv.command_async("keypress", combo)
-
-        return True
+        return on_mouse_scroll(self, controller, dx, dy)
 
     def _on_mouse_scroll_volume(self, controller, _dx, dy):
-        event: Gdk.ScrollEvent = controller.get_current_event()
-        direction: Gdk.ScrollDirection = event.get_direction()
-        rel_dir: Gdk.ScrollRelativeDirection = event.get_relative_direction()  # type: ignore
-        is_natural: bool = rel_dir == Gdk.ScrollRelativeDirection.INVERTED  # type: ignore
-        max_vol = cast(float, self.mpv.volume_max)
-        step = dy if direction == Gdk.ScrollDirection.SMOOTH else dy * 5
-
-        if is_natural:
-            step = -step
-
-        adj = self.volume_scale.get_adjustment()
-        volume = adj.get_value()
-        new_vol = int(volume - step)
-        new_vol = max(adj.get_lower(), min(new_vol, max_vol))
-        adj.set_value(new_vol)
-
-        return True
+        return on_mouse_scroll_volume(self, controller, dy)
 
     def _is_hovering_ui(self):
-        controls_hover = self.motion_controls.props.contains_pointer
-        header_hover = self.motion_header.props.contains_pointer
-        separator_hover = self.motion_controls_separator.props.contains_pointer
-        hovering = (controls_hover or header_hover) and not separator_hover
-        return hovering
+        return is_hovering_ui(self)
 
 
     def _release_inhibit(self):

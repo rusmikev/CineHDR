@@ -82,6 +82,7 @@ cine_sources = [
   'window.py',
   'window_controls.py',
   'window_diagnostics.py',
+  'window_input.py',
   'window_media.py',
   'window_observers.py',
 ]
