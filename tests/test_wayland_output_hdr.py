@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -191,6 +191,367 @@ class TestCtypesProtocolTables(unittest.TestCase):
         calls.clear()
         _marshal_destroy(lib, 0x5678)
         self.assertEqual(calls, [("destroy", 0x5678)])
+
+
+def _unwrap_ptr(val):
+    if isinstance(val, ctypes.c_void_p):
+        return val.value
+    if isinstance(val, ctypes.c_uint32):
+        return val.value
+    if isinstance(val, ctypes.c_char_p):
+        return val.value
+    return val
+
+
+def _extract_callbacks(listener_ptr, signature_list):
+    """Cast each slot in a void(**) listener array back to a Python-callable thunk."""
+    raw = ctypes.cast(listener_ptr, ctypes.POINTER(ctypes.c_void_p))
+    return [cb_type(raw[i]) for i, cb_type in enumerate(signature_list)]
+
+
+class _FakeWaylandLib:
+    """In-memory mock of libwayland-client driving listener callbacks in C order."""
+
+    def __init__(self, globals_map, per_output_behaviors, mgr_caps=None):
+        self.globals_map = globals_map
+        self.per_output_behaviors = dict(per_output_behaviors)
+        self.mgr_caps = mgr_caps or {
+            "intents": [0],
+            "features": [2, 3],
+            "tfs": [9, 11],
+            "primaries": [1, 6],
+        }
+        self.wl_output_interface = (ctypes.c_char * 64)()
+        self.wl_callback_interface = (ctypes.c_char * 64)()
+        self.destroyed = []
+        self.marshaled_destroy = []
+        self.bound_version = None
+        self.listeners = {}
+
+        self._next_id = 0x1000
+        self._queue_ptr = 0xA001
+        self._wrapper_ptr = 0xA002
+        self._registry_ptr = 0xA003
+        self._mgr_ptr = 0xA004
+        self._proxy_meta = {}
+        self._pending_sync_cbs = []
+
+    def _alloc(self, kind, **meta):
+        self._next_id += 1
+        ptr = self._next_id
+        self._proxy_meta[ptr] = {"kind": kind, **meta}
+        return ptr
+
+    def wl_display_create_queue(self, _display):
+        return self._queue_ptr
+
+    def wl_proxy_create_wrapper(self, _display):
+        return self._wrapper_ptr
+
+    def wl_proxy_set_queue(self, _wrapper, _queue):
+        return None
+
+    def wl_proxy_marshal_constructor(self, parent, opcode, _iface, *args):
+        parent_val = _unwrap_ptr(parent)
+        op_val = _unwrap_ptr(opcode)
+        if parent_val == self._wrapper_ptr and op_val == 1:  # wl_display.get_registry
+            return self._registry_ptr
+        if parent_val == self._wrapper_ptr and op_val == 0:  # wl_display.sync
+            ptr = self._alloc("sync_cb")
+            self._pending_sync_cbs.append(ptr)
+            return ptr
+        if parent_val == self._mgr_ptr and op_val == 1:  # get_output
+            out_ptr = _unwrap_ptr(args[1])
+            return self._alloc("cm_out", out_ptr=out_ptr)
+        if parent_val in self._proxy_meta and self._proxy_meta[parent_val]["kind"] == "cm_out":
+            out_ptr = self._proxy_meta[parent_val]["out_ptr"]
+            return self._alloc("img", out_ptr=out_ptr)
+        if parent_val in self._proxy_meta and self._proxy_meta[parent_val]["kind"] == "img":
+            out_ptr = self._proxy_meta[parent_val]["out_ptr"]
+            return self._alloc("info", out_ptr=out_ptr)
+        return 0
+
+    def wl_proxy_marshal_constructor_versioned(self, _reg, _op, _iface, version, _name, _iface_name, _v2, _new_id):
+        self.bound_version = _unwrap_ptr(version)
+        return self._mgr_ptr
+
+    def wl_proxy_add_listener(self, proxy, listener, _data):
+        proxy_val = _unwrap_ptr(proxy)
+        self.listeners[proxy_val] = listener
+        return 0
+
+    def wl_display_roundtrip_queue(self, _display, _queue):
+        from src.wayland_output_hdr import (
+            _CB_HU,
+            _CB_I8,
+            _CB_REG_GLOBAL,
+            _CB_U,
+            _CB_US,
+            _CB_UU,
+            _CB_UUU,
+            _CB_VOID,
+        )
+
+        # Dispatch registry globals
+        if self._registry_ptr in self.listeners and not getattr(self, "_reg_dispatched", False):
+            self._reg_dispatched = True
+            cbs = _extract_callbacks(self.listeners[self._registry_ptr], [_CB_REG_GLOBAL, _CB_U])
+            for gname, (gid, gver) in self.globals_map.items():
+                cbs[0](None, self._registry_ptr, gid, gname.encode(), gver)
+
+        # Dispatch manager capabilities
+        if self._mgr_ptr in self.listeners and not getattr(self, "_mgr_dispatched", False):
+            self._mgr_dispatched = True
+            cbs = _extract_callbacks(self.listeners[self._mgr_ptr], [_CB_U, _CB_U, _CB_U, _CB_U, _CB_VOID])
+            for val in self.mgr_caps["intents"]:
+                cbs[0](None, self._mgr_ptr, val)
+            for val in self.mgr_caps["features"]:
+                cbs[1](None, self._mgr_ptr, val)
+            for val in self.mgr_caps["tfs"]:
+                cbs[2](None, self._mgr_ptr, val)
+            for val in self.mgr_caps["primaries"]:
+                cbs[3](None, self._mgr_ptr, val)
+            cbs[4](None, self._mgr_ptr)
+
+        # Dispatch pending img / info listeners
+        for ptr, meta in list(self._proxy_meta.items()):
+            if ptr not in self.listeners or meta.get("dispatched"):
+                continue
+            if meta["kind"] not in ("img", "info"):
+                continue
+            meta["dispatched"] = True
+            behavior = self.per_output_behaviors[meta["out_ptr"]]
+            if meta["kind"] == "img":
+                cbs = _extract_callbacks(self.listeners[ptr], [_CB_US, _CB_U])
+                if behavior.get("failed"):
+                    cbs[0](None, ptr, 1, b"unsupported")
+                elif behavior.get("ready", True):
+                    cbs[1](None, ptr, 42)
+            elif meta["kind"] == "info":
+                cbs = _extract_callbacks(
+                    self.listeners[ptr],
+                    [
+                        _CB_VOID,
+                        _CB_HU,
+                        _CB_I8,
+                        _CB_U,
+                        _CB_U,
+                        _CB_U,
+                        _CB_UUU,
+                        _CB_I8,
+                        _CB_UU,
+                        _CB_U,
+                        _CB_U,
+                    ],
+                )
+                if "icc_fd" in behavior:
+                    cbs[1](None, ptr, behavior["icc_fd"], 128)
+                if "primaries" in behavior:
+                    cbs[3](None, ptr, behavior["primaries"])
+                if "tf" in behavior:
+                    cbs[5](None, ptr, behavior["tf"])
+                if "luminances" in behavior:
+                    mn, mx, ref = behavior["luminances"]
+                    cbs[6](None, ptr, mn, mx, ref)
+                if "target_luminance" in behavior:
+                    mn, mx = behavior["target_luminance"]
+                    cbs[8](None, ptr, mn, mx)
+                if "target_max_cll" in behavior:
+                    cbs[9](None, ptr, behavior["target_max_cll"])
+                if behavior.get("info_done", True):
+                    cbs[0](None, ptr)
+        return 0
+
+    def wl_display_flush(self, _display):
+        return 0
+
+    def wl_display_dispatch_queue_pending(self, display, queue):
+        from src.wayland_output_hdr import _DONE_CB
+
+        self.wl_display_roundtrip_queue(display, queue)
+        while self._pending_sync_cbs:
+            cb_ptr = self._pending_sync_cbs.pop(0)
+            if cb_ptr in self.listeners:
+                raw_listener = self.listeners[cb_ptr]
+                if hasattr(raw_listener, "_obj") and hasattr(raw_listener._obj, "done"):
+                    raw_listener._obj.done(None, cb_ptr, 1)
+                else:
+                    listener = ctypes.cast(raw_listener, ctypes.POINTER(_DONE_CB))
+                    listener[0](None, cb_ptr, 1)
+        return 0
+
+    def wl_proxy_marshal(self, proxy, opcode):
+        self.marshaled_destroy.append((_unwrap_ptr(proxy), _unwrap_ptr(opcode)))
+
+    def wl_proxy_destroy(self, proxy):
+        ptr = _unwrap_ptr(proxy)
+        kind = self._proxy_meta.get(ptr, {}).get("kind")
+        if ptr == self._registry_ptr:
+            kind = "registry"
+        elif ptr == self._mgr_ptr:
+            kind = "mgr"
+        self.destroyed.append((kind, ptr))
+
+    def wl_proxy_wrapper_destroy(self, wrapper):
+        self.destroyed.append(("wrapper", _unwrap_ptr(wrapper)))
+
+    def wl_event_queue_destroy(self, queue):
+        self.destroyed.append(("queue", _unwrap_ptr(queue)))
+
+
+class _PatchedInDll:
+    """Temporarily make ctypes.c_char.in_dll resolve symbols on _FakeWaylandLib."""
+
+    @staticmethod
+    def install(fake_lib):
+        orig_in_dll = ctypes.c_char.in_dll
+
+        def _fake_in_dll(lib_obj, name):
+            if lib_obj is fake_lib and hasattr(fake_lib, name):
+                return getattr(fake_lib, name)
+            return orig_in_dll(lib_obj, name)
+
+        return patch.object(ctypes.c_char, "in_dll", side_effect=_fake_in_dll)
+
+
+class TestSynchronousProbe(unittest.TestCase):
+    """Synchronous probe_outputs / _probe_outputs_unsafe / _query_one_output."""
+
+    def setUp(self):
+        from src import wayland_output_hdr as w
+
+        self.w = w
+        w._backend_disabled = False
+        w._backend_error_count = 0
+        w.invalidate(invalidate_caps=True)
+
+    def tearDown(self):
+        self.w._backend_disabled = False
+        self.w._backend_error_count = 0
+        self.w.invalidate(invalidate_caps=True)
+
+    def test_sync_probe_returns_none_when_prerequisites_missing(self):
+        w = self.w
+        with patch.object(w, "_get_wl_display_ptr", return_value=None):
+            self.assertIsNone(w.probe_outputs())
+        with patch.object(w, "_get_wl_display_ptr", return_value=0x100), \
+             patch.object(w, "_load_libwayland", return_value=None):
+            self.assertIsNone(w.probe_outputs())
+        with patch.object(w, "_get_wl_display_ptr", return_value=0x100), \
+             patch.object(w, "_load_libwayland", return_value=MagicMock()), \
+             patch.object(w, "_configure_symbols", return_value=None):
+            self.assertIsNone(w.probe_outputs())
+        with patch.object(w, "_get_wl_display_ptr", return_value=0x100), \
+             patch.object(w, "_load_libwayland", return_value=MagicMock()), \
+             patch.object(w, "_configure_symbols", return_value=0x200), \
+             patch.object(w, "_get_monitor_outputs", return_value=None):
+            self.assertIsNone(w.probe_outputs())
+
+    def test_sync_probe_xx_color_manager_only_returns_none(self):
+        w = self.w
+        fake_lib = _FakeWaylandLib(
+            globals_map={"xx_color_manager_v4": (1, 4)},
+            per_output_behaviors={},
+        )
+        with _PatchedInDll.install(fake_lib), \
+             patch.object(w, "_get_wl_display_ptr", return_value=0xD159), \
+             patch.object(w, "_load_libwayland", return_value=fake_lib), \
+             patch.object(w, "_configure_symbols", return_value=0xBEEF), \
+             patch.object(w, "_get_monitor_outputs", return_value=[("DP-1", 0x901)]):
+            self.assertIsNone(w.probe_outputs())
+        self.assertEqual([k for k, _ in fake_lib.destroyed], ["registry", "wrapper", "queue"])
+
+    def test_sync_probe_full_hdr_and_sdr_outputs_with_icc_fd_cleanup(self):
+        from src.wayland_output_hdr import PRIMARIES_BT2020, TF_SRGB, TF_ST2084_PQ
+
+        w = self.w
+        r_fd, w_fd = os.pipe()
+        os.close(w_fd)
+        fake_lib = _FakeWaylandLib(
+            globals_map={"wp_color_manager_v1": (7, 2)},
+            mgr_caps={
+                "intents": [0],
+                "features": [2, 3],
+                "tfs": [TF_SRGB, TF_ST2084_PQ],
+                "primaries": [1, PRIMARIES_BT2020],
+            },
+            per_output_behaviors={
+                0x901: {
+                    "ready": True,
+                    "icc_fd": r_fd,
+                    "tf": TF_ST2084_PQ,
+                    "primaries": PRIMARIES_BT2020,
+                    "luminances": (50, 1000, 203),
+                    "target_luminance": (50, 4000),
+                    "target_max_cll": 1500,
+                },
+                0x902: {"failed": True},
+            },
+        )
+        with _PatchedInDll.install(fake_lib), \
+             patch("os.close", wraps=os.close) as close_spy, \
+             patch.object(w, "_get_wl_display_ptr", return_value=0xD159), \
+             patch.object(w, "_load_libwayland", return_value=fake_lib), \
+             patch.object(w, "_configure_symbols", return_value=0xBEEF), \
+             patch.object(
+                 w,
+                 "_get_monitor_outputs",
+                 return_value=[("HDMI-A-1", 0x901), ("eDP-1", 0x902)],
+             ):
+            results = w.probe_outputs()
+
+        self.assertEqual(fake_lib.bound_version, 1)
+        self.assertIsNotNone(results)
+        self.assertTrue(results["HDMI-A-1"].hdr)
+        self.assertEqual(results["HDMI-A-1"].tf, TF_ST2084_PQ)
+        self.assertEqual(results["HDMI-A-1"].primaries, PRIMARIES_BT2020)
+        self.assertAlmostEqual(results["HDMI-A-1"].min_lum, 0.005)
+        self.assertEqual(results["HDMI-A-1"].max_lum, 1000.0)
+        self.assertEqual(results["HDMI-A-1"].reference_lum, 203.0)
+        self.assertEqual(results["HDMI-A-1"].target_max_lum, 4000.0)
+        self.assertEqual(results["HDMI-A-1"].target_max_cll, 1500.0)
+        self.assertFalse(results["eDP-1"].hdr)
+
+        # icc_file fd ownership transfer must have closed r_fd.
+        close_spy.assert_any_call(r_fd)
+
+        # _cache_cm_caps must record advertised capabilities.
+        caps = w._cache_cm_caps
+        self.assertIsNotNone(caps)
+        self.assertIn(TF_ST2084_PQ, caps.tfs)
+        self.assertIn(TF_SRGB, caps.tfs)
+        self.assertIn(PRIMARIES_BT2020, caps.primaries)
+
+        # Destruction order: per-output objects, then mgr -> registry -> wrapper -> queue.
+        kinds = [k for k, _ in fake_lib.destroyed]
+        self.assertEqual(
+            kinds,
+            ["info", "img", "cm_out", "img", "cm_out", "mgr", "registry", "wrapper", "queue"],
+        )
+
+    def test_circuit_breaker_disables_backend_after_three_errors(self):
+        w = self.w
+        with patch.object(w, "_probe_outputs_unsafe", side_effect=RuntimeError("ffi boom")) as mock_u:
+            self.assertIsNone(w.probe_outputs())
+            self.assertEqual(w._backend_error_count, 1)
+            self.assertFalse(w._backend_disabled)
+            self.assertIsNone(w.probe_outputs())
+            self.assertEqual(w._backend_error_count, 2)
+            self.assertFalse(w._backend_disabled)
+            with self.assertLogs(level="ERROR"):
+                self.assertIsNone(w.probe_outputs())
+            self.assertEqual(w._backend_error_count, 3)
+            self.assertTrue(w._backend_disabled)
+            # Fourth call short-circuits without calling _probe_outputs_unsafe.
+            self.assertIsNone(w.probe_outputs())
+            self.assertEqual(mock_u.call_count, 3)
+
+        # Success clears error count when not disabled.
+        w._backend_disabled = False
+        w._backend_error_count = 2
+        with patch.object(w, "_probe_outputs_unsafe", return_value={}):
+            self.assertEqual(w.probe_outputs(), {})
+        self.assertEqual(w._backend_error_count, 0)
 
 
 if __name__ == "__main__":
