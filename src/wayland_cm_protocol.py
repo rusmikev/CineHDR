@@ -27,6 +27,7 @@ protocol versions, event/method tables, callback signatures, or lifetime pins.
 import ctypes
 from dataclasses import dataclass
 import logging
+import os
 from typing import Any, List, Optional
 
 import gi
@@ -296,6 +297,74 @@ def _marshal_destroy(lib: ctypes.CDLL, proxy: int):
         lib.wl_proxy_destroy(ctypes.c_void_p(proxy))
     except Exception:
         pass
+
+
+def _make_info_listener(keep: List[Any], state: dict) -> ctypes.Array:
+    """Build and pin the 11-slot wp_image_description_info_v1 listener array."""
+
+    def _on_done(_d, _p):
+        state["done"] = True
+
+    def _on_icc(_d, _p, fd, _size):
+        try:
+            if fd >= 0:
+                os.close(fd)  # protocol transfers ownership — never leak it
+        except OSError:
+            pass
+
+    def _on_tf_named(_d, _p, tf):
+        state["tf"] = int(tf)
+
+    def _on_primaries_named(_d, _p, p):
+        state["primaries"] = int(p)
+
+    def _on_luminances(_d, _p, mn, mx, ref):
+        state["min"] = mn / 10000.0
+        state["max"] = float(mx)
+        state["ref"] = float(ref)
+
+    def _on_target_luminance(_d, _p, mn, mx):
+        if mx:
+            state["target_max"] = float(mx)
+
+    def _on_target_max_cll(_d, _p, cll):
+        if cll:
+            state["target_cll"] = float(cll)
+
+    noop_u = _CB_U(lambda *_a: None)
+    noop_i8 = _CB_I8(lambda *_a: None)
+    return _make_listener(
+        keep,
+        [
+            _CB_VOID(_on_done),           # 0 done
+            _CB_HU(_on_icc),              # 1 icc_file
+            noop_i8,                      # 2 primaries (raw CIE — unused)
+            _CB_U(_on_primaries_named),   # 3 primaries_named
+            noop_u,                       # 4 tf_power
+            _CB_U(_on_tf_named),          # 5 tf_named
+            _CB_UUU(_on_luminances),      # 6 luminances
+            noop_i8,                      # 7 target_primaries
+            _CB_UU(_on_target_luminance), # 8 target_luminance
+            _CB_U(_on_target_max_cll),    # 9 target_max_cll
+            noop_u,                       # 10 target_max_fall
+        ],
+    )
+
+
+def _info_from_state(connector: str, state: dict) -> OutputHdrInfo:
+    """Construct OutputHdrInfo from accumulated image description info events."""
+    panel_max = state["max"]
+    return OutputHdrInfo(
+        connector=connector,
+        hdr=classify_hdr(state["tf"], state["min"], panel_max, state["ref"]),
+        tf=state["tf"],
+        primaries=state["primaries"],
+        min_lum=state["min"],
+        max_lum=panel_max,
+        reference_lum=state["ref"],
+        target_max_lum=state.get("target_max"),
+        target_max_cll=state.get("target_cll"),
+    )
 
 
 # ──────────────────────────────────────────────────────────────

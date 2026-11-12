@@ -27,19 +27,14 @@ or tri-state fallback semantics.
 
 import ctypes
 import logging
-import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .gtk_cm_policy import CmCaps
 from .wayland_cm_probe import _WL_DISPLAY_GET_REGISTRY
 from .wayland_cm_protocol import (
-    _CB_HU,
-    _CB_I8,
     _CB_REG_GLOBAL,
     _CB_U,
     _CB_US,
-    _CB_UU,
-    _CB_UUU,
     _CB_VOID,
     _CM_OUTPUT_GET_IMAGE_DESCRIPTION,
     _IMG_GET_INFORMATION,
@@ -47,9 +42,10 @@ from .wayland_cm_protocol import (
     _WL_REGISTRY_BIND,
     OutputHdrInfo,
     _InterfaceTable,
+    _info_from_state,
+    _make_info_listener,
     _make_listener,
     _marshal_destroy,
-    classify_hdr,
 )
 
 
@@ -79,6 +75,112 @@ def probe_outputs(facade: Any = None) -> Optional[Dict[str, OutputHdrInfo]]:
         return None
 
 
+def _enumerate_registry_sync(
+    lib: ctypes.CDLL,
+    display: ctypes.c_void_p,
+    queue: int,
+    wrapper: int,
+    registry_iface_addr: int,
+    keep: List[Any],
+) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:
+    globals_found: Dict[str, Any] = {}
+
+    def _on_global(_d, _r, name, interface, version):
+        if interface:
+            try:
+                globals_found[interface.decode("utf-8", "replace")] = (int(name), int(version))
+            except Exception:
+                pass
+
+    # wl_registry events: global "usu", global_remove "u"
+    reg_listener = _make_listener(keep, [_CB_REG_GLOBAL(_on_global), _CB_U(lambda *_a: None)])
+    registry = lib.wl_proxy_marshal_constructor(
+        ctypes.c_void_p(wrapper),
+        ctypes.c_uint32(_WL_DISPLAY_GET_REGISTRY),
+        ctypes.c_void_p(registry_iface_addr),
+        ctypes.c_void_p(None),
+    )
+    if not registry:
+        return None, None
+    if lib.wl_proxy_add_listener(ctypes.c_void_p(registry), reg_listener, None) != 0:
+        return registry, None
+    if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
+        return registry, None
+    return registry, globals_found
+
+
+def _bind_and_collect_caps_sync(
+    lib: ctypes.CDLL,
+    display: ctypes.c_void_p,
+    queue: int,
+    registry: int,
+    table: _InterfaceTable,
+    cm_numeric_name: int,
+    keep: List[Any],
+) -> Tuple[Optional[int], Optional[CmCaps]]:
+    # bind: wl_registry.bind(name, interface_str, version, new_id)
+    mgr = lib.wl_proxy_marshal_constructor_versioned(
+        ctypes.c_void_p(registry),
+        ctypes.c_uint32(_WL_REGISTRY_BIND),
+        ctypes.byref(table.mgr),
+        ctypes.c_uint32(1),
+        ctypes.c_uint32(cm_numeric_name),
+        ctypes.c_char_p(b"wp_color_manager_v1"),
+        ctypes.c_uint32(1),
+        ctypes.c_void_p(None),
+    )
+    if not mgr:
+        return None, None
+
+    supported_intents: set[int] = set()
+    supported_features: set[int] = set()
+    supported_tfs: set[int] = set()
+    supported_primaries: set[int] = set()
+
+    def _on_intent(_d, _p, val): supported_intents.add(int(val))
+    def _on_feature(_d, _p, val): supported_features.add(int(val))
+    def _on_tf_named(_d, _p, tf): supported_tfs.add(int(tf))
+    def _on_primaries_named(_d, _p, p): supported_primaries.add(int(p))
+
+    mgr_listener = _make_listener(
+        keep,
+        [
+            _CB_U(_on_intent),
+            _CB_U(_on_feature),
+            _CB_U(_on_tf_named),
+            _CB_U(_on_primaries_named),
+            _CB_VOID(lambda *_a: None),
+        ],
+    )
+    if lib.wl_proxy_add_listener(ctypes.c_void_p(mgr), mgr_listener, None) != 0:
+        return mgr, None
+    if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
+        return mgr, None
+
+    return mgr, CmCaps(
+        intents=frozenset(supported_intents),
+        features=frozenset(supported_features),
+        tfs=frozenset(supported_tfs),
+        primaries=frozenset(supported_primaries),
+    )
+
+
+def _cleanup_sync_proxies(
+    lib: ctypes.CDLL, mgr: Any, registry: Any, wrapper: Any, queue: Any
+) -> None:
+    try:
+        if mgr:
+            _marshal_destroy(lib, mgr)
+        if registry:
+            lib.wl_proxy_destroy(ctypes.c_void_p(registry))
+        if wrapper:
+            lib.wl_proxy_wrapper_destroy(ctypes.c_void_p(wrapper))
+        if queue:
+            lib.wl_event_queue_destroy(ctypes.c_void_p(queue))
+    except Exception:
+        pass
+
+
 def _probe_outputs_unsafe(facade: Any = None) -> Optional[Dict[str, OutputHdrInfo]]:
     target = _resolve_facade(facade)
     display_ptr = target._get_wl_display_ptr()
@@ -95,9 +197,7 @@ def _probe_outputs_unsafe(facade: Any = None) -> Optional[Dict[str, OutputHdrInf
         return None
 
     try:
-        wl_output_iface_addr = ctypes.addressof(
-            ctypes.c_char.in_dll(lib, "wl_output_interface")
-        )
+        wl_output_iface_addr = ctypes.addressof(ctypes.c_char.in_dll(lib, "wl_output_interface"))
     except (AttributeError, ValueError):
         return None
 
@@ -105,26 +205,6 @@ def _probe_outputs_unsafe(facade: Any = None) -> Optional[Dict[str, OutputHdrInf
     keep: List[Any] = [table]
     display = ctypes.c_void_p(display_ptr)
     queue = wrapper = registry = mgr = None
-    globals_found: Dict[str, Any] = {}
-
-    def _on_global(_d, _r, name, interface, version):
-        if interface:
-            try:
-                globals_found[interface.decode("utf-8", "replace")] = (
-                    int(name),
-                    int(version),
-                )
-            except Exception:
-                pass
-
-    # wl_registry events: global "usu", global_remove "u"
-    reg_listener = _make_listener(
-        keep,
-        [
-            _CB_REG_GLOBAL(_on_global),
-            _CB_U(lambda *_a: None),  # global_remove
-        ],
-    )
 
     try:
         queue = lib.wl_display_create_queue(display)
@@ -134,75 +214,23 @@ def _probe_outputs_unsafe(facade: Any = None) -> Optional[Dict[str, OutputHdrInf
         if not wrapper:
             return None
         lib.wl_proxy_set_queue(ctypes.c_void_p(wrapper), ctypes.c_void_p(queue))
-        registry = lib.wl_proxy_marshal_constructor(
-            ctypes.c_void_p(wrapper),
-            ctypes.c_uint32(_WL_DISPLAY_GET_REGISTRY),
-            ctypes.c_void_p(registry_iface_addr),
-            ctypes.c_void_p(None),
+
+        registry, globals_found = _enumerate_registry_sync(
+            lib, display, queue, wrapper, registry_iface_addr, keep
         )
-        if not registry:
-            return None
-        if lib.wl_proxy_add_listener(
-            ctypes.c_void_p(registry), reg_listener, None
-        ) != 0:
-            return None
-        if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
+        if globals_found is None:
             return None
 
+        # xx_color_manager_v4 has diverging event tables — out of scope here;
+        # the plain capability probe still recognises it.
         cm = globals_found.get("wp_color_manager_v1")
         if not cm:
-            # xx_color_manager_v4 has diverging event tables — out of scope
-            # here; the plain capability probe still recognises it.
             return None
-        cm_numeric_name, cm_version = cm
-
-        # bind: wl_registry.bind(name, interface_str, version, new_id)
-        mgr = lib.wl_proxy_marshal_constructor_versioned(
-            ctypes.c_void_p(registry),
-            ctypes.c_uint32(_WL_REGISTRY_BIND),
-            ctypes.byref(table.mgr),
-            ctypes.c_uint32(1),
-            ctypes.c_uint32(cm_numeric_name),
-            ctypes.c_char_p(b"wp_color_manager_v1"),
-            ctypes.c_uint32(1),
-            ctypes.c_void_p(None),
+        mgr, temp_cm_caps = _bind_and_collect_caps_sync(
+            lib, display, queue, registry, table, cm[0], keep
         )
-        if not mgr:
+        if temp_cm_caps is None:
             return None
-
-        supported_intents = set()
-        supported_features = set()
-        supported_tfs = set()
-        supported_primaries = set()
-
-        def _on_intent(_d, _p, val): supported_intents.add(int(val))
-        def _on_feature(_d, _p, val): supported_features.add(int(val))
-        def _on_tf_named(_d, _p, tf): supported_tfs.add(int(tf))
-        def _on_primaries_named(_d, _p, p): supported_primaries.add(int(p))
-
-        mgr_listener = _make_listener(
-            keep,
-            [
-                _CB_U(_on_intent),
-                _CB_U(_on_feature),
-                _CB_U(_on_tf_named),
-                _CB_U(_on_primaries_named),
-                _CB_VOID(lambda *_a: None),
-            ],
-        )
-        if lib.wl_proxy_add_listener(ctypes.c_void_p(mgr), mgr_listener, None) != 0:
-            return None
-
-        # Roundtrip to get the supported capabilities
-        if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
-            return None
-
-        temp_cm_caps = CmCaps(
-            intents=frozenset(supported_intents),
-            features=frozenset(supported_features),
-            tfs=frozenset(supported_tfs),
-            primaries=frozenset(supported_primaries),
-        )
 
         results: Dict[str, OutputHdrInfo] = {}
         for connector, out_ptr in monitors:
@@ -215,21 +243,58 @@ def _probe_outputs_unsafe(facade: Any = None) -> Optional[Dict[str, OutputHdrInf
         target._cache_cm_caps = temp_cm_caps
         return results
     finally:
-        try:
-            if mgr:
-                _marshal_destroy(lib, mgr)
-            if registry:
-                lib.wl_proxy_destroy(ctypes.c_void_p(registry))
-            if wrapper:
-                lib.wl_proxy_wrapper_destroy(ctypes.c_void_p(wrapper))
-            if queue:
-                lib.wl_event_queue_destroy(ctypes.c_void_p(queue))
-        except Exception:
-            pass
+        _cleanup_sync_proxies(lib, mgr, registry, wrapper, queue)
+
+
+def _await_image_description_sync(
+    lib: ctypes.CDLL,
+    display: ctypes.c_void_p,
+    queue: int,
+    mgr: int,
+    table: _InterfaceTable,
+    keep: List[Any],
+    out_ptr: int,
+    state: dict,
+) -> Tuple[Any, Any, str]:
+    cm_out = lib.wl_proxy_marshal_constructor(
+        ctypes.c_void_p(mgr),
+        ctypes.c_uint32(_MGR_GET_OUTPUT),
+        ctypes.byref(table.cm_output),
+        ctypes.c_void_p(None),
+        ctypes.c_void_p(out_ptr),
+    )
+    if not cm_out:
+        return None, None, "error"
+    img = lib.wl_proxy_marshal_constructor(
+        ctypes.c_void_p(cm_out),
+        ctypes.c_uint32(_CM_OUTPUT_GET_IMAGE_DESCRIPTION),
+        ctypes.byref(table.img),
+        ctypes.c_void_p(None),
+    )
+    if not img:
+        return cm_out, None, "error"
+
+    def _on_failed(_d, _p, cause, msg):
+        state["failed"] = True
+        logging.debug("wayland_output_hdr: image description failed (cause=%s, %s)", cause, msg)
+
+    def _on_ready(_d, _p, _identity):
+        state["ready"] = True
+
+    img_listener = _make_listener(keep, [_CB_US(_on_failed), _CB_U(_on_ready)])
+    if lib.wl_proxy_add_listener(ctypes.c_void_p(img), img_listener, None) != 0:
+        return cm_out, img, "error"
+    if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
+        return cm_out, img, "error"
+    if state["failed"] or not state["ready"]:
+        # No description for this output (protocol allows it) — report
+        # the conservative SDR answer rather than aborting the probe.
+        return cm_out, img, "sdr"
+    return cm_out, img, "ready"
 
 
 def _query_one_output(lib, display, queue, mgr, table, keep, out_ptr) -> Optional[OutputHdrInfo]:
-    state = {
+    state: Dict[str, Any] = {
         "ready": False,
         "failed": False,
         "done": False,
@@ -239,45 +304,14 @@ def _query_one_output(lib, display, queue, mgr, table, keep, out_ptr) -> Optiona
         "max": None,
         "ref": None,
     }
-
     cm_out = img = info_obj = None
     try:
-        cm_out = lib.wl_proxy_marshal_constructor(
-            ctypes.c_void_p(mgr),
-            ctypes.c_uint32(_MGR_GET_OUTPUT),
-            ctypes.byref(table.cm_output),
-            ctypes.c_void_p(None),          # 'n' new_id placeholder
-            ctypes.c_void_p(out_ptr),       # 'o' wl_output
+        cm_out, img, status = _await_image_description_sync(
+            lib, display, queue, mgr, table, keep, out_ptr, state
         )
-        if not cm_out:
+        if status == "error":
             return None
-        img = lib.wl_proxy_marshal_constructor(
-            ctypes.c_void_p(cm_out),
-            ctypes.c_uint32(_CM_OUTPUT_GET_IMAGE_DESCRIPTION),
-            ctypes.byref(table.img),
-            ctypes.c_void_p(None),
-        )
-        if not img:
-            return None
-
-        def _on_failed(_d, _p, cause, msg):
-            state["failed"] = True
-            logging.debug(
-                "wayland_output_hdr: image description failed (cause=%s, %s)",
-                cause, msg,
-            )
-
-        def _on_ready(_d, _p, _identity):
-            state["ready"] = True
-
-        img_listener = _make_listener(keep, [_CB_US(_on_failed), _CB_U(_on_ready)])
-        if lib.wl_proxy_add_listener(ctypes.c_void_p(img), img_listener, None) != 0:
-            return None
-        if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
-            return None
-        if state["failed"] or not state["ready"]:
-            # No description for this output (protocol allows it) — report
-            # the conservative SDR answer rather than aborting the probe.
+        if status == "sdr":
             return OutputHdrInfo(connector="", hdr=False)
 
         info_obj = lib.wl_proxy_marshal_constructor(
@@ -288,76 +322,14 @@ def _query_one_output(lib, display, queue, mgr, table, keep, out_ptr) -> Optiona
         )
         if not info_obj:
             return None
-
-        def _on_done(_d, _p):
-            state["done"] = True
-
-        def _on_icc(_d, _p, fd, _size):
-            try:
-                if fd >= 0:
-                    os.close(fd)  # protocol transfers ownership — never leak it
-            except OSError:
-                pass
-
-        def _on_tf_named(_d, _p, tf):
-            state["tf"] = int(tf)
-
-        def _on_primaries_named(_d, _p, p):
-            state["primaries"] = int(p)
-
-        def _on_luminances(_d, _p, mn, mx, ref):
-            state["min"] = mn / 10000.0
-            state["max"] = float(mx)
-            state["ref"] = float(ref)
-
-        noop_u = _CB_U(lambda *_a: None)
-        noop_i8 = _CB_I8(lambda *_a: None)
-
-        def _on_target_luminance(_d, _p, mn, mx):
-            if mx:
-                state["target_max"] = float(mx)
-
-        def _on_target_max_cll(_d, _p, cll):
-            if cll:
-                state["target_cll"] = float(cll)
-
-        info_listener = _make_listener(
-            keep,
-            [
-                _CB_VOID(_on_done),          # 0 done
-                _CB_HU(_on_icc),             # 1 icc_file
-                noop_i8,                     # 2 primaries (raw CIE — unused)
-                _CB_U(_on_primaries_named),  # 3 primaries_named
-                noop_u,                      # 4 tf_power
-                _CB_U(_on_tf_named),         # 5 tf_named
-                _CB_UUU(_on_luminances),     # 6 luminances
-                noop_i8,                     # 7 target_primaries
-                _CB_UU(_on_target_luminance),# 8 target_luminance
-                _CB_U(_on_target_max_cll),   # 9 target_max_cll
-                noop_u,                      # 10 target_max_fall
-            ],
-        )
-        if lib.wl_proxy_add_listener(
-            ctypes.c_void_p(info_obj), info_listener, None
-        ) != 0:
+        info_listener = _make_info_listener(keep, state)
+        if lib.wl_proxy_add_listener(ctypes.c_void_p(info_obj), info_listener, None) != 0:
             return None
         if lib.wl_display_roundtrip_queue(display, ctypes.c_void_p(queue)) < 0:
             return None
         if not state["done"]:
             return None
-
-        panel_max = state["max"]
-        return OutputHdrInfo(
-            connector="",
-            hdr=classify_hdr(state["tf"], state["min"], panel_max, state["ref"]),
-            tf=state["tf"],
-            primaries=state["primaries"],
-            min_lum=state["min"],
-            max_lum=panel_max,
-            reference_lum=state["ref"],
-            target_max_lum=state.get("target_max"),
-            target_max_cll=state.get("target_cll"),
-        )
+        return _info_from_state("", state)
     finally:
         if info_obj:
             try:
