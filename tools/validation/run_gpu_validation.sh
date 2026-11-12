@@ -9,12 +9,12 @@ gpu_next_lib="${gpu_next_lib_dir}/libmpv.so.2"
 
 usage() {
     echo "Использование:" >&2
-    echo "  tools/validation/run_gpu_validation.sh <видеофайл> [soak|sdr-soak|lifecycle|gradient]" >&2
+    echo "  tools/validation/run_gpu_validation.sh <видеофайл> [sdr-soak|lifecycle|gradient]" >&2
     echo "  tools/validation/run_gpu_validation.sh <SDR-файл> <HDR-файл> transition" >&2
 }
 
 video_files=()
-if [[ $# -eq 2 && ( "$2" == "soak" || "$2" == "sdr-soak" || "$2" == "lifecycle" || "$2" == "gradient" ) ]]; then
+if [[ $# -eq 2 && ( "$2" == "sdr-soak" || "$2" == "lifecycle" || "$2" == "gradient" ) ]]; then
     video_files=("$1")
     validation_mode="$2"
 elif [[ $# -eq 3 && "$3" == "transition" ]]; then

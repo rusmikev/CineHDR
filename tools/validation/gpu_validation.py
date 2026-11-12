@@ -162,7 +162,7 @@ def is_verified_flatpak_container(
     return True
 
 VALIDATION_MODES = (
-    "soak", "sdr-soak", "lifecycle", "transition", "publication",
+    "sdr-soak", "lifecycle", "transition", "publication",
     "settling", "gradient",
 )
 READY_STABLE_SECONDS = 4.0
@@ -1206,10 +1206,8 @@ def validation_steps(mode: str) -> tuple[ValidationStep, ...]:
         steps.insert(
             0, ValidationStep("initial SDR output", "signal-state", 3, (0, "sdr"))
         )
-    if mode in ("soak", "sdr-soak"):
-        soak_index = 4 if mode == "sdr-soak" else 3
         steps.insert(
-            soak_index,
+            4,
             ValidationStep("30-minute soak playback", "play", 1800),
         )
     return tuple(steps)

@@ -326,7 +326,7 @@ class ValidationConfigTests(unittest.TestCase):
         self.assertEqual(validation_expected_playlist_count("transition"), 2)
         self.assertEqual(validation_expected_playlist_count("publication"), 2)
         self.assertEqual(validation_expected_playlist_count("settling"), 2)
-        self.assertIsNone(validation_expected_playlist_count("soak"))
+        self.assertIsNone(validation_expected_playlist_count("lifecycle"))
 
     def test_validation_player_does_not_restore_or_save_watch_later(self):
         player = {}
@@ -378,16 +378,6 @@ drm-memory-vram: 512 KiB
 
 
 class ValidationPlanTests(unittest.TestCase):
-    def test_soak_adds_thirty_minute_playback(self):
-        steps = validation_steps("soak")
-        self.assertTrue(
-            any(
-                step.name == "30-minute soak playback"
-                and step.wait_seconds == 1800
-                for step in steps
-            )
-        )
-
     def test_lifecycle_plan_recreates_the_context_twice(self):
         steps = validation_steps("lifecycle")
         cycles = [step for step in steps if step.action == "context-cycle"]
