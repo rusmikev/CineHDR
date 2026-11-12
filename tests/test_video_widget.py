@@ -39,7 +39,12 @@ if _gresource_path := os.environ.get("CINEHDR_GRESOURCE"):
 from src.diagnostics_report import generate_video_output_report  # noqa: E402
 from src.gl_bindings import GL_FRAMEBUFFER, GL_TIMEOUT_EXPIRED  # noqa: E402
 from src.hdr_controller import CommittedOutputState  # noqa: E402
-from src.render_backend import ProcessRenderSelection, RenderBackend, RenderSelectionSource  # noqa: E402
+from src.render_backend import (  # noqa: E402
+    ProcessRenderSelection,
+    RenderBackend,
+    RenderBackendState,
+    RenderSelectionSource,
+)
 from src.video_widget import MpvVideoWidget  # noqa: E402
 
 
@@ -68,6 +73,12 @@ def _make_render_widget(*, committed=None, is_hdr_active=False):
     widget._exported_media_generation = None
     widget._committed_render_epoch = None
     widget._fallback_slot = None
+    widget._connected_monitors = None
+    widget._monitor_signal_id = None
+    widget._connected_surface = None
+    widget._surface_signal_ids = []
+    widget._video_selection_for_context_restore = None
+    widget._hdr_controller_disconnected = False
     widget._window = None
     widget._cached_hdr_support = bool(is_hdr_active)
     widget._cached_hdr_support_valid = True
@@ -322,6 +333,212 @@ class TestVideoWidgetRenderAndPublication(unittest.TestCase):
         self.assertEqual(widget.render_session_status, "runtime-failure")
         widget.fbo_pool.release_buffer.assert_called_once_with(slot)
         mock_idle.assert_called_once()
+
+
+class TestVideoWidgetLifecycleAndHdrWiring(unittest.TestCase):
+    """__init__, HDR controller wiring, realize/unrealize, shutdown, and dispose."""
+
+    def test_init_and_hdr_delegator_properties(self):
+        mock_area = MagicMock()
+        mock_ctrl = MagicMock()
+        mock_ctrl.hdr_mode = "auto"
+        mock_ctrl.hdr_enabled = True
+        mock_ctrl.hdr_target_peak = 1000
+        mock_mpv = MagicMock()
+        selection = ProcessRenderSelection(
+            configured=RenderBackend.LEGACY,
+            requested=RenderBackend.LEGACY,
+            source=RenderSelectionSource.SETTINGS,
+            allow_creation_fallback=False,
+        )
+
+        with patch("src.video_widget.Gtk.GLArea", return_value=mock_area), \
+             patch("src.video_widget.HdrController", return_value=mock_ctrl), \
+             patch.object(MpvVideoWidget, "connect"):
+            widget = MpvVideoWidget(mock_mpv, render_backend_selection=selection)
+
+        mock_area.set_parent.assert_called_once_with(widget)
+        self.assertEqual([c[0][0] for c in mock_area.connect.call_args_list], ["realize", "unrealize"])
+        self.assertEqual(widget.render_session_status, "not-initialized")
+        self.assertEqual(widget.hdr_mode, "auto")
+        widget.hdr_mode = "force-hdr"
+        self.assertEqual(mock_ctrl.hdr_mode, "force-hdr")
+        self.assertTrue(widget.hdr_enabled)
+        widget.hdr_enabled = False
+        self.assertFalse(mock_ctrl.hdr_enabled)
+        self.assertEqual(widget.hdr_target_peak, 1000)
+        widget.hdr_target_peak = 400
+        self.assertEqual(mock_ctrl.hdr_target_peak, 400)
+        widget.apply_hdr_settings()
+        mock_ctrl.apply_hdr_settings.assert_called_once_with()
+
+        win = MagicMock()
+        widget.setup_window_integration(win)
+        self.assertIs(widget._window, win)
+
+    def test_hdr_support_update_and_controller_change_coalescing(self):
+        widget = _make_render_widget()
+        widget._cached_hdr_support = False
+        widget._cached_hdr_support_valid = False
+        widget.get_native = MagicMock(return_value=None)
+        widget.get_display = MagicMock(return_value=None)
+        widget.props = SimpleNamespace(scale_factor=2)
+
+        with patch("src.hdr_detection.invalidate_hdr_support_cache") as mock_inv, \
+             patch("src.video_widget.check_hdr_support", return_value=True):
+            self.assertTrue(widget.is_hdr_supported)
+
+        mock_inv.assert_called_once_with(invalidate_compositor=False)
+        widget.hdr_controller.request_monitor_probe.assert_called_once_with()
+        widget.hdr_controller.apply_hdr_settings.assert_called_once_with()
+        widget.queue_draw.assert_called()
+
+        # Suppressed publication queues draw without scheduling forced render.
+        widget.queue_draw.reset_mock()
+        widget._schedule_render = MagicMock()
+        widget.hdr_controller.is_publication_suppressed = True
+        with patch("src.hdr_detection.invalidate_support_decision"), \
+             patch("src.video_widget.check_hdr_support", return_value=True):
+            widget._on_hdr_controller_change()
+        widget._schedule_render.assert_not_called()
+        widget.queue_draw.assert_called_once_with()
+
+        # Changed committed epoch schedules forced redraw.
+        widget.hdr_controller.is_publication_suppressed = False
+        widget.hdr_controller.committed_output_state = CommittedOutputState(
+            epoch=9,
+            target_trc="pq",
+            target_prim="bt.2020",
+            target_peak="auto",
+            fbo_format="GL_RGBA16F",
+            gdk_color_state="rec2100-pq",
+            is_float=True,
+            is_hdr=True,
+        )
+        with patch("src.hdr_detection.invalidate_support_decision"), \
+             patch("src.video_widget.check_hdr_support", return_value=True):
+            widget._on_hdr_controller_change()
+        widget._schedule_render.assert_called_once_with(force_redraw=True)
+
+    def test_push_output_hint_and_measure(self):
+        widget = _make_render_widget()
+        monitor = MagicMock()
+        monitor.get_connector.return_value = "HDMI-A-1"
+        display = MagicMock()
+        display.get_monitor_at_surface.return_value = monitor
+        native = MagicMock()
+        native.get_surface.return_value = MagicMock()
+        widget.get_native = MagicMock(return_value=native)
+        widget.get_display = MagicMock(return_value=display)
+
+        widget._push_output_hint()
+        widget.hdr_controller.set_output_hint.assert_called_once_with("HDMI-A-1")
+
+        widget.gl_area.measure.return_value = (100, 200, -1, -1)
+        self.assertEqual(widget.do_measure(0, -1), (100, 200, -1, -1))
+
+    def test_realize_guards_and_successful_initialization(self):
+        widget = _make_render_widget()
+        widget.mpv_ctx = None
+        widget._connected_monitors = MagicMock()
+        widget._monitor_signal_id = 42
+        widget._connected_surface = MagicMock()
+        widget._surface_signal_ids = [10, 11]
+        widget._render_terminal_failure = True
+
+        area = MagicMock()
+        widget._on_realize(area)
+        area.make_current.assert_not_called()
+        self.assertIsNone(widget._connected_monitors)
+        self.assertEqual(widget._surface_signal_ids, [])
+
+        # Stale mpv_ctx on realize latches terminal failure without freeing.
+        widget._render_terminal_failure = False
+        stale_ctx = MagicMock()
+        widget.mpv_ctx = stale_ctx
+        widget._on_realize(area)
+        self.assertTrue(widget._render_terminal_failure)
+        stale_ctx.free.assert_not_called()
+
+        # Successful realize records runtime, notifies fallback once, restores vid.
+        widget = _make_render_widget()
+        widget.mpv_ctx = None
+        widget.render_context_generation = 0
+        widget._video_selection_for_context_restore = "1"
+        widget.get_native = MagicMock(return_value=None)
+        widget.get_display = MagicMock(return_value=None)
+        widget.props = SimpleNamespace(scale_factor=1)
+        app = MagicMock()
+        widget._window = SimpleNamespace(app=app)
+        area = MagicMock()
+        area.get_error.return_value = None
+        created_ctx = MagicMock()
+        backend_state = RenderBackendState(
+            requested=RenderBackend.GPU_NEXT,
+            active="opengl",
+            fallback_reason="missing gpu-next",
+        )
+
+        with patch("src.video_widget.check_hdr_support", return_value=False), \
+             patch("src.hdr_detection.invalidate_hdr_support_cache"), \
+             patch("src.video_widget.get_display_param", return_value={}), \
+             patch("src.video_widget.install_python_mpv_depth_compat", return_value=False), \
+             patch("src.video_widget.create_render_context", return_value=(created_ctx, backend_state)), \
+             patch("src.video_widget.render_runtime_diagnostics", return_value={
+                 "libmpv_path": "/usr/lib/libmpv.so",
+                 "mpv_version": "mpv 0.41.0",
+                 "libplacebo_version": "7.360.0",
+                 "ffmpeg_version": "7.1",
+                 "mpv_configuration": "",
+             }), \
+             patch("src.video_widget.get_gl_string", return_value="MockGL"):
+            widget._on_realize(area)
+
+        self.assertIs(widget.mpv_ctx, created_ctx)
+        self.assertEqual(widget.render_context_generation, 1)
+        self.assertEqual(widget.render_backend_active, "opengl")
+        self.assertEqual(widget.render_session_status, "startup-fallback")
+        app.notify_render_fallback_once.assert_called_once_with(widget._window, "missing gpu-next")
+        self.assertIsNotNone(created_ctx.update_cb)
+        self.assertEqual(
+            widget.mpv.command.call_args_list,
+            [(("set", "vid", "no"), {}), (("set", "vid", "1"), {})],
+        )
+
+    def test_shutdown_order_unrealize_and_dispose(self):
+        widget = _make_render_widget()
+        events = []
+        area = widget.gl_area
+        area.get_error.return_value = None
+        area.get_parent.return_value = widget
+        area.make_current.side_effect = lambda: events.append("make_current")
+        area.get_error.side_effect = lambda: events.append("get_error") or None
+        ctx = widget.mpv_ctx
+        ctx.free.side_effect = lambda: events.append("free")
+        fallback_slot = _make_slot()
+        widget._fallback_slot = fallback_slot
+        widget.fbo_pool.release_buffer.side_effect = lambda s: events.append(("release_buffer", s))
+        widget.fbo_pool.release_all.side_effect = lambda: events.append("release_all")
+        widget.mpv.vid = 2
+        widget._hdr_controller_disconnected = False
+
+        with patch("src.video_widget.mpv_prop", return_value="auto"):
+            widget._on_unrealize(area)
+
+        self.assertIsNone(widget.mpv_ctx)
+        self.assertIsNone(widget.current_texture)
+        self.assertIsNone(widget._fallback_slot)
+        self.assertEqual(widget._video_selection_for_context_restore, "auto")
+        self.assertEqual(
+            events,
+            ["make_current", "get_error", "free", ("release_buffer", fallback_slot), "release_all"],
+        )
+
+        with patch("src.video_widget.Gtk.Widget.do_dispose"):
+            widget.do_dispose()
+        area.unparent.assert_called_once_with()
+        widget.hdr_controller.disconnect.assert_called_once_with()
+        self.assertTrue(widget._hdr_controller_disconnected)
 
 
 if __name__ == "__main__":
