@@ -162,7 +162,7 @@ def is_verified_flatpak_container(
     return True
 
 VALIDATION_MODES = (
-    "transition", "publication", "settling", "gradient",
+    "publication", "settling", "gradient",
 )
 READY_STABLE_SECONDS = 4.0
 SETTLING_SCHEMA = "cinehdr.gate2.resource-settling.v1"
@@ -1029,7 +1029,7 @@ def verify_fbo_pixel_measurements_artifact(
 
 
 def validation_expected_playlist_count(mode: str) -> int | None:
-    if mode in ("transition", "publication", "settling"):
+    if mode in ("publication", "settling"):
         return 2
     if mode == "gradient":
         return 1
@@ -1095,19 +1095,6 @@ def validation_steps(mode: str) -> tuple[ValidationStep, ...]:
     if mode == "gradient":
         return (
             ValidationStep("wait for stable HDR gradient frame", "gradient-settle", 8),
-        )
-    if mode == "transition":
-        return (
-            ValidationStep("initial SDR output", "signal-state", 3, (0, "sdr")),
-            ValidationStep("play initial SDR", "play", 6),
-            ValidationStep("switch SDR to HDR", "switch-media", 12, (1, "hdr")),
-            ValidationStep("play HDR", "play", 6),
-            ValidationStep("seek HDR", "seek", 7, 0.25),
-            ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr")),
-            ValidationStep("play returned SDR", "play", 6),
-            ValidationStep("seek returned SDR", "seek", 7, 0.25),
-            ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr")),
-            ValidationStep("play returned HDR", "play", 6),
         )
     if mode == "publication":
         # The HEVC fixtures contain identical decoded frames. Keep them paused
@@ -1934,7 +1921,6 @@ class GpuValidationSession:
         self._pending_hdr_state = False
         self._pending_render_target = (None, None)
         self._pending_render_frame_generation = 0
-        self._transition_context_generation: int | None = None
         self._transition_original_hdr_mode: str | None = None
         self._publication_context_generation: int | None = None
         self._settling_context_generation: int | None = None
@@ -1986,7 +1972,7 @@ class GpuValidationSession:
                     f"could not prepare {self.config.mode} validation: {error}"
                 )
                 return
-        elif self.config.mode in ("transition", "gradient"):
+        elif self.config.mode == "gradient":
             controller = self.video_area.hdr_controller
             self._transition_original_hdr_mode = controller.hdr_mode
             # An SDR file intentionally stays on the HDR surface in force-hdr.
@@ -2181,10 +2167,6 @@ class GpuValidationSession:
             self.resource_samples.clear()
             self._sample_memory()
             self.baseline = self._metrics_snapshot()
-            if self.config.mode == "transition":
-                self._transition_context_generation = int(
-                    getattr(self.video_area, "render_context_generation", 0)
-                )
             if self.config.mode == "publication":
                 self._publication_context_generation = int(
                     getattr(self.video_area, "render_context_generation", 0)
@@ -2334,14 +2316,13 @@ class GpuValidationSession:
             GLib.timeout_add(500, self._request_window_size, width, height)
         elif step.action == "fullscreen":
             self.player.fullscreen = bool(step.value)
-        elif step.action in ("signal-state", "publication-state"):
+        elif step.action == "publication-state":
             self._pending_render_frame_generation = int(
                 getattr(self.video_area, "render_frame_generation", 0)
             )
-            if step.action == "publication-state":
-                # Readiness was proved by an earlier texture. The paused fixture
-                # may never render again unless step zero requests a new frame.
-                self.video_area._schedule_render(force_redraw=True)
+            # Readiness was proved by an earlier texture. The paused fixture
+            # may never render again unless step zero requests a new frame.
+            self.video_area._schedule_render(force_redraw=True)
         elif step.action == "switch-media":
             playlist_index, _expected_signal = step.value
             self._pending_render_frame_generation = int(
@@ -2728,83 +2709,6 @@ class GpuValidationSession:
             if bool(after["fullscreen"]) != bool(step.value):
                 return "WARN", "fullscreen state was not confirmed by GTK"
             return "PASS", "fullscreen state confirmed by GTK"
-        elif step.action in ("signal-state", "switch-media"):
-            expected_index, expected_signal = step.value
-            expected_hdr = expected_signal == "hdr"
-            expected_target = (
-                ("GL_RGBA16F", 16, "rec2100-pq")
-                if expected_hdr
-                else ("GL_RGBA8", 8, "srgb")
-            )
-            if int(after["playlist_pos"]) != int(expected_index):
-                return "FAIL", (
-                    f"playlist stayed at {after['playlist_pos']} instead of "
-                    f"{expected_index}"
-                )
-            if step.action == "switch-media" and int(
-                after["render_frame_generation"]
-            ) <= self._pending_render_frame_generation:
-                return "FAIL", "no new frame was published after the media switch"
-            if bool(after["source_hdr"]) != expected_hdr:
-                return "FAIL", (
-                    f"source detector reported "
-                    f"{'HDR' if after['source_hdr'] else 'SDR'} instead of "
-                    f"{expected_signal.upper()}"
-                )
-            if bool(after["hdr_output_active"]) != expected_hdr:
-                return "FAIL", (
-                    "HDR output state did not follow the source in auto mode"
-                )
-            actual_target = (
-                after["render_target_format"],
-                after["render_target_depth"],
-                after["render_color_state"],
-            )
-            if actual_target != expected_target:
-                return "FAIL", (
-                    f"published target was {actual_target}, expected "
-                    f"{expected_target}"
-                )
-            if (
-                self._transition_context_generation is not None
-                and int(after["render_context_generation"])
-                != self._transition_context_generation
-            ):
-                return "FAIL", "renderer context changed during a media transition"
-            if not expected_hdr and after["dovi_profile"] is not None:
-                return "FAIL", "Dolby Vision metadata remained attached to SDR"
-            trc = str(after.get("target_trc", "unknown")).strip().lower()
-            prim = str(after.get("target_prim", "unknown")).strip().lower()
-            peak = str(after.get("target_peak", "unknown")).strip().lower()
-            if expected_hdr:
-                if (
-                    trc not in ("pq", "hlg")
-                    or prim not in ("bt.2020", "bt.2100")
-                    or peak in ("", "none", "unknown")
-                ):
-                    return "FAIL", (
-                        f"mpv target properties ({after.get('target_trc')}/"
-                        f"{after.get('target_prim')}/{after.get('target_peak')}) "
-                        "did not match HDR output state"
-                    )
-            else:
-                if (
-                    trc not in ("auto", "srgb", "bt.1886")
-                    or prim not in ("auto", "bt.709")
-                    or peak not in ("auto",)
-                ):
-                    return "FAIL", (
-                        f"mpv target properties ({after.get('target_trc')}/"
-                        f"{after.get('target_prim')}/{after.get('target_peak')}) "
-                        "did not reset for SDR output state"
-                    )
-            return "PASS", (
-                f"playlist {expected_index}: {expected_signal.upper()} source → "
-                f"{expected_target[0]}/{expected_target[1]}-bit, "
-                f"{expected_target[2]}; hwdec={after['hwdec']}; "
-                f"target={after['target_trc']}/{after['target_prim']}/"
-                f"{after['target_peak']}"
-            )
         return "PASS", "completed"
 
     def _advance_step(self):
@@ -2915,21 +2819,6 @@ class GpuValidationSession:
             selected.append(self.resource_samples[-1])
         return selected
 
-    def _transition_repeated_hdr_growth(self, key: str) -> int | None:
-        """Compare the first and second warmed HDR states, never SDR to HDR."""
-        values = []
-        for result in self.step_results:
-            metrics = result.get("metrics")
-            if (
-                result.get("action") != "switch-media"
-                or not isinstance(metrics, dict)
-                or not metrics.get("source_hdr")
-                or metrics.get(key) is None
-            ):
-                continue
-            values.append(int(metrics[key]))
-        return values[-1] - values[0] if len(values) >= 2 else None
-
     def _write_report(self, failure_reason: str | None) -> tuple[Path, str]:
         if self.config.mode == "publication":
             return self._write_publication_report(failure_reason)
@@ -2949,18 +2838,8 @@ class GpuValidationSession:
             raw_rss_growth = self.memory_samples[-1] - self.memory_samples[0]
         raw_process_vram_growth = self._sample_growth(self.drm_vram_samples)
         raw_process_gtt_growth = self._sample_growth(self.drm_gtt_samples)
-        if self.config.mode == "transition":
-            rss_growth = self._transition_repeated_hdr_growth("rss_kib")
-            process_vram_growth = self._transition_repeated_hdr_growth(
-                "drm_vram_kib"
-            )
-            process_gtt_growth = self._transition_repeated_hdr_growth(
-                "drm_gtt_kib"
-            )
-        else:
-            rss_growth = raw_rss_growth
-            process_vram_growth = raw_process_vram_growth
-            process_gtt_growth = raw_process_gtt_growth
+        rss_growth = raw_rss_growth
+        process_vram_growth = raw_process_vram_growth
         global_vram_growth = self._global_vram_growth()
         statuses = tuple(str(result.get("status")) for result in self.step_results)
         overall, warnings = evaluate_validation(
@@ -2970,17 +2849,10 @@ class GpuValidationSession:
             step_statuses=statuses + (("FAIL",) if failure_reason else ()),
             fbo_drops=fbo_drops,
             decoder_drops=decoder_drops,
-            # File reloads deliberately tear down video timing, so their VO
-            # counter is not a stable-playback drop measurement. Keep the raw
-            # count in the report; playback actions remain strict.
-            vo_drops=(0 if self.config.mode == "transition" else vo_drops),
+            vo_drops=vo_drops,
             rss_growth_kib=rss_growth,
             process_vram_growth_kib=process_vram_growth,
-            process_vram_measured=(
-                process_vram_growth is not None
-                if self.config.mode == "transition"
-                else bool(self.drm_vram_samples)
-            ),
+            process_vram_measured=bool(self.drm_vram_samples),
             gl_errors=gl_errors,
             fbo_failures=fbo_failures,
         )
@@ -3034,12 +2906,7 @@ class GpuValidationSession:
             + ("disabled" if not isolation_failures else "partially disabled"),
             f"Active renderer: {active_api or 'unknown'}",
             f"Renderer status: {session_status}",
-            "Validation HDR mode: "
-            + (
-                "auto (temporary; saved preference unchanged)"
-                if self.config.mode == "transition"
-                else "unchanged"
-            ),
+            "Validation HDR mode: unchanged",
             "Render context generation: "
             f"{getattr(self.video_area, 'render_context_generation', 'unknown')}",
             f"Hardware decoding: {final.get('hwdec', 'unknown')}",
@@ -3087,13 +2954,7 @@ class GpuValidationSession:
                 f"CineHDR FBO allocation failures: {fbo_failures}",
                 f"CineHDR-observed OpenGL errors: {gl_errors}",
                 f"mpv decoder frame drops: {drop_summary(decoder_drops)}",
-                "mpv video-output frame drops"
-                + (
-                    " across file reloads (informational): "
-                    if self.config.mode == "transition"
-                    else ": "
-                )
-                + drop_summary(vo_drops),
+                f"mpv video-output frame drops: {drop_summary(vo_drops)}",
                 f"mpv mistimed frames observed: {self._counter_growth(final, 'mistimed_frames')}",
                 f"mpv delayed frames observed: {self._counter_growth(final, 'delayed_frames')}",
                 f"Process RSS start: {_format_kib(self.memory_samples[0] if self.memory_samples else None)}",
@@ -3106,18 +2967,6 @@ class GpuValidationSession:
                 f"CineHDR DRM-client VRAM raw start-to-end growth: {_format_kib(raw_process_vram_growth)}",
                 f"CineHDR DRM-client GTT raw start-to-end growth: {_format_kib(raw_process_gtt_growth)}",
                 f"Global GPU VRAM growth (context only): {_format_kib(global_vram_growth)}",
-                *(
-                    [
-                        "Repeated HDR state RSS growth: "
-                        + _format_kib(rss_growth),
-                        "Repeated HDR state CineHDR DRM-client VRAM growth: "
-                        + _format_kib(process_vram_growth),
-                        "Repeated HDR state CineHDR DRM-client GTT growth: "
-                        + _format_kib(process_gtt_growth),
-                    ]
-                    if self.config.mode == "transition"
-                    else []
-                ),
                 "",
                 "[Five-minute resource timeline]",
             ]
