@@ -18,7 +18,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import bisect
-import hashlib
 import logging
 import os
 import re
@@ -38,7 +37,6 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("GObject", "2.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from .diagnostics_report import DIAGNOSTICS_EXPORT_DIR_ENV, DIAGNOSTICS_EXPORT_PATH_ENV
 from .hdr_menu import HdrMenuButton
 from .history import HistoryDialog
 from .mpris import MPRIS
@@ -74,6 +72,13 @@ from .utils import (
     timeout_add_seconds_once,
 )
 from .video_widget import MpvVideoWidget
+from .window_diagnostics import (
+    handle_first_media_frame_published,
+    handle_first_video_frame,
+    init_diagnostics_exporter,
+    notify_diagnostics_shutdown,
+)
+
 logger = logging.getLogger(__name__)
 gtk_setts: Gtk.Settings | None = Gtk.Settings.get_default()
 
@@ -233,18 +238,9 @@ class CineWindow(Adw.ApplicationWindow):
         self._dovi_rpu_logged: bool = False
         self._shutting_down: bool = False
         self._media_load_generation: int = 0
-        self._diagnostics_exporter = None
-        if (
-            os.environ.get(DIAGNOSTICS_EXPORT_PATH_ENV, "").strip()
-            or os.environ.get(DIAGNOSTICS_EXPORT_DIR_ENV, "").strip()
-        ):
-            diag_export_mod = load_optional_validation(
-                __package__,
-                "diagnostics_export",
-                "Diagnostics export is unavailable; install with -Dvalidation=true",
-                logger,
-            )
-            self._diagnostics_exporter = diag_export_mod.exporter_from_env()
+        self._diagnostics_exporter = init_diagnostics_exporter(
+            __package__, logger, load_optional_validation
+        )
 
         self._mpv_log_handler = make_mpv_log_handler(self, mpv_logger)
 
@@ -1775,96 +1771,15 @@ class CineWindow(Adw.ApplicationWindow):
         context_generation: int | None = None,
         load_generation: int | None = None,
     ):
-        if getattr(self, "_shutting_down", False):
-            return
-        exporter = getattr(self, "_diagnostics_exporter", None)
-        if exporter is None or getattr(exporter, "export_completed", False) is True:
-            return
-
-        video_area = getattr(self, "_video_area", None) or getattr(self, "gl_area", None)
-        current_ctx_gen = getattr(video_area, "render_context_generation", None) if video_area else None
-        current_load_gen = getattr(self, "_media_load_generation", 0)
-
-        # Invalidate if render context was recreated
-        if context_generation is not None and current_ctx_gen is not None and current_ctx_gen != context_generation:
-            return
-
-        # Invalidate if media load generation has advanced
-        if load_generation is not None and current_load_gen != load_generation:
-            return
-
-        # Helper to reset current video area state if verification fails on current generation
-        def _reset_current_area_state():
-            if video_area and not getattr(self, "_shutting_down", False):
-                if context_generation is not None and load_generation is not None:
-                    expected_gen = (context_generation, load_generation)
-                    if getattr(video_area, "_exported_media_generation", None) == expected_gen:
-                        video_area._first_media_frame_exported = False
-                        setattr(video_area, "_exported_media_generation", None)
-
-        # Path token check: verify that mpv is currently playing the same media
-        if not hasattr(media_frame, "path_token") or not media_frame.path_token:
-            _reset_current_area_state()
-            return
-
-        mpv_obj = getattr(self, "mpv", None)
-        if mpv_obj is None and hasattr(self, "player"):
-            mpv_obj = getattr(self.player, "mpv", None)
-        if mpv_obj is None:
-            _reset_current_area_state()
-            return
-
-        try:
-            from .diagnostics_report import get_mpv_prop
-            from .render_backend import media_frame_evidence
-
-            current_token = None
-            path = get_mpv_prop(mpv_obj, "path")
-            if isinstance(path, str) and path.strip():
-                canonical_path = os.path.realpath(os.path.abspath(path))
-                current_token = hashlib.sha256(os.fsencode(canonical_path)).hexdigest()
-            else:
-                current_evidence = media_frame_evidence(mpv_obj)
-                if current_evidence is not None and getattr(current_evidence, "path_token", None):
-                    current_token = current_evidence.path_token
-
-            if not current_token or current_token != media_frame.path_token:
-                _reset_current_area_state()
-                return
-        except Exception:
-            logging.exception("Failed media identity verification on first media frame callback")
-            _reset_current_area_state()
-            return
-
-        latest_ctx_gen = getattr(video_area, "render_context_generation", None) if video_area else None
-        latest_load_gen = getattr(self, "_media_load_generation", 0)
-        if (
-            getattr(self, "_shutting_down", False)
-            or (context_generation is not None and latest_ctx_gen is not None and latest_ctx_gen != context_generation)
-            or (load_generation is not None and latest_load_gen != load_generation)
-        ):
-            return
-
-        try:
-            exporter.on_first_media_frame(
-                self,
-                media_frame,
-                context_generation=context_generation,
-                load_generation=load_generation,
-            )
-        except Exception:
-            logging.exception("Failed to export diagnostics snapshot on first media frame")
+        handle_first_media_frame_published(
+            self,
+            media_frame,
+            context_generation=context_generation,
+            load_generation=load_generation,
+        )
 
     def on_first_video_frame(self):
-        if getattr(self, "_shutting_down", False):
-            return
-        exporter = getattr(self, "_diagnostics_exporter", None)
-        if exporter is None or getattr(exporter, "export_completed", False) is True:
-            return
-        try:
-            exporter.on_first_frame(self)
-        except Exception:
-            logging.exception("Failed to export diagnostics snapshot on first frame")
+        handle_first_video_frame(self)
 
     def do_close_request(self) -> bool:
         self._shutting_down = True
@@ -1872,11 +1787,7 @@ class CineWindow(Adw.ApplicationWindow):
         if self._playlist_debounce_id > 0:
             GLib.source_remove(self._playlist_debounce_id)
             self._playlist_debounce_id = 0
-        if self._diagnostics_exporter:
-            try:
-                self._diagnostics_exporter.on_shutdown(self)
-            except Exception:
-                logging.exception("Failed to record diagnostics snapshot on shutdown")
+        notify_diagnostics_shutdown(self)
 
         try:
             if hasattr(self, "_video_area") and hasattr(self._video_area, "shutdown_render_context"):

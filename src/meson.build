@@ -80,6 +80,7 @@ cine_sources = [
   'wayland_cm_probe.py',
   'wayland_output_hdr.py',
   'window.py',
+  'window_diagnostics.py',
 ]
 
 if get_option('validation')
