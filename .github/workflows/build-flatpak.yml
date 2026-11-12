@@ -25,12 +25,12 @@ jobs:
         run: |
           diff <(ls src/*.py | xargs -n1 basename | sort) \
                <(grep -o "'[a-z_]*\.py'" src/meson.build | tr -d "'" | sort)
-      - name: Check AGENTS.md §2 invariant 2 (no private python-mpv API, awaiting C6)
-        continue-on-error: true
-        run: '! grep -rn "_get_property\|self\.mpv\._\|player\._" src/'
-      - name: Check AGENTS.md §2 invariant 3 (no validation in product build/imports, awaiting C4)
-        continue-on-error: true
-        run: '! grep -n "gpu_validation\|DiagnosticsExporter" src/meson.build src/*.py'
+      - name: Check AGENTS.md §2 invariant 2 (no private python-mpv API)
+        run: '! grep -rn --exclude-dir=__pycache__ "\._get_property\|self\.mpv\._\|player\._" src/'
+      - name: Check AGENTS.md §2 invariant 3 (no direct validation imports or DiagnosticsExporter in src/)
+        run: |
+          ! grep -rn --exclude-dir=__pycache__ \
+            "DiagnosticsExporter\|from \.gpu_validation\|from \.\.gpu_validation\|import gpu_validation\|cinehdr\.gpu_validation" src/
 
   flatpak:
     name: "Flatpak"
