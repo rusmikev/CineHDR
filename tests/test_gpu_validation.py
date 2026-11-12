@@ -261,12 +261,6 @@ class ValidationConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validation_config_from_env({"CINEHDR_GPU_VALIDATION": "maybe"})
 
-    def test_lifecycle_mode_is_explicitly_supported(self):
-        config = validation_config_from_env(
-            {"CINEHDR_GPU_VALIDATION": "lifecycle"}
-        )
-        self.assertEqual(config.mode, "lifecycle")
-
     def test_transition_mode_is_explicitly_supported(self):
         config = validation_config_from_env(
             {"CINEHDR_GPU_VALIDATION": "transition"}
@@ -320,7 +314,7 @@ class ValidationConfigTests(unittest.TestCase):
         self.assertEqual(validation_expected_playlist_count("transition"), 2)
         self.assertEqual(validation_expected_playlist_count("publication"), 2)
         self.assertEqual(validation_expected_playlist_count("settling"), 2)
-        self.assertIsNone(validation_expected_playlist_count("lifecycle"))
+        self.assertIsNone(validation_expected_playlist_count("unknown"))
 
     def test_validation_player_does_not_restore_or_save_watch_later(self):
         player = {}
@@ -337,7 +331,7 @@ class ValidationConfigTests(unittest.TestCase):
         self.assertEqual(player["keep-open"], "yes")
         self.assertEqual(player["hwdec"], "vaapi-copy")
         normal_player = {}
-        prepare_validation_player(normal_player, "quick")
+        prepare_validation_player(normal_player, "gradient")
         self.assertNotIn("pause", normal_player)
         self.assertNotIn("keep-open", normal_player)
         self.assertNotIn("hwdec", normal_player)
@@ -372,13 +366,6 @@ drm-memory-vram: 512 KiB
 
 
 class ValidationPlanTests(unittest.TestCase):
-    def test_lifecycle_plan_recreates_the_context_twice(self):
-        steps = validation_steps("lifecycle")
-        cycles = [step for step in steps if step.action == "context-cycle"]
-        self.assertEqual(len(cycles), 2)
-        self.assertEqual([step.value for step in cycles], [1, 2])
-        self.assertLess(sum(step.wait_seconds for step in steps), 120)
-
     def test_transition_plan_runs_sdr_hdr_sdr_hdr_in_one_context(self):
         steps = validation_steps("transition")
         states = [
@@ -1413,242 +1400,6 @@ class PublicationEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(status, "WARN")
         self.assertIn("kept the previous", detail)
-
-    def test_context_cycle_requires_a_new_context_and_preserves_hdr_state(self):
-        old_context = object()
-        new_context = object()
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-            render_context_generation=2,
-            mpv_ctx=new_context,
-            gl_area=SimpleNamespace(get_realized=lambda: True),
-            _first_frame_logged=True,
-            hdr_controller=SimpleNamespace(
-                _disconnected=False,
-                is_hdr_content=True,
-            ),
-            render_target_format="GL_RGBA16F",
-            render_target_depth=16,
-        )
-        session._pending_context_generation = 1
-        session._pending_context = old_context
-        session._pending_hdr_state = True
-        session._pending_render_target = ("GL_RGBA16F", 16)
-
-        status, detail = session._verify_step(
-            ValidationStep("GL context cycle 1", "context-cycle", 10, 1),
-            {
-                "time_pos": 100.0,
-                "render_context_generation": 2,
-                "render_frame_generation": 1,
-                "source_hdr": True,
-                "hdr_output_active": True,
-                "render_target_format": "GL_RGBA16F",
-                "render_target_depth": 16,
-                "render_color_state": "rec2100-pq",
-            },
-        )
-
-        self.assertEqual(status, "PASS")
-        self.assertIn("1→2", detail)
-
-    def test_context_cycle_pauses_before_unrealize_and_schedules_realize(self):
-        events = []
-
-        class FakePlayer:
-            def command(self, *args):
-                events.append(("command", args))
-
-        class FakeGlArea:
-            def get_realized(self):
-                return True
-
-            def unrealize(self):
-                events.append(("unrealize", ()))
-
-        old_context = object()
-        gl_area = FakeGlArea()
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.player = FakePlayer()
-        session.window = SimpleNamespace(
-            get_width=lambda: 1280,
-            get_height=lambda: 720,
-        )
-        session.video_area = SimpleNamespace(
-            gl_area=gl_area,
-            mpv_ctx=old_context,
-            render_context_generation=1,
-            hdr_controller=SimpleNamespace(is_hdr_content=True),
-            render_target_format="GL_RGBA16F",
-            render_target_depth=16,
-        )
-
-        with patch(
-            "src.validation.gpu_validation.GLib.timeout_add", return_value=99
-        ) as timeout_add:
-            session._apply_step(
-                ValidationStep("GL context cycle 1", "context-cycle", 10, 1)
-            )
-
-        self.assertEqual(events[0], ("command", ("set", "pause", "yes")))
-        self.assertEqual(events[1], ("unrealize", ()))
-        timeout_add.assert_called_once_with(
-            500, session._realize_validation_gl_area, gl_area
-        )
-        self.assertEqual(session.lifecycle_timer_id, 99)
-        self.assertIs(session._pending_context, old_context)
-
-    def test_context_cycle_fails_if_generation_does_not_advance(self):
-        context = object()
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-            render_context_generation=1,
-            mpv_ctx=context,
-        )
-        session._pending_context_generation = 1
-        session._pending_context = context
-
-        status, detail = session._verify_step(
-            ValidationStep("GL context cycle 1", "context-cycle", 10, 1),
-            {"time_pos": 100.0},
-        )
-
-        self.assertEqual(status, "FAIL")
-        self.assertIn("not recreated", detail)
-
-    def test_context_cycle_requires_published_frame_and_preserves_hdr_active_and_color_state(self):
-        """P1.5 lifecycle: context-cycle must require a newly published frame and preserve hdr_active + render_color_state."""
-        old_ctx = object()
-        new_ctx = object()
-        step = ValidationStep("GL context cycle 1", "context-cycle", 10, 1)
-
-        def make_session():
-            s = GpuValidationSession.__new__(GpuValidationSession)
-            s.player = MagicMock()
-            s.window = SimpleNamespace(get_width=lambda: 1280, get_height=lambda: 720)
-            s.video_area = SimpleNamespace(
-                render_backend_active="opengl-next",
-                render_session_status="active",
-                render_context_generation=1,
-                render_frame_generation=5,
-                mpv_ctx=old_ctx,
-                gl_area=SimpleNamespace(get_realized=lambda: True, unrealize=lambda: None),
-                _first_frame_logged=True,
-                hdr_controller=SimpleNamespace(
-                    _disconnected=False,
-                    is_hdr_content=True,
-                    is_hdr_active=True,
-                ),
-                render_target_format="GL_RGBA16F",
-                render_target_depth=16,
-                render_color_state="rec2100-pq",
-            )
-            with patch("src.validation.gpu_validation.GLib.timeout_add", return_value=99):
-                s._apply_step(step)
-            s.video_area.render_context_generation = 2
-            s.video_area.mpv_ctx = new_ctx
-            s.video_area.render_frame_generation = 6
-            return s
-
-        def snapshot(**changes):
-            facts = {
-                "time_pos": 10.0,
-                "render_context_generation": 2,
-                "render_frame_generation": 6,
-                "source_hdr": True,
-                "hdr_output_active": True,
-                "render_target_format": "GL_RGBA16F",
-                "render_target_depth": 16,
-                "render_color_state": "rec2100-pq",
-            }
-            facts.update(changes)
-            return facts
-
-        # Positive control: context recreated, new frame published (5->6), HDR active and color state preserved
-        session_ok = make_session()
-        status, detail = session_ok._verify_step(
-            step,
-            snapshot(),
-        )
-        self.assertEqual(status, "PASS")
-        self.assertIn("1→2", detail)
-
-        # A partial metrics snapshot cannot borrow widget state to manufacture PASS.
-        session_partial = make_session()
-        status_partial, detail_partial = session_partial._verify_step(
-            step,
-            {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": "rec2100-pq"},
-        )
-        self.assertEqual(status_partial, "FAIL")
-        self.assertIn("metrics snapshot is incomplete", detail_partial)
-
-        # Negative control 1: _first_frame_logged is True, but frame was dropped/superseded before publication (frame_gen 5->5)
-        session_no_pub = make_session()
-        session_no_pub.video_area.render_frame_generation = 5
-        status_no_pub, detail_no_pub = session_no_pub._verify_step(
-            step,
-            {"time_pos": 10.0, "render_frame_generation": 5, "render_color_state": "rec2100-pq"},
-        )
-        self.assertEqual(status_no_pub, "FAIL")
-        self.assertIn("no new video frame was published after context recreation", detail_no_pub)
-
-        # Negative control 2: is_hdr_content stayed True, but is_hdr_active flipped to False across recreation
-        session_hdr_drop = make_session()
-        session_hdr_drop.video_area.hdr_controller.is_hdr_active = False
-        status_hdr_drop, detail_hdr_drop = session_hdr_drop._verify_step(
-            step,
-            {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": "rec2100-pq"},
-        )
-        self.assertEqual(status_hdr_drop, "FAIL")
-        self.assertIn("HDR output active state changed across context recreation", detail_hdr_drop)
-
-        # Negative control 3: render_target stayed ('GL_RGBA16F', 16), but published render_color_state degraded to 'srgb' or None
-        for bad_color in ("srgb", None):
-            with self.subTest(bad_color=bad_color):
-                session_color = make_session()
-                session_color.video_area.render_color_state = bad_color
-                status_color, detail_color = session_color._verify_step(
-                    step,
-                    {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": bad_color},
-                )
-                self.assertEqual(status_color, "FAIL")
-                self.assertIn("published color state changed", detail_color)
-
-        # Negative control 4: after metrics snapshot reports stale render_context_generation
-        for bad_ctx_gen in (1, 0):
-            with self.subTest(bad_ctx_gen=bad_ctx_gen):
-                session_stale_ctx = make_session()
-                status_stale_ctx, detail_stale_ctx = session_stale_ctx._verify_step(
-                    step,
-                    {
-                        "time_pos": 10.0,
-                        "render_context_generation": bad_ctx_gen,
-                        "render_frame_generation": 6,
-                        "render_color_state": "rec2100-pq",
-                    },
-                )
-                self.assertEqual(status_stale_ctx, "FAIL")
-                self.assertIn("libmpv render context was not recreated", detail_stale_ctx)
-
-        # Negative control 5: after metrics snapshot reports degraded render target
-        session_degraded_target = make_session()
-        status_target, detail_target = session_degraded_target._verify_step(
-            step,
-            {
-                "time_pos": 10.0,
-                "render_context_generation": 2,
-                "render_frame_generation": 6,
-                "render_color_state": "rec2100-pq",
-                "render_target_format": "GL_RGBA8",
-                "render_target_depth": 8,
-            },
-        )
-        self.assertEqual(status_target, "FAIL")
-        self.assertIn("render target changed", detail_target)
 
     def test_transition_accepts_published_hdr_state_after_a_new_frame(self):
         session = GpuValidationSession.__new__(GpuValidationSession)
@@ -2720,7 +2471,6 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         session.ready_timer_id = None
         session.sample_timer_id = None
         session.step_timer_id = None
-        session.lifecycle_timer_id = None
         session.window = SimpleNamespace(
             app=SimpleNamespace(_gpu_validation_setup_failures=()),
             show_toast=lambda *a: None,
@@ -3292,7 +3042,6 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         session.ready_timer_id = None
         session.sample_timer_id = None
         session.step_timer_id = None
-        session.lifecycle_timer_id = None
         session.window = SimpleNamespace(
             app=SimpleNamespace(_gpu_validation_setup_failures=()),
             show_toast=lambda *a: None,

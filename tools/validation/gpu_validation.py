@@ -162,8 +162,7 @@ def is_verified_flatpak_container(
     return True
 
 VALIDATION_MODES = (
-    "lifecycle", "transition", "publication",
-    "settling", "gradient",
+    "transition", "publication", "settling", "gradient",
 )
 READY_STABLE_SECONDS = 4.0
 SETTLING_SCHEMA = "cinehdr.gate2.resource-settling.v1"
@@ -1097,18 +1096,6 @@ def validation_steps(mode: str) -> tuple[ValidationStep, ...]:
         return (
             ValidationStep("wait for stable HDR gradient frame", "gradient-settle", 8),
         )
-    if mode == "lifecycle":
-        return (
-            ValidationStep("normalize start position", "seek", 4, 0.05),
-            ValidationStep("warm playback", "play", 8),
-            ValidationStep("pause before context cycle", "pause", 3),
-            ValidationStep("GL context cycle 1", "context-cycle", 10, 1),
-            ValidationStep("play after context cycle 1", "play", 8),
-            ValidationStep("seek after context cycle 1", "seek", 7, 0.25),
-            ValidationStep("GL context cycle 2", "context-cycle", 10, 2),
-            ValidationStep("play after context cycle 2", "play", 8),
-            ValidationStep("seek after context cycle 2", "seek", 7, 0.75),
-        )
     if mode == "transition":
         return (
             ValidationStep("initial SDR output", "signal-state", 3, (0, "sdr")),
@@ -1934,7 +1921,6 @@ class GpuValidationSession:
         self.ready_timer_id: int | None = None
         self.sample_timer_id: int | None = None
         self.step_timer_id: int | None = None
-        self.lifecycle_timer_id: int | None = None
         self.finish_timer_id: int | None = None
         self.close_signal_id: int | None = None
         self.finished = False
@@ -1945,8 +1931,6 @@ class GpuValidationSession:
         self._pending_position_available = False
         self._pending_target_position: float | None = None
         self._pending_before_size = (0, 0)
-        self._pending_context_generation = 0
-        self._pending_context = None
         self._pending_hdr_state = False
         self._pending_render_target = (None, None)
         self._pending_render_frame_generation = 0
@@ -2350,34 +2334,6 @@ class GpuValidationSession:
             GLib.timeout_add(500, self._request_window_size, width, height)
         elif step.action == "fullscreen":
             self.player.fullscreen = bool(step.value)
-        elif step.action == "context-cycle":
-            self.player.command("set", "pause", "yes")
-            gl_area = self.video_area.gl_area
-            if not gl_area.get_realized():
-                raise RuntimeError("Gtk.GLArea was not realized before the cycle")
-            self._pending_context_generation = int(
-                getattr(self.video_area, "render_context_generation", 0)
-            )
-            self._pending_render_frame_generation = int(
-                getattr(self.video_area, "render_frame_generation", 0)
-            )
-            self._pending_context = self.video_area.mpv_ctx
-            hdr_controller = self.video_area.hdr_controller
-            self._pending_hdr_state = bool(hdr_controller.is_hdr_content)
-            self._pending_hdr_output_active = bool(
-                getattr(hdr_controller, "is_hdr_active", self._pending_hdr_state)
-            )
-            self._pending_render_target = (
-                self.video_area.render_target_format,
-                self.video_area.render_target_depth,
-            )
-            self._pending_render_color_state = getattr(
-                self.video_area, "render_color_state", None
-            )
-            gl_area.unrealize()
-            self.lifecycle_timer_id = GLib.timeout_add(
-                500, self._realize_validation_gl_area, gl_area
-            )
         elif step.action in ("signal-state", "publication-state"):
             self._pending_render_frame_generation = int(
                 getattr(self.video_area, "render_frame_generation", 0)
@@ -2597,15 +2553,6 @@ class GpuValidationSession:
         }
         self._finish(None)
 
-    def _realize_validation_gl_area(self, gl_area):
-        self.lifecycle_timer_id = None
-        if self.finished:
-            return GLib.SOURCE_REMOVE
-        if not gl_area.get_realized():
-            gl_area.realize()
-        self.video_area.queue_draw()
-        return GLib.SOURCE_REMOVE
-
     def _verify_settling_step(
         self, step: ValidationStep, after: dict[str, object], expected_api: str
     ) -> tuple[str, str]:
@@ -2781,100 +2728,6 @@ class GpuValidationSession:
             if bool(after["fullscreen"]) != bool(step.value):
                 return "WARN", "fullscreen state was not confirmed by GTK"
             return "PASS", "fullscreen state confirmed by GTK"
-        elif step.action == "context-cycle":
-            generation = int(
-                after.get(
-                    "render_context_generation",
-                    getattr(self.video_area, "render_context_generation", 0),
-                )
-            )
-            if generation <= self._pending_context_generation:
-                return "FAIL", "libmpv render context was not recreated"
-            if self.video_area.mpv_ctx is self._pending_context:
-                return "FAIL", "the previous libmpv render context survived"
-            if not self.video_area.gl_area.get_realized():
-                return "FAIL", "Gtk.GLArea did not become realized again"
-            if not getattr(self.video_area, "_first_frame_logged", False):
-                return "FAIL", "no video frame rendered after context recreation"
-            pending_frame_gen = getattr(self, "_pending_render_frame_generation", None)
-            actual_frame_gen = after.get(
-                "render_frame_generation",
-                getattr(self.video_area, "render_frame_generation", None),
-            )
-            if (
-                pending_frame_gen is not None
-                and actual_frame_gen is not None
-                and int(actual_frame_gen) <= int(pending_frame_gen)
-            ):
-                return "FAIL", "no new video frame was published after context recreation"
-            hdr_controller = self.video_area.hdr_controller
-            if getattr(hdr_controller, "_disconnected", False):
-                return "FAIL", "HDR property observers were disconnected"
-            after_source_hdr = after.get("source_hdr")
-            actual_source_hdr = (
-                bool(after_source_hdr)
-                if after_source_hdr is not None
-                else bool(hdr_controller.is_hdr_content)
-            )
-            if actual_source_hdr != self._pending_hdr_state:
-                return "FAIL", "HDR content state changed across context recreation"
-            pending_hdr_active = getattr(self, "_pending_hdr_output_active", None)
-            after_hdr_active = after.get("hdr_output_active")
-            actual_hdr_active = (
-                bool(after_hdr_active)
-                if after_hdr_active is not None
-                else bool(getattr(hdr_controller, "is_hdr_active", actual_source_hdr))
-            )
-            if (
-                pending_hdr_active is not None
-                and actual_hdr_active != pending_hdr_active
-            ):
-                return "FAIL", "HDR output active state changed across context recreation"
-            render_target = (
-                after.get(
-                    "render_target_format",
-                    getattr(self.video_area, "render_target_format", None),
-                ),
-                after.get(
-                    "render_target_depth",
-                    getattr(self.video_area, "render_target_depth", None),
-                ),
-            )
-            if render_target != self._pending_render_target:
-                return "FAIL", (
-                    "render target changed from "
-                    f"{self._pending_render_target} to {render_target}"
-                )
-            pending_color_state = getattr(self, "_pending_render_color_state", None)
-            actual_color_state = after.get(
-                "render_color_state",
-                getattr(self.video_area, "render_color_state", None),
-            )
-            if pending_color_state is not None and actual_color_state != pending_color_state:
-                return "FAIL", (
-                    "published color state changed from "
-                    f"{pending_color_state} to {actual_color_state}"
-                )
-            required_metrics = (
-                "render_context_generation",
-                "render_frame_generation",
-                "source_hdr",
-                "hdr_output_active",
-                "render_target_format",
-                "render_target_depth",
-                "render_color_state",
-            )
-            missing_metrics = [key for key in required_metrics if after.get(key) is None]
-            if missing_metrics:
-                return "FAIL", (
-                    "context-cycle metrics snapshot is incomplete: "
-                    + ", ".join(missing_metrics)
-                )
-            return "PASS", (
-                "context generation advanced "
-                f"{self._pending_context_generation}→{generation}; "
-                "HDR observers and render target were preserved"
-            )
         elif step.action in ("signal-state", "switch-media"):
             expected_index, expected_signal = step.value
             expected_hdr = expected_signal == "hdr"
@@ -2974,10 +2827,8 @@ class GpuValidationSession:
                     "metrics": after,
                 }
             )
-            if self._pending_step.action in ("seek", "context-cycle") and status != "FAIL":
+            if self._pending_step.action == "seek" and status != "FAIL":
                 self.player.command("set", "pause", "no")
-            if self._pending_step.action == "context-cycle":
-                self._pending_context = None
             if status == "FAIL":
                 self._finish(f"validation action failed: {self._pending_step.name}")
                 return GLib.SOURCE_REMOVE
@@ -3727,7 +3578,6 @@ class GpuValidationSession:
             self.ready_timer_id,
             self.sample_timer_id,
             self.step_timer_id,
-            self.lifecycle_timer_id,
         ):
             if source_id:
                 try:
