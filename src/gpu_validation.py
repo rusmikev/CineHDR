@@ -1953,6 +1953,8 @@ class GpuValidationSession:
             self.pixel_oracle = PausedTransitionPixelOracle()
             if hasattr(self.video_area, "_fbo_pixel_oracle_cb"):
                 self.video_area._fbo_pixel_oracle_cb = self._on_fbo_pixel_capture
+            if hasattr(self.video_area, "_fbo_pixel_oracle_sampler"):
+                self.video_area._fbo_pixel_oracle_sampler = read_fbo_patch_samples
             if hasattr(self.video_area, "_fbo_pixel_oracle_error_cb"):
                 self.video_area._fbo_pixel_oracle_error_cb = self._on_fbo_pixel_readback_error
 

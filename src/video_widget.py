@@ -58,7 +58,6 @@ from .gl_bindings import (
 )
 
 from .gl_renderer import GLFramebufferPool
-from .gpu_validation import read_fbo_patch_samples
 from .hdr_controller import HdrController
 from .hdr_detection import check_hdr_support
 from .render_backend import (
@@ -666,11 +665,11 @@ class MpvVideoWidget(Gtk.Widget):
                     # libmpv may restore the default framebuffer on return.
                     # Read from the caller-owned FBO that received this frame.
                     glBindFramebuffer(GL_FRAMEBUFFER, slot.resource.fbo_id.value)
+                    # The validation tool installs the callback and the sampler
+                    # together; without a sampler there is nothing to read.
                     sampler = self._fbo_pixel_oracle_sampler
                     if callable(sampler):
                         pending_pixel_samples = sampler(scaled_w, scaled_h, use_float)
-                    else:
-                        pending_pixel_samples = read_fbo_patch_samples(scaled_w, scaled_h, use_float)
                 except Exception as e:
                     logging.warning(f"FBO pixel oracle readback failed: {e}")
                     if hasattr(self, "_fbo_pixel_oracle_error_cb") and callable(self._fbo_pixel_oracle_error_cb):

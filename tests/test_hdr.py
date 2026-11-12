@@ -17,6 +17,8 @@ import time
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from src.gpu_validation import read_fbo_patch_samples  # noqa: E402
+
 # Make tests hermetic and isolated (F13)
 import shutil
 import subprocess
@@ -4015,6 +4017,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
         oracle_captured = []
         widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captured.append(kwargs)
+        widget._fbo_pixel_oracle_sampler = read_fbo_patch_samples
 
         # libmpv may restore the default framebuffer before returning. The
         # caller-owned slot must be rebound before pixel readback.
@@ -4104,6 +4107,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
                 session.steps = [None, None, None]
                 session.pixel_oracle = PausedTransitionPixelOracle()
                 widget._fbo_pixel_oracle_cb = session._on_fbo_pixel_capture
+                widget._fbo_pixel_oracle_sampler = read_fbo_patch_samples
                 centers = {xy: name for name, xy in compute_patch_centers(1920, 1080).items()}
 
                 def read_pixels(x, y, w, h, fmt, pixel_type, destination):
@@ -4210,6 +4214,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
         oracle_captures = []
         widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captures.append(kwargs)
+        widget._fbo_pixel_oracle_sampler = read_fbo_patch_samples
 
         def mock_read_pixels(x, y, w, h, fmt, type_, data_ptr):
             buf = ctypes.cast(data_ptr, ctypes.POINTER(ctypes.c_uint8 * 4)).contents
@@ -4289,6 +4294,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
         oracle_captures = []
         widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captures.append(kwargs)
+        widget._fbo_pixel_oracle_sampler = read_fbo_patch_samples
 
         read_pixels_called = []
         def mock_read_pixels(x, y, w, h, fmt, type_, data_ptr):
