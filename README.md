@@ -57,7 +57,7 @@ Wayland protocol trace, **L4** visual comparison against mpv on a test pattern.
 | **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** | **PASS** | **PASS** | **PASS** |
 | GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
 | GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
-| KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | `NOT_RUN` | N/A | N/A | N/A |
+| KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (limited L2; seek pending; log reviewed) | N/A | N/A | N/A |
 | KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | `NOT_RUN` | N/A | N/A | N/A |
 
 `NOT_RUN` means not tested, not failing. Dates, builds and per-scenario detail
