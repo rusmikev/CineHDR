@@ -68,6 +68,7 @@ from .utils import (
     has_host_permission,
     idle_add_once,
     is_local_path,
+    load_optional_validation,
     parse_bindings,
     timeout_add_once,
     timeout_add_seconds_once,
@@ -233,18 +234,17 @@ class CineWindow(Adw.ApplicationWindow):
         self._shutting_down: bool = False
         self._media_load_generation: int = 0
         self._diagnostics_exporter = None
-        if os.environ.get(DIAGNOSTICS_EXPORT_PATH_ENV) or os.environ.get(DIAGNOSTICS_EXPORT_DIR_ENV):
-            try:
-                from .validation.diagnostics_export import exporter_from_env
-            except ModuleNotFoundError as error:
-                if error.name in {
-                    f"{__package__}.validation",
-                    f"{__package__}.validation.diagnostics_export",
-                }:
-                    logger.error("Diagnostics export is unavailable; install with -Dvalidation=true")
-                    raise SystemExit(2) from error
-                raise
-            self._diagnostics_exporter = exporter_from_env()
+        if (
+            os.environ.get(DIAGNOSTICS_EXPORT_PATH_ENV, "").strip()
+            or os.environ.get(DIAGNOSTICS_EXPORT_DIR_ENV, "").strip()
+        ):
+            diag_export_mod = load_optional_validation(
+                __package__,
+                "diagnostics_export",
+                "Diagnostics export is unavailable; install with -Dvalidation=true",
+                logger,
+            )
+            self._diagnostics_exporter = diag_export_mod.exporter_from_env()
 
         self._mpv_log_handler = make_mpv_log_handler(self, mpv_logger)
 

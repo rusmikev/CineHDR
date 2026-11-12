@@ -19,6 +19,7 @@
 
 from collections.abc import Mapping, Sequence
 import ctypes
+import importlib
 import logging
 import os
 from typing import Any
@@ -651,3 +652,20 @@ def mpv_prop(player: Any, name: str, default: Any = None) -> Any:
     except _MPV_SHUTDOWN_ERRORS as exc:
         logger.debug("mpv shutdown while querying property %s: %s", name, exc)
         return default
+
+
+def load_optional_validation(
+    package: str | None,
+    submodule: str,
+    unavailable_message: str,
+    target_logger: logging.Logger,
+):
+    """Lazily import an optional validation submodule, exiting 2 when absent."""
+    pkg = package or __package__
+    try:
+        return importlib.import_module(f".validation.{submodule}", package=pkg)
+    except ModuleNotFoundError as error:
+        if error.name in {f"{pkg}.validation", f"{pkg}.validation.{submodule}"}:
+            target_logger.error("%s", unavailable_message)
+            raise SystemExit(2) from error
+        raise
