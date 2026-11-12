@@ -1,4 +1,4 @@
-"""Static checks for the local GPU Next Flatpak candidate manifest."""
+"""Static checks for the product and experimental gpu-next Flatpak manifests."""
 
 import json
 import unittest
@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "build-aux/flatpak/io.github.rusmikev.CineHDR.json"
+GPU_NEXT_MANIFEST_PATH = ROOT / "build-aux/flatpak/io.github.rusmikev.CineHDR.gpu-next.json"
 CARGO_SOURCES_PATH = ROOT / "build-aux/flatpak/cargo-sources-dolby_vision-3.3.2.json"
 SCHEMA_PATH = ROOT / "data/io.github.rusmikev.CineHDR.gschema.xml"
 
@@ -16,9 +17,14 @@ class FlatpakManifestTests(unittest.TestCase):
     def setUpClass(cls):
         with MANIFEST_PATH.open(encoding="utf-8") as manifest_file:
             cls.manifest = json.load(manifest_file)
+        with GPU_NEXT_MANIFEST_PATH.open(encoding="utf-8") as gpu_next_file:
+            cls.gpu_next_manifest = json.load(gpu_next_file)
         with CARGO_SOURCES_PATH.open(encoding="utf-8") as sources_file:
             cls.cargo_sources = json.load(sources_file)
         cls.libmpv = next(module for module in cls.manifest["modules"] if module["name"] == "libmpv")
+        cls.gpu_next_libmpv = next(
+            module for module in cls.gpu_next_manifest["modules"] if module["name"] == "libmpv"
+        )
         cls.modules = cls.libmpv["modules"]
         cls.module_by_name = {
             module["name"]: module for module in cls.modules if isinstance(module, dict)
@@ -28,18 +34,24 @@ class FlatpakManifestTests(unittest.TestCase):
         self.assertEqual(self.manifest["id"], "io.github.rusmikev.CineHDR")
         self.assertIn("org.freedesktop.Sdk.Extension.rust-stable", self.manifest["sdk-extensions"])
 
-    def test_mpv_is_exact_gpu_next_commit_without_screenshot_patch(self):
+    def test_product_manifest_pins_upstream_mpv_v0_41_0_with_screenshot_patch(self):
         self.assertEqual(
             self.libmpv["sources"],
-            [{
-                "type": "git",
-                "url": "https://github.com/lhc70000/mpv.git",
-                "branch": "libmpv-gpu-next",
-                "commit": "97179bce7ed980c53647d6344916f632fe689e9e",
-            }],
+            [
+                {
+                    "type": "git",
+                    "url": "https://github.com/mpv-player/mpv.git",
+                    "tag": "v0.41.0",
+                    "commit": "41f6a645068483470267271e1d09966ca3b9f413",
+                },
+                {
+                    "type": "patch",
+                    "path": "fix-screenshots.diff",
+                },
+            ],
         )
-        self.assertNotIn("fix-screenshots.diff", json.dumps(self.libmpv["sources"]))
         self.assertTrue((ROOT / "build-aux/flatpak/fix-screenshots.diff").is_file())
+        self.assertFalse((ROOT / "build-aux/patches/mpv-gpu-next").exists())
         self.assertTrue(
             {
                 "-Dcplayer=false",
@@ -54,13 +66,33 @@ class FlatpakManifestTests(unittest.TestCase):
         for dependency in (
             "libavcodec.so.62",
             "libavutil.so.60",
-            "libplacebo.so.360",
+            "libplacebo.so.387",
             "libdrm.so.2",
             "libdisplay-info.so.3",
             "libva-drm.so.2",
             "libdovi.so.3",
         ):
             self.assertIn(dependency, linkage_checks)
+        self.assertNotIn("libplacebo.so.360", linkage_checks)
+
+    def test_gpu_next_manifest_isolates_lhc70000_fork_without_screenshot_patch(self):
+        self.assertEqual(self.gpu_next_manifest["id"], "io.github.rusmikev.CineHDR")
+        self.assertEqual(
+            self.gpu_next_libmpv["sources"],
+            [
+                {
+                    "type": "git",
+                    "url": "https://github.com/lhc70000/mpv.git",
+                    "branch": "libmpv-gpu-next",
+                    "commit": "97179bce7ed980c53647d6344916f632fe689e9e",
+                },
+            ],
+        )
+        self.assertNotIn("fix-screenshots.diff", json.dumps(self.gpu_next_libmpv["sources"]))
+        gpu_next_linkage = " ".join(self.gpu_next_libmpv["post-install"])
+        self.assertIn("libplacebo.so.387", gpu_next_linkage)
+        self.assertNotIn("libplacebo.so.360", gpu_next_linkage)
+        self.assertEqual(self.gpu_next_libmpv["modules"], self.libmpv["modules"])
 
     def test_pinned_dependency_order_and_features(self):
         names = [module["name"] for module in self.modules if isinstance(module, dict)]
@@ -121,9 +153,11 @@ class FlatpakManifestTests(unittest.TestCase):
         self.assertIn("ffmpeg version 8.1.2", ffmpeg_commands)
 
         placebo = self.module_by_name["libplacebo"]
+        self.assertEqual(placebo["sources"][0]["tag"], "v7.387.0")
         self.assertEqual(placebo["sources"][0]["commit"], "275f7dea27924cdd34ab2e6c20e448b6bc4fab65")
         self.assertTrue({"-Ddovi=enabled", "-Dlibdovi=enabled"}.issubset(placebo["config-opts"]))
         placebo_checks = " ".join(placebo["post-install"])
+        self.assertIn("pkg-config --atleast-version=7.387.0 libplacebo", placebo_checks)
         self.assertIn("pl_has_dovi", placebo_checks)
         self.assertIn("pl_has_libdovi", placebo_checks)
 
