@@ -117,3 +117,16 @@ test('gnome_pipeline_trace_tests', python3,
     'PYTHONPATH=' + meson.project_source_root() / 'tools/validation' + ':' + meson.project_source_root()
   ]
 )
+
+test('window_lifecycle_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_window_lifecycle.py'
+  ],
+  env: [
+    'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'GSETTINGS_BACKEND=memory',
+    'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
+    'PYTHONPATH=' + meson.project_source_root()
+  ],
+  depends: [cinehdr_resources]
+)
