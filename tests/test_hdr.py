@@ -333,18 +333,20 @@ class TestApplyHDRSettings(unittest.TestCase):
         self.assertFalse(controller.committed_output_state.is_hdr)
 
     def test_hlg_and_pq_detection_logic(self):
-        """Gamma pq/hlg/st2084 or sig-peak > 1.0 correctly identify HDR content (excluding bt.2020 solo trigger)."""
-        from src.hdr_detection import is_hdr_content
+        """Strictly only PQ/HLG transfer functions identify HDR; sig-peak and primaries alone stay SDR."""
+        from src.hdr_detection import HDR_TRANSFERS, is_hdr_content
+        self.assertEqual(HDR_TRANSFERS, frozenset({"pq", "hlg"}))
         test_cases = [
             ({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1.0}, False),
-            ({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 600.0}, True),
+            ({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 600.0}, False),
+            ({"primaries": "bt.2020", "gamma": "bt.1886"}, False),
             ({"primaries": "bt.709", "gamma": "pq", "sig-peak": 1.0}, True),
             ({"primaries": "bt.709", "gamma": "hlg", "sig-peak": 1.0}, True),
-            ({"primaries": "bt.709", "gamma": "st2084", "sig-peak": 1.0}, True),
-            ({"primaries": "bt.709", "gamma": "slog3", "sig-peak": 1.0}, True),
+            ({"primaries": "bt.709", "gamma": "st2084", "sig-peak": 1.0}, False),
+            ({"primaries": "bt.709", "gamma": "slog3", "sig-peak": 1.0}, False),
             ({"primaries": "bt.709", "gamma": "bt.1886", "sig-peak": 1.0}, False),
             ({}, False),
-            (None, False)
+            (None, False),
         ]
         for params, expected in test_cases:
             self.assertEqual(is_hdr_content(params), expected, f"Failed detection for {params}")
@@ -886,8 +888,13 @@ class TestColorStateSelection(unittest.TestCase):
         self.assertFalse(self._is_hdr(True, "bt.2020", "srgb", sig_peak=1.0))
 
     def test_hdr_bt2020_srgb_gamma_high_peak(self):
-        """BT.2020 primaries + sRGB gamma + high peak (>1.0) → HDR color state."""
-        self.assertTrue(self._is_hdr(True, "bt.2020", "srgb", sig_peak=600.0))
+        """BT.2020 primaries + sRGB gamma + high peak (>1.0) → SDR (transfer criterion is strictly PQ/HLG)."""
+        self.assertFalse(self._is_hdr(True, "bt.2020", "srgb", sig_peak=600.0))
+
+    def test_wcg_sdr_bt2020_bt1886_is_sdr(self):
+        """BT.2020 primaries + bt.1886 gamma (WCG-SDR) → SDR regardless of sig-peak."""
+        self.assertFalse(self._is_hdr(True, "bt.2020", "bt.1886", sig_peak=1.0))
+        self.assertFalse(self._is_hdr(True, "bt.2020", "bt.1886", sig_peak=1000.0))
 
     def test_hdr_disabled_bt2020_pq(self):
         """BT.2020 + PQ but HDR disabled → SDR color state."""
@@ -910,10 +917,19 @@ class TestColorStateSelection(unittest.TestCase):
         from src.hdr_detection import is_hdr_content
         self.assertTrue(is_hdr_content({"primaries": "bt.2020", "gamma": "pq"}))
         self.assertTrue(is_hdr_content({"primaries": "bt.709", "gamma": "hlg"}))
-        self.assertTrue(is_hdr_content({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1000}))
+        self.assertFalse(is_hdr_content({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1000}))
+        self.assertFalse(is_hdr_content({"primaries": "bt.2020", "gamma": "bt.1886"}))
         self.assertFalse(is_hdr_content({"primaries": "bt.2020", "gamma": "srgb", "sig-peak": 1.0}))
         self.assertFalse(is_hdr_content({"primaries": "bt.709", "gamma": "srgb"}))
         self.assertFalse(is_hdr_content(None))
+
+    def test_wayland_update_cache_calls_invalidate_support_decision(self):
+        """wayland_output_hdr._update_cache must invalidate support cache via invalidate_support_decision()."""
+        from src import wayland_output_hdr
+
+        with patch("src.hdr_detection.invalidate_support_decision") as mock_invalidate:
+            wayland_output_hdr._update_cache({})
+        mock_invalidate.assert_called_once_with()
 
 
 class TestGLFramebufferResource(unittest.TestCase):

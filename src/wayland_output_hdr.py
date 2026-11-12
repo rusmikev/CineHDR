@@ -1279,10 +1279,11 @@ def _update_cache(results: Optional[Dict[str, OutputHdrInfo]], cm_caps: Optional
     _cache_time = time.monotonic()
     _cache_valid = True
     try:
-        from . import hdr_detection
-        hdr_detection._cached_support = None
-    except Exception:
-        pass
+        from .hdr_detection import invalidate_support_decision
+
+        invalidate_support_decision()
+    except ImportError as exc:
+        logging.debug("hdr_detection unavailable when invalidating support cache: %s", exc)
 
 
 def invalidate(invalidate_caps: bool = True):

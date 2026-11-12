@@ -273,37 +273,25 @@ def hdr_output_allowed(
     return True, "allowed"
 
 
+HDR_TRANSFERS = frozenset({"pq", "hlg"})
+
+
 def is_hdr_content(params: dict) -> bool:
+    """Determine whether the video stream currently playing in libmpv is HDR.
+
+    Strictly follows AGENTS.md §5.4: only transfer functions in
+    ``HDR_TRANSFERS`` (``pq`` or ``hlg``) in ``video-params["gamma"]`` signify
+    HDR content. ``sig-peak`` and primaries (e.g. ``bt.2020`` with
+    ``bt.1886`` / ``srgb``) alone do NOT trigger HDR (prevents false positive on
+    WCG-SDR content).
     """
-    Determine whether the video stream currently playing in libmpv is HDR.
-
-    Criteria evaluated from mpv 'video-params' / 'video-out-params':
-    - Transfer function (gamma / trc): PQ (st2084), HLG, or S-Log curves.
-    - Signal peak luminance (sig-peak): Greater than 1.0 (relative to SDR reference 100 nits).
-
-    Note: Primaries being BT.2020 alone without HDR gamma or peak > 1.0 is NOT considered
-    HDR (prevents false triggering on WCG SDR content).
-
-    Args:
-        params (dict): Dictionary of video parameters from mpv property observer.
-
-    Returns:
-        bool: True if stream requires HDR tone mapping / color state, False otherwise.
-    """
-    if not params or not isinstance(params, dict):
+    if not isinstance(params, dict) or not params:
         return False
 
-    gamma = params.get("gamma", "")
-    sig_peak = params.get("sig-peak", 1.0)
-    try:
-        sig_peak = float(sig_peak) if sig_peak is not None else 1.0
-    except (ValueError, TypeError):
-        sig_peak = 1.0
-
-    hdr_gammas = ("pq", "hlg", "st2084", "slog", "slog2", "slog3")
-    if gamma in hdr_gammas or sig_peak > 1.0:
-        return True
-    return False
+    gamma = params.get("gamma")
+    if not isinstance(gamma, str):
+        return False
+    return gamma.strip().lower() in HDR_TRANSFERS
 
 
 
