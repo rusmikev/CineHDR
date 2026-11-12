@@ -19,12 +19,10 @@
 
 import bisect
 import logging
-import os
 import re
 import shlex
 from gettext import gettext as _
 from typing import Any, cast
-from urllib.parse import urlparse
 
 import gi
 import mpv
@@ -38,34 +36,32 @@ gi.require_version("GObject", "2.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from .hdr_menu import HdrMenuButton
-from .history import HistoryDialog
 from .mpris import MPRIS
 from .mpv_gl_area import ThumbPreviewGLArea
 from .options import OptionsMenuButton
-from .playlist import Playlist, PlaylistItemObj
+from .playlist import PlaylistItemObj
 from .preferences import settings, sync_mpv_with_settings
 from .save_session import (
     is_same_playlist,
     restore_last_playlist,
-    save_last_playlist_file,
+    save_last_playlist_file as save_last_playlist_file,
 )
-from .shortcuts import INTERNAL_BINDINGS, populate_shortcuts_dialog_mpv
+from .shortcuts import INTERNAL_BINDINGS
 from .utils import (
     CONFIG_DIR,
     INPUT_CONF,
     KEY_REMAP,
     MBTN_MAP,
     SCREENSHOT_DIR,
-    SUB_EXTS,
     WATCH_HISTORY_JSONL,
     PrimaryClick,
     SecondaryClick,
     append_modifiers,
     format_time,
     get_mouse_bindings,
-    has_host_permission,
+    has_host_permission as has_host_permission,
     idle_add_once,
-    is_local_path,
+    is_local_path as is_local_path,
     load_optional_validation,
     parse_bindings,
     timeout_add_once,
@@ -77,6 +73,22 @@ from .window_diagnostics import (
     handle_first_video_frame,
     init_diagnostics_exporter,
     notify_diagnostics_shutdown,
+)
+from .window_media import (
+    handle_drop,
+    navigate_playlist,
+    on_shuffle_toggled as media_on_shuffle_toggled,
+    open_add_dialog,
+    open_folder_dialog,
+    open_playlist_dialog,
+    open_url_dialog,
+    present_history,
+    present_shortcuts,
+    save_session,
+    splice_playlist as media_splice_playlist,
+    sync_can_prev_next,
+    update_chapter_marks_and_menu,
+    update_track_menus,
 )
 from .window_observers import setup_window_observers
 
@@ -390,19 +402,10 @@ class CineWindow(Adw.ApplicationWindow):
         self._create_action("next", self.on_next_clicked)
 
     def _present_shortcuts(self, *args):
-        builder = Gtk.Builder.new_from_resource(
-            "/io/github/rusmikev/CineHDR/shortcuts-dialog.ui"
-        )
-        self.shortcuts_dialog = cast(
-            Adw.ShortcutsDialog,
-            builder.get_object("shortcuts_dialog"),
-        )
-        populate_shortcuts_dialog_mpv(self.shortcuts_dialog, self._input_bindings)
-        self.shortcuts_dialog.present(self)
+        present_shortcuts(self)
 
     def _present_history(self, *args):
-        history_dialog = HistoryDialog(self)
-        history_dialog.present(self)
+        present_history(self)
 
     def _setup_widgets(self):
         for widget in [
@@ -696,72 +699,7 @@ class CineWindow(Adw.ApplicationWindow):
                     self.mpv.command_async("mouse", mpv_x, mpv_y)
 
     def _update_track_menus(self, track_list):
-        self.subtitles_menu.remove_all()
-        self.subtitles_menu.append(_("Add Subtitle Track"), "win.add-sub-tracks")
-
-        item_none_sub = Gio.MenuItem.new(_("None"), None)
-        item_none_sub.set_action_and_target_value(
-            "win.select-subtitle", GLib.Variant("i", 0)
-        )
-        self.subtitles_menu.append_item(item_none_sub)
-
-        self.audio_tracks_menu.remove_all()
-        self.audio_tracks_menu.append(_("Add Audio Track"), "win.add-audio-tracks")
-
-        item_none_audio = Gio.MenuItem.new(_("None"), None)
-        item_none_audio.set_action_and_target_value(
-            "win.select-audio", GLib.Variant("i", 0)
-        )
-        self.audio_tracks_menu.append_item(item_none_audio)
-
-        self.video_tracks_menu.remove_all()
-
-        video_count = 0
-        for track in track_list:
-            self._add_track_to_menu(track)
-            track_type = track.get("type")
-            if track_type == "video" and not track.get("albumart"):
-                video_count += 1
-
-        self._is_audio = video_count == 0
-        self.video_tracks_menu_btn.set_visible(video_count > 1)
-
-        def hide_box_first_model_btn(menu_btn):
-            """Hide the space before add track label"""
-            target = menu_btn.get_popover()
-            for _i in range(8):
-                if target:
-                    target = target.get_first_child()
-            if target:
-                target.set_visible(False)
-
-        hide_box_first_model_btn(self.subtitles_menu_btn)
-        hide_box_first_model_btn(self.audio_tracks_menu_btn)
-
-    def _add_track_to_menu(self, track):
-        track_id = int(track.get("id", 0))
-        track_type = track.get("type")
-        lang = track.get("lang")
-        title = track.get("title")
-
-        label_parts = [p for p in (title, lang) if p]
-        label = (
-            " – ".join(label_parts) if label_parts else (_("Track") + f" {track_id}")
-        )
-
-        if track_type == "sub":
-            menu = self.subtitles_menu
-            action = "win.select-subtitle"
-        elif track_type == "audio":
-            menu = self.audio_tracks_menu
-            action = "win.select-audio"
-        else:
-            menu = self.video_tracks_menu
-            action = "win.select-video"
-
-        item = Gio.MenuItem.new(label, None)
-        item.set_action_and_target_value(action, GLib.Variant("i", track_id))
-        menu.append_item(item)
+        update_track_menus(self, track_list)
 
     def _create_action(self, name, callback):
         action = Gio.SimpleAction.new(name, None)
@@ -782,115 +720,23 @@ class CineWindow(Adw.ApplicationWindow):
         self._actions[name] = action
 
     def _on_open_playlist(self, *args):
-        if self.mpv.idle_active:
-            return
-        playlist = Playlist(self)
-        playlist.present(self)
+        open_playlist_dialog(self)
 
     def on_open_folder_dialog(self, action, *args):
-        add_mode = action.props.name != "open-folder"
-        title = _("Add Folder") if add_mode else _("Open Folder")
-        dialog = Gtk.FileDialog(title=title)
-        curr_path = self.mpv.path
-
-        if isinstance(curr_path, str) and os.path.exists(curr_path):
-            folder_path = os.path.dirname(curr_path)
-            dialog.set_initial_folder(Gio.File.new_for_path(folder_path))
-
-        def on_open_response(dialog, result):
-            try:
-                folder = dialog.select_folder_finish(result)
-
-                if not add_mode:
-                    self.mpv.stop()
-                    self.mpv.pause = False
-                    self.shuffle_toggle_btn.set_active(False)
-
-                path = folder.get_path()
-                self.mpv.loadfile(path, "append-play")
-
-            except GLib.Error as e:
-                logger.warning(f"Dialog error: {e}")
-
-        dialog.select_folder(self, None, on_open_response)
-        return Gdk.EVENT_STOP  # so "<shift><primary>i" doesn't trigger inspector
+        return open_folder_dialog(self, action)
 
     def _on_clear_and_add(self, _action, _param):
-        self._open_add_dialog(_("Open Files"), "clear-and-add")
+        open_add_dialog(self, _("Open Files"), "clear-and-add")
 
     def on_add_playlist_dialog(self, _action, _param):
-        self._open_add_dialog(_("Add Files"), "playlist-add")
+        open_add_dialog(self, _("Add Files"), "playlist-add")
         return Gdk.EVENT_STOP
 
     def _on_add_sub_dialog(self, _action, _param):
-        self._open_add_dialog(_("Add Subtitle"), "sub-add")
+        open_add_dialog(self, _("Add Subtitle"), "sub-add")
 
     def _on_add_audio_dialog(self, _action, _param):
-        self._open_add_dialog(_("Add Audio"), "audio-add")
-
-    def _open_add_dialog(self, title, mode):
-        filter = Gtk.FileFilter()
-        dialog = Gtk.FileDialog(title=title)
-        filters_list = Gio.ListStore.new(Gtk.FileFilter)
-        filters_list.append(filter)
-        dialog.set_filters(filters_list)
-        dialog.set_default_filter(filter)
-
-        curr_path = self.mpv.path
-        if isinstance(curr_path, str) and os.path.exists(curr_path):
-            folder_path = os.path.dirname(curr_path)
-            dialog.set_initial_folder(Gio.File.new_for_path(folder_path))
-
-        if mode == "sub-add":
-            filter.set_name(_("Subtitles"))
-            for sub in SUB_EXTS:
-                s = sub.lstrip(".")
-                filter.add_suffix(s)
-        elif mode == "audio-add":
-            filter.set_name(_("Audio"))
-            for m in ["video/*", "audio/*"]:
-                filter.add_mime_type(m)
-        else:
-            filter.set_name(_("Media"))
-            for m in ["video/*", "audio/*", "image/*"]:
-                filter.add_mime_type(m)
-
-        dialog.open_multiple(
-            self,
-            None,
-            lambda d, res: self._on_open_response(d, res, mode),
-        )
-
-        if isinstance(self._visible_dialog, Playlist):
-            self._visible_dialog.spinner.set_visible(True)
-
-    def _on_open_response(self, dialog, result, mode):
-        try:
-            files = dialog.open_multiple_finish(result)
-
-            if mode == "clear-and-add":
-                self.mpv.stop()
-                self.shuffle_toggle_btn.set_active(False)
-
-            for file in files:
-                path = file.get_path() or file.get_uri()
-
-                if mode == "sub-add":
-                    self.mpv.sub_add(path)
-                elif mode == "audio-add":
-                    self.mpv.audio_add(path)
-                else:
-                    self.mpv.loadfile(path, "append-play")
-
-            if mode == "clear-and-add":
-                self.mpv.pause = False
-        except GLib.Error as e:
-            logger.warning(f"Dialog error: {e}")
-        except Exception:
-            logger.exception("Failed to add files")
-        finally:
-            if isinstance(self._visible_dialog, Playlist):
-                self._visible_dialog.spinner.set_visible(False)
+        open_add_dialog(self, _("Add Audio"), "audio-add")
 
     def _on_open_sub_menu(self, *args):
         self._show_ui()
@@ -910,97 +756,13 @@ class CineWindow(Adw.ApplicationWindow):
         if self._is_gpu_validation:
             logger.info("Ignoring session save during GPU validation")
             return
-        try:
-            settings.set_boolean("save-session", True)
-            save_last_playlist_file(self.mpv)
-            if close:
-                self.close()
-                return
-            self.mpv.write_watch_later_config()
-            idle_add_once(self.show_toast, _("Session Saved"))
-        except Exception:
-            logger.exception("_on_save_session failed")
+        save_session(self, close=close)
 
     def _on_open_url(self, *args, add=False):
-        mode = "append-play" if add else "replace"
-        view = Adw.ToolbarView()
-        header_bar = Adw.HeaderBar()
-        h_title = _("Add URL") if add else _("Open URL")
-        header_bar.set_title_widget(Adw.WindowTitle(title=h_title))
-        view.add_top_bar(header_bar)
-
-        content_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=18,
-            margin_bottom=18,
-            margin_start=18,
-            margin_end=18,
-        )
-
-        view.set_content(content_box)
-        entry_row = Adw.EntryRow(title=_("URL"), activates_default=True)
-        list_box = Gtk.ListBox(
-            selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"]
-        )
-        list_box.append(entry_row)
-        content_box.append(list_box)
-
-        btn_open = Gtk.Button(
-            label=_("Add") if add else _("Open"),
-            css_classes=["pill", "suggested-action"],
-            halign=Gtk.Align.CENTER,
-            sensitive=False,
-        )
-
-        content_box.append(btn_open)
-        dialog = Adw.Dialog(content_width=450, child=view, default_widget=btn_open)
-        self.url = ""
-
-        def is_valid_input(text):
-            url = text.strip()
-            parsed = urlparse(url)
-            protocol_list = cast(list, self.mpv.protocol_list)
-            path_exists = os.path.exists(url)
-            if parsed.scheme in protocol_list or path_exists:
-                self.url = url
-                return True
-            elif url:
-                self.url = f"https://{url}"
-                return True
-            return False
-
-        def on_text_changed(*args):
-            is_valid = is_valid_input(entry_row.get_text())
-            btn_open.set_sensitive(is_valid)
-
-        entry_row.connect("notify::text", on_text_changed)
-
-        def open_url(*args):
-            dialog.close()
-            try:
-                self.mpv.loadfile(self.url, mode)
-                if mode == "replace":
-                    self.mpv.pause = False
-                    self.shuffle_toggle_btn.set_active(False)
-            except mpv.ShutdownError:
-                pass
-
-        def on_clipboard_read(clipboard: Gdk.Clipboard, result):
-            if not (text := clipboard.read_text_finish(result)):
-                return
-
-            if urlparse(text).scheme in cast(list, self.mpv.protocol_list):
-                entry_row.insert_text(text, 0)
-
-        display_obj = Gdk.Display.get_default()
-        if display_obj and (clipboard := display_obj.get_clipboard()):
-            clipboard.read_text_async(None, on_clipboard_read)
-
-        btn_open.connect("clicked", open_url)
-        dialog.present(self)
+        open_url_dialog(self, add=add)
 
     def on_add_url(self, *args):
-        self._on_open_url(add=True)
+        open_url_dialog(self, add=True)
         return Gdk.EVENT_STOP
 
     def setup_thumb_preview(self):
@@ -1176,42 +938,15 @@ class CineWindow(Adw.ApplicationWindow):
         self._prev_prog_time = curr_time
 
     def _update_chapter_marks_and_menu(self, chapters):
-        if not chapters:
-            self.video_progress_scale.clear_marks()
-            self.chapters_menu_btn.set_visible(False)
-            return
-
-        self._chapters = sorted(chapters, key=lambda c: c.get("time", 0))
-        self.chapter_times, self.chapter_titles = [], []
-        self.chapters_menu_btn.set_visible(True)
-        self.chapters_menu.remove_all()
-
-        for i, chapter in enumerate(self._chapters):
-            title = chapter.get("title") or _("Chapter") + f" {i + 1}"
-            item = Gio.MenuItem.new(title, None)
-            item.set_action_and_target_value("win.select-chapter", GLib.Variant("i", i))
-            self.chapters_menu.append_item(item)
-
-            time_pos = chapter.get("time")
-            if time_pos is not None:
-                self.video_progress_scale.add_mark(time_pos, Gtk.PositionType.TOP, None)
-
-            self.chapter_times.append(chapter.get("time"))
-            self.chapter_titles.append(GLib.markup_escape_text(title))
-    def _navigate_playlist(self, direction: int):
-        pos = int(self.mpv.playlist_pos or 0)
-        count = int(self.mpv.playlist_count or 0)
-
-        if count > 0:
-            self.mpv.playlist_pos = (pos + direction) % count
+        update_chapter_marks_and_menu(self, chapters)
 
     @Gtk.Template.Callback()
     def on_previous_clicked(self, *args):
-        self._navigate_playlist(-1)
+        navigate_playlist(self, -1)
 
     @Gtk.Template.Callback()
     def on_next_clicked(self, *args):
-        self._navigate_playlist(+1)
+        navigate_playlist(self, +1)
 
     def _on_subtitle_selected(self, action, parameter):
         self.mpv.command_async("set", "sub-visibility", "yes")
@@ -1311,16 +1046,7 @@ class CineWindow(Adw.ApplicationWindow):
 
     @Gtk.Template.Callback()
     def _on_shuffle_toggled(self, button):
-        active = button.props.active
-
-        cmd = "playlist-shuffle" if active else "playlist-unshuffle"
-        self.mpv.command(cmd)
-
-        self._mpris.update_shuffle(active)
-        self.prev_shuffle = not active
-
-        if isinstance(self._visible_dialog, Playlist):
-            idle_add_once(self.splice_playlist)
+        media_on_shuffle_toggled(self, button)
 
     def _on_ab_loop_btn_toggled(self, button):
         if not button or not button.get_active():
@@ -1369,26 +1095,7 @@ class CineWindow(Adw.ApplicationWindow):
             self.mpv.loop_playlist = "no"
 
     def _sync_can_prev_next(self):
-        try:
-            count: int = cast(int, self.mpv.playlist_count) or 0
-            pos: int = cast(int, self.mpv.playlist_pos) or 0
-            has_multiple: bool = count > 1
-            loop_list_on: bool = self.mpv.loop_playlist is not False and has_multiple
-
-            self.can_go_prev = loop_list_on or (has_multiple and pos > 0)
-            self.can_go_next = loop_list_on or (has_multiple and pos < count - 1)
-
-            self._mpris.update_can_prev_next(self.can_go_prev, self.can_go_next)
-
-            self.previous_btn.props.sensitive = self.can_go_prev
-            self.next_btn.props.sensitive = self.can_go_next
-
-            self._actions["previous"].props.enabled = self.can_go_prev
-            self._actions["next"].props.enabled = self.can_go_next
-
-            self.shuffle_toggle_btn.props.visible = has_multiple
-        except mpv.ShutdownError:
-            pass
+        sync_can_prev_next(self)
 
     def _on_drop_enter(self, _target, _x, _y):
         self.revealer_drop_indicator.set_reveal_child(True)
@@ -1398,57 +1105,7 @@ class CineWindow(Adw.ApplicationWindow):
         self.revealer_drop_indicator.set_reveal_child(False)
 
     def _on_drop(self, _target, value, _x, _y):
-        self.revealer_drop_indicator.set_reveal_child(False)
-        items: list[Gio.File] | list[str] = []
-        playable_items: list[str] = []
-
-        if is_same_playlist(self.mpv.playlist):
-            self.mpv.write_watch_later_config()
-
-        if isinstance(value, Gdk.FileList):
-            items = value.get_files()
-        elif isinstance(value, str):
-            items = [value]
-
-        for item in items:
-            if isinstance(item, str):
-                playable_items.append(item)
-                continue
-
-            path = item.get_path() or item.get_uri()
-            if not is_local_path(path):
-                playable_items.append(path)
-                continue
-
-            try:
-                info = item.query_info(
-                    "standard::content-type,standard::type",
-                    Gio.FileQueryInfoFlags.NONE,
-                    None,
-                )
-            except Exception as e:
-                logger.exception("Drop failed")
-                idle_add_once(self.show_toast, str(e))
-                return
-
-            name = (item.get_basename() or "").lower()
-            if name.endswith(SUB_EXTS):
-                if not self.mpv.idle_active:
-                    self.mpv.command_async("sub-add", path, "select")
-                continue
-
-            mime = info.get_content_type() or ""
-            if info.get_file_type() == Gio.FileType.DIRECTORY or mime.startswith(
-                ("video/", "audio/", "image/")
-            ):
-                playable_items.append(path)
-
-        for idx, source in enumerate(playable_items):
-            mode = "replace" if idx == 0 else "append-play"
-            self.mpv.loadfile(source, mode)
-
-        if playable_items:
-            self.mpv.command_async("set", "pause", "no")
+        handle_drop(self, value)
 
     def _sync_fullscreen(self, mpv_is_fs: bool):
         self._is_fullscreen = mpv_is_fs
@@ -1819,27 +1476,7 @@ class CineWindow(Adw.ApplicationWindow):
         return False
 
     def splice_playlist(self):
-        self._playlist_debounce_id = 0
-        self.has_some_doc_path = False
-        new_items = []
-        for idx, item in enumerate(cast(list, self.mpv.playlist)):
-            new_items.append(PlaylistItemObj(item, idx))
-
-            if (
-                self.has_some_doc_path
-                or f"/run/user/{os.getuid()}/doc/" not in item.get("filename")
-                or has_host_permission
-            ):
-                continue
-            self.has_some_doc_path = True
-
-        if isinstance(self._visible_dialog, Playlist):
-            self._visible_dialog.set_save_btn_playlist()
-            self._visible_dialog.set_item_count()
-
-        self.playlist_ls.splice(0, self.playlist_ls.get_n_items(), new_items)
-        self.prev_shuffle = self.shuffle_toggle_btn.props.active
-        self.playlist_changed = False
+        media_splice_playlist(self)
 
     def show_toast(self, label, force_dismiss=False):
         toast = Adw.Toast(title=label, timeout=2)
