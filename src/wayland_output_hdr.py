@@ -31,8 +31,8 @@ really is HDR.
 Mechanism (all on GTK's existing ``wl_display``, private event queue, same
 connection-sharing pattern as wayland_cm_probe):
 
-  1. enumerate the registry, bind ``wp_color_manager_v1`` (a no-op listener
-     swallows its ``supported_*``/``done`` capability burst);
+  1. enumerate the registry, bind ``wp_color_manager_v1`` (collecting its
+     ``supported_*``/``done`` capability burst into ``CmCaps``);
   2. for every ``GdkMonitor``, obtain GTK's own ``wl_output`` proxy via
      ``gdk_wayland_monitor_get_wl_output()`` and request
      ``get_output`` -> ``wp_color_management_output_v1``;
@@ -41,11 +41,12 @@ connection-sharing pattern as wayland_cm_probe):
      ``luminances`` until ``done``.
 
 Because libwayland-client dispatches events for foreign interfaces through
-libffi using the ``wl_interface``/``wl_message`` tables, those tables for the
-four ``wp_*`` interfaces are constructed here in ctypes. Only the request
-opcodes this module actually marshals are declared (libwayland validates
-``opcode < method_count`` and nothing else on the client side); event tables
-are complete and exact — a wrong event signature would corrupt the dispatch.
+libffi using the ``wl_interface``/``wl_message`` tables, those ctypes tables
+for the four ``wp_*`` interfaces live in :mod:`wayland_cm_protocol`. Only the
+request opcodes this module actually marshals are declared (libwayland
+validates ``opcode < method_count`` and nothing else on the client side);
+event tables are complete and exact — a wrong event signature would corrupt
+the dispatch.
 
 Classification of one output (:func:`classify_hdr`):
 
@@ -64,8 +65,8 @@ The result is cached for a short TTL (:data:`CACHE_TTL_SECONDS`): the state
 *does* change at runtime when the user toggles monitor HDR in system
 settings, ``HdrController.is_hdr_active`` is evaluated per rendered frame,
 and one probe costs three compositor round-trips per output. A persistent
-``image_description_changed`` listener integrated into the GLib main loop is
-the follow-up planned in docs/ROADMAP.md.
+``image_description_changed`` listener integrated into the GLib main loop
+(task C5) is the follow-up planned in ``docs/PLAN.md``.
 """
 
 import logging
