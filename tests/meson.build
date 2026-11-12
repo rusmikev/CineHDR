@@ -156,3 +156,16 @@ test('wayland_output_hdr_tests', python3,
   ],
   depends: [cinehdr_resources]
 )
+
+test('video_widget_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_video_widget.py'
+  ],
+  env: [
+    'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'GSETTINGS_BACKEND=memory',
+    'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
+    'PYTHONPATH=' + meson.project_source_root()
+  ],
+  depends: [cinehdr_resources]
+)
