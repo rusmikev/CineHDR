@@ -264,10 +264,11 @@ explicit live capture remains available through the shell command above.
 - `tools/validation/parse_wayland_color_trace.py` *(до `C2a`: `tests/parse_wayland_color_trace.py`)*:
   - `validate_trace(trace: str)`
   - `validate_composite_window_trace(trace: str, expected_app_id="io.github.rusmikev.CineHDR")`
+  - `validate_sdr_fallback_trace(trace: str, expected_app_id="io.github.rusmikev.CineHDR", trace_only=True)` — in tagged L3p traces, requires a manager capability burst without `TF_SRGB`, manager teardown without color-managed surface calls, and a non-null target-window buffer commit after teardown. It does not prove physical output or tone-mapping quality.
   - `validate_multiphase_trace(trace: str, expected_app_id="io.github.rusmikev.CineHDR")`
   - `create_evidence_report(trace_path, publication_report_path, backend, *, oracle=None, multiphase=False, expected_app_id=None)`
   - `create_failure_evidence(trace_path, publication_report_path, backend, error, *, oracle=None, multiphase=False)`
-  - `main(argv)` — CLI с обязательными аргументами `--trace`, `--publication-report`, `--backend {legacy,gpu-next}`, `--output`, опциональным выбором ожидаемого приложения `--app-id` (по умолчанию `io.github.rusmikev.CineHDR`) и опциональным выбором оракула `--oracle {composite_window,primary_composite,strict_multiphase,legacy}` (или `--multiphase` как синонимом `--oracle strict_multiphase`).
+  - `main(argv)` — CLI с обязательными аргументами `--trace` и `--output`; для обычного режима также нужны `--publication-report` и `--backend {legacy,gpu-next}`. В `--trace-only` нужен `--app-id`; оракул задаётся как `--oracle {composite_window,primary_composite,sdr_fallback,strict_multiphase,legacy}` (в `--trace-only` доступны `composite_window`, `primary_composite`, `sdr_fallback`). `--multiphase` — синоним `--oracle strict_multiphase`.
 - `src/gtk_cm_policy.py`: `COLOR_MGMT_OPT_IN_ENV = "CINEHDR_EXPERIMENTAL_COLOR_MGMT"`, `COLOR_MGMT_OPT_IN_FLAG = "--experimental-color-mgmt"`, `CmCaps`, `gtk_cm_opted_in`, `apply_color_mgmt_opt_in`, `apply_gsk_renderer_policy`, `gtk_color_managed`, `gtk_can_tag_hdr`, `preferred_gsk_renderer`.
 - `tools/validation/test_wayland_color_trace.py` *(до `C2a`: `tests/test_wayland_color_trace.py`)*: классы `TestGtkCmPolicy`, `WaylandColorTraceTests`.
 
