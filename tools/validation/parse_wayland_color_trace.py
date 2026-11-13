@@ -3565,6 +3565,7 @@ def _collect_sdr_fallback_bursts(
 
         bursts.append({
             "global_id": global_id,
+            "registry_id": bind.object_id,
             "manager_id": manager_id,
             "advertised_version": advertised_version,
             "bound_version": bound_version,
@@ -3657,6 +3658,15 @@ def validate_sdr_fallback_trace(
         )
 
     chosen = destroyed_bursts[0]
+    registry_ok, registry_reason, registry_unproven, _ = _check_single_registry_origin(
+        calls, chosen["registry_id"], is_cross=False
+    )
+    if not registry_ok:
+        if registry_unproven:
+            unknown = _unknown_composite_evidence(registry_reason or "registry origin cannot be proven")
+            unknown.update({"oracle": "sdr_fallback", "revision": SDR_FALLBACK_REVISION})
+            return unknown
+        raise TraceValidationError(registry_reason or "invalid registry origin")
     if TF_NAMED_SRGB in chosen["supported_tfs"]:
         raise TraceValidationError(
             "wp_color_manager_v1 advertised TF srgb (9); missing TF_SRGB fallback precondition does not hold"

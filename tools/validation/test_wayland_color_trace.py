@@ -5343,6 +5343,7 @@ class TestTaggedConnectionTraceValidation(unittest.TestCase):
 
 
 SYNTHETIC_KDE_SDR_FALLBACK_TRACE = """
+[conn#1 fd#9] [ 1042.000]  -> wl_display#1.get_registry(new id wl_registry#2)
 [conn#1 fd#9] [ 1042.001]  wl_registry#2.global(14, "wp_color_manager_v1", 2)
 [conn#1 fd#9] [ 1042.002]  -> wl_registry#2.bind(14, "wp_color_manager_v1", 2, new id [unknown]#3)
 [conn#1 fd#9] [ 1042.003]  wp_color_manager_v1#3.supported_intent(0)
@@ -5408,6 +5409,16 @@ class SdrFallbackOracleTests(unittest.TestCase):
         rep = validate_sdr_fallback_trace(named, trace_only=True)
         self.assertEqual(rep["status"], "PASS")
         self.assertIn(2, rep["matched"]["manager"]["supported_tfs"])
+
+    def test_kde_sdr_fallback_without_registry_origin_is_unknown(self):
+        bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE.replace(
+            "[conn#1 fd#9] [ 1042.000]  -> wl_display#1.get_registry(new id wl_registry#2)\n",
+            "",
+        )
+        rc, data = self._run_cli(bad)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "UNKNOWN")
+        self.assertIn("registry origin cannot be proven", data["reason"])
 
     def test_kde_sdr_fallback_rejects_advertised_tf_srgb(self):
         bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE.replace(
