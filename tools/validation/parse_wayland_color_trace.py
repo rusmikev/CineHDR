@@ -3673,6 +3673,10 @@ def validate_sdr_fallback_trace(
     surf_id, commit_idx, buf_id = _select_sdr_fallback_window_commit(
         calls, target_window_surfaces, expected_app_id
     )
+    if commit_idx <= chosen["destroy_index"]:
+        raise TraceValidationError(
+            "target window has no non-null buffer commit after color manager teardown"
+        )
 
     evidence: dict[str, Any] = {
         "schema": TRACE_SCHEMA,

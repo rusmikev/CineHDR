@@ -5450,6 +5450,17 @@ class SdrFallbackOracleTests(unittest.TestCase):
         self.assertEqual(data["status"], "FAIL")
         self.assertIn("not cleanly destroyed", data["error"])
 
+    def test_kde_sdr_fallback_requires_commit_after_manager_teardown(self):
+        teardown = (
+            "[conn#1 fd#9] [ 1042.011]  -> wp_color_manager_v1#3.destroy()\n"
+            "[conn#1 fd#9] [ 1042.012]  wl_display#1.delete_id(3)\n"
+        )
+        bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE.replace(teardown, "") + "\n" + teardown.strip()
+        rc, data = self._run_cli(bad)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["status"], "FAIL")
+        self.assertIn("after color manager teardown", data["error"])
+
     def test_kde_sdr_fallback_rejects_fatal_display_error(self):
         bad = SYNTHETIC_KDE_SDR_FALLBACK_TRACE + (
             "\n[conn#1 fd#9] [ 1042.026]  wl_display#1.error(wl_surface#20, 0, \"bad\")"
