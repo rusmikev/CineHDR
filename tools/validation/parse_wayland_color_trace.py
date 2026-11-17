@@ -3738,7 +3738,7 @@ def create_trace_only_report(
     effective_oracle = "composite_window" if oracle is None else oracle
     if effective_oracle not in ("composite_window", "primary_composite", "sdr_fallback"):
         raise TraceValidationError(
-            f"trace-only mode requires oracle composite_window or sdr_fallback ({effective_oracle!r} specified)"
+            f"trace-only mode requires oracle composite_window, primary_composite, or sdr_fallback ({effective_oracle!r} specified)"
         )
     if expected_app_id is None or not isinstance(expected_app_id, str) or not expected_app_id.strip():
         raise TraceValidationError("trace-only mode requires a non-empty app_id")
@@ -3936,7 +3936,7 @@ def main(argv: list[str] | None = None) -> int:
         effective_oracle = "composite_window" if args.oracle is None else args.oracle
         if effective_oracle not in ("composite_window", "primary_composite", "sdr_fallback"):
             parser.error(
-                f"--trace-only mode requires oracle composite_window or sdr_fallback (got {args.oracle!r})"
+                f"--trace-only mode requires oracle composite_window, primary_composite, or sdr_fallback (got {args.oracle!r})"
             )
 
         try:
