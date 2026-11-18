@@ -54,7 +54,7 @@ Wayland protocol trace, **L4** visual comparison against mpv on a test pattern.
 
 | Environment | Stack | SDR playback (L2) | mpv reference (L3p) | HDR10 protocol (L3p) | HDR10 visual (L4) |
 |---|---|---|---|---|---|
-| **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** | **PASS** | **PASS** | **PASS** |
+| **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** (includes a 4K60 smoke check on Flatpak runtime 51) | **PASS** | **PASS** (also rechecked on Flatpak runtime 51) | **PASS** |
 | GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
 | GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
 | KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (three L2 runs; file open, playback, pause, seek, resize/fullscreen, and exit checked; logs reviewed; HDR/L3p not tested) | N/A | N/A | N/A |
