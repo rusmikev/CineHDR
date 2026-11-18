@@ -32,6 +32,9 @@ class FlatpakManifestTests(unittest.TestCase):
 
     def test_manifest_is_json_and_uses_rust_sdk_extension(self):
         self.assertEqual(self.manifest["id"], "io.github.rusmikev.CineHDR")
+        self.assertEqual(self.manifest["runtime"], "org.gnome.Platform")
+        self.assertEqual(self.manifest["runtime-version"], "51")
+        self.assertEqual(self.manifest["sdk"], "org.gnome.Sdk")
         self.assertIn("org.freedesktop.Sdk.Extension.rust-stable", self.manifest["sdk-extensions"])
 
     def test_product_manifest_pins_upstream_mpv_v0_41_0_with_screenshot_patch(self):
