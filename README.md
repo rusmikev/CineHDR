@@ -56,7 +56,7 @@ against mpv on a test pattern.
 | Environment | Stack | SDR playback (L2) | HDR-to-SDR fallback (L3/L3p) | mpv reference (L3p) | HDR10 protocol (L3p) | HDR10 visual (L4) |
 |---|---|---|---|---|---|---|
 | **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** (includes a 4K60 smoke check on Flatpak runtime 51) | N/A | **PASS** | **PASS** (also rechecked on Flatpak runtime 51) | **PASS** |
-| GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | **PASS** (1080p SDR playback and clean exit) | N/A | `NOT_RUN` | `UNCLEAR` | `NOT_RUN` |
+| GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | **PASS** (1080p SDR playback and clean exit) | N/A | **PASS** | **PASS** | `UNCLEAR` |
 | GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | `UNCLEAR` (playback and exit observed, startup GL error) | N/A | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
 | KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (playback, pause, seek, resize/fullscreen, exit during playback) | **PASS** (GTK lacks TF sRGB → SDR tone mapping, no HDR description) | N/A | N/A | N/A |
 | KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | N/A | N/A | N/A |
