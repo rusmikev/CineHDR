@@ -1,0 +1,346 @@
+{
+    "id": "io.github.rusmikev.CineHDR",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "50",
+    "sdk": "org.gnome.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable"
+    ],
+    "command": "cinehdr",
+    "finish-args": [
+        "--share=ipc",
+        "--share=network",
+        "--socket=fallback-x11",
+        "--device=dri",
+        "--socket=wayland",
+        "--socket=pulseaudio",
+        "--filesystem=xdg-pictures/CineHDR Screenshots:create",
+        "--filesystem=xdg-run/pipewire-0:ro",
+        "--filesystem=xdg-run/gvfs",
+        "--filesystem=xdg-run/gvfsd",
+        "--talk-name=org.gtk.vfs.*",
+        "--env=LC_NUMERIC=C"
+    ],
+    "cleanup": [
+        "/include",
+        "/lib/pkgconfig",
+        "/man",
+        "/share/doc",
+        "/share/gtk-doc",
+        "/share/hwdata",
+        "/share/man",
+        "/share/pkgconfig",
+        "*.la",
+        "*.a",
+        "/lib/cmake"
+    ],
+    "cleanup-commands": [
+        "python3 -m compileall --invalidation-mode=unchecked-hash /app"
+    ],
+    "modules": [
+        {
+            "name": "libmpv",
+            "cleanup": [
+                "/share/applications",
+                "/share/bash-completion",
+                "/share/doc",
+                "/share/icons",
+                "/share/zsh"
+            ],
+            "buildsystem": "meson",
+            "config-opts": [
+                "-Dlibmpv=true",
+                "-Dcplayer=false",
+                "-Dbuild-date=false",
+                "-Dtests=false",
+                "-Dalsa=disabled",
+                "-Dlua=enabled",
+                "-Ddrm=enabled",
+                "-Dvaapi=enabled",
+                "-Dvaapi-drm=enabled"
+            ],
+            "post-install": [
+                "test -e /app/lib/libmpv.so.2",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libavcodec.so.62]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libavutil.so.60]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libplacebo.so.387]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libdrm.so.2]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libdisplay-info.so.3]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libva-drm.so.2]'",
+                "readelf -d /app/lib/libplacebo.so.387 | grep -F 'Shared library: [libdovi.so.3]'"
+            ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://github.com/lhc70000/mpv.git",
+                    "branch": "libmpv-gpu-next",
+                    "commit": "97179bce7ed980c53647d6344916f632fe689e9e"
+                }
+            ],
+            "modules": [
+                "shared-modules/lua5.1/lua-5.1.5.json",
+                {
+                    "name": "libass",
+                    "config-opts": [
+                        "--disable-static"
+                    ],
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "url": "https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz",
+                            "sha256": "2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc",
+                            "x-checker-data": {
+                                "type": "anitya",
+                                "project-id": 1560,
+                                "stable-only": true,
+                                "url-template": "https://github.com/libass/libass/releases/download/$version/libass-$version.tar.xz"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "uchardet",
+                    "buildsystem": "cmake-ninja",
+                    "config-opts": [
+                        "-DCMAKE_BUILD_TYPE=Release",
+                        "-DBUILD_STATIC=0",
+                        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+                    ],
+                    "cleanup": [
+                        "/bin"
+                    ],
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "url": "https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz",
+                            "mirror-urls": [
+                                "https://deb.debian.org/debian/pool/main/u/uchardet/uchardet_0.0.8.orig.tar.xz"
+                            ],
+                            "sha256": "e97a60cfc00a1c147a674b097bb1422abd9fa78a2d9ce3f3fdcc2e78a34ac5f0",
+                            "x-checker-data": {
+                                "type": "anitya",
+                                "project-id": 9265,
+                                "stable-only": true,
+                                "url-template": "https://www.freedesktop.org/software/uchardet/releases/uchardet-$version.tar.xz"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "hwdata",
+                    "buildsystem": "simple",
+                    "build-commands": [
+                        "./configure --prefix=/app --disable-blacklist",
+                        "make install",
+                        "test -e /app/share/hwdata/pnp.ids",
+                        "pkg-config --atleast-version=0.410 hwdata"
+                    ],
+                    "sources": [
+                        {
+                            "type": "git",
+                            "url": "https://github.com/vcrhonek/hwdata.git",
+                            "commit": "8bb6c48dc2e683777e625d1c9ef02c1b25b741cd"
+                        }
+                    ]
+                },
+                {
+                    "name": "libdisplay-info",
+                    "buildsystem": "meson",
+                    "post-install": [
+                        "test -e /app/lib/libdisplay-info.so.3",
+                        "readelf -d /app/lib/libdisplay-info.so.3 | grep -F 'Library soname: [libdisplay-info.so.3]'"
+                    ],
+                    "sources": [
+                        {
+                            "type": "git",
+                            "url": "https://gitlab.freedesktop.org/emersion/libdisplay-info.git",
+                            "commit": "47a5590e9c4eb35d67651b8c05a55f1a48259329"
+                        }
+                    ]
+                },
+                {
+                    "name": "ffmpeg",
+                    "buildsystem": "simple",
+                    "build-commands": [
+                        "./configure --prefix=/app --libdir=/app/lib --disable-debug --disable-doc --disable-static --enable-shared --enable-gpl --enable-version3 --enable-libdrm --enable-vaapi --enable-vulkan --disable-libplacebo",
+                        "make -j${FLATPAK_BUILDER_N_JOBS}",
+                        "make install",
+                        "test -e /app/lib/libavcodec.so.62",
+                        "test -e /app/lib/libavutil.so.60",
+                        "/app/bin/ffmpeg -version 2>/dev/null | grep -m1 -F 'ffmpeg version 8.1.2 '",
+                        "pkg-config --atleast-version=62 libavcodec"
+                    ],
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "url": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+                            "sha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
+                        }
+                    ]
+                },
+                {
+                    "name": "libdovi",
+                    "buildsystem": "simple",
+                    "build-options": {
+                        "append-path": "/usr/lib/sdk/rust-stable/bin",
+                        "env": {
+                            "CARGO_HOME": "/run/build/libdovi/cargo",
+                            "CARGO_NET_OFFLINE": "true"
+                        }
+                    },
+                    "build-commands": [
+                        "cargo cbuild --frozen --offline --release --features capi",
+                        "cargo cinstall --frozen --offline --release --features capi --prefix=/app --libdir=/app/lib",
+                        "test -e /app/lib/libdovi.so.3",
+                        "pkg-config --atleast-version=3.3.2 dovi"
+                    ],
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "archive-type": "tar-gzip",
+                            "url": "https://static.crates.io/crates/dolby_vision/dolby_vision-3.3.2.crate",
+                            "sha256": "533d9f32336f4d03822e87fcee32277fd4a52e3f1278549bf42c8b28e3b0f798"
+                        },
+                        "cargo-sources-dolby_vision-3.3.2.json"
+                    ]
+                },
+                {
+                    "name": "libplacebo",
+                    "buildsystem": "meson",
+                    "config-opts": [
+                        "-Dopengl=enabled",
+                        "-Dvulkan=enabled",
+                        "-Ddovi=enabled",
+                        "-Dlibdovi=enabled",
+                        "-Ddemos=false",
+                        "-Dtests=false"
+                    ],
+                    "post-install": [
+                        "test -e /app/lib/libplacebo.so",
+                        "pkg-config --atleast-version=7.387.0 libplacebo",
+                        "test \"$(pkg-config --variable=pl_has_dovi libplacebo)\" = \"1\"",
+                        "test \"$(pkg-config --variable=pl_has_libdovi libplacebo)\" = \"1\""
+                    ],
+                    "sources": [
+                        {
+                            "type": "git",
+                            "url": "https://github.com/haasn/libplacebo.git",
+                            "commit": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+                            "tag": "v7.387.0",
+                            "x-checker-data": {
+                                "type": "git",
+                                "tag-pattern": "^v([\\d.]+)$"
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "yt-dlp",
+            "modules": [
+                {
+                    "name": "deno",
+                    "buildsystem": "simple",
+                    "build-commands": [
+                        "install -Dm755 deno /app/bin/deno"
+                    ],
+                    "sources": [
+                        {
+                            "type": "archive",
+                            "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip",
+                            "sha256": "e890975bc2549807bbcc0b584ffafda72cc7c93349dd99c80483dd784f6c4609",
+                            "only-arches": [
+                                "x86_64"
+                            ],
+                            "x-checker-data": {
+                                "type": "anitya",
+                                "project-id": 133196,
+                                "url-template": "https://github.com/denoland/deno/releases/download/v$version/deno-x86_64-unknown-linux-gnu.zip"
+                            }
+                        },
+                        {
+                            "type": "archive",
+                            "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-aarch64-unknown-linux-gnu.zip",
+                            "sha256": "d49596c20b9788cf8f5d8ddf644103d4bde56ed239753f0bdb92ba9361d51905",
+                            "only-arches": [
+                                "aarch64"
+                            ],
+                            "x-checker-data": {
+                                "type": "anitya",
+                                "project-id": 133196,
+                                "url-template": "https://github.com/denoland/deno/releases/download/v$version/deno-aarch64-unknown-linux-gnu.zip"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "yt-dlp-ejs",
+                    "buildsystem": "simple",
+                    "build-commands": [
+                        "pip3 install --prefix=/app yt_dlp_ejs*.whl"
+                    ],
+                    "sources": [
+                        {
+                            "type": "file",
+                            "url": "https://files.pythonhosted.org/packages/e3/bd/520769863744b669440a924271a6159ddd82ad5ae26b4ac4d4b69e9f8d44/yt_dlp_ejs-0.8.0-py3-none-any.whl",
+                            "sha256": "79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4",
+                            "x-checker-data": {
+                                "type": "pypi",
+                                "name": "yt-dlp-ejs",
+                                "packagetype": "bdist_wheel"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "no-autogen": true,
+            "no-make-install": true,
+            "make-args": [
+                "yt-dlp",
+                "PYTHON=/usr/bin/python3"
+            ],
+            "post-install": [
+                "install yt-dlp /app/bin"
+            ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://github.com/yt-dlp/yt-dlp.git",
+                    "tag": "2026.10.21",
+                    "commit": "6ccd977303412151ee23352c6257dd658ffc1987",
+                    "x-checker-data": {
+                        "type": "git",
+                        "tag-pattern": "^([\\d.]+)$"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "python-mpv",
+            "buildsystem": "simple",
+            "build-commands": [
+                "pip3 install --no-index --no-build-isolation --find-links=. --prefix=/app python_mpv"
+            ],
+            "sources": [
+                {
+                    "type": "file",
+                    "url": "https://files.pythonhosted.org/packages/77/bc/6aa34c8805ff62e2fefc7d171563c60598aac215d5241186031a2c839935/python_mpv-1.0.8.tar.gz",
+                    "sha256": "017fa359da059c831a94c419083491903e6d2f7c81b9841c33c196cabf4b3fe3"
+                }
+            ]
+        },
+        {
+            "name": "cinehdr",
+            "builddir": true,
+            "buildsystem": "meson",
+            "run-tests": true,
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "../../"
+                }
+            ]
+        }
+    ]
+}

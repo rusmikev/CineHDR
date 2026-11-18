@@ -12,6 +12,22 @@ test('hdr_tests', python3,
   depends: [cinehdr_resources]
 )
 
+if not get_option('validation')
+  test('product_boundary_tests', python3,
+    args: [
+      meson.current_source_dir() / 'test_product_boundary.py',
+      meson.project_build_root(),
+      cinehdr_resources.full_path(),
+    ],
+    env: [
+      'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+      'GSETTINGS_BACKEND=memory',
+      'PYTHONPATH=' + meson.project_source_root(),
+    ],
+    depends: [cinehdr_resources],
+  )
+endif
+
 test('render_backend_tests', python3,
   args: [
     meson.current_source_dir() / 'test_render_backend.py'
@@ -87,6 +103,67 @@ test('diagnostics_export_tests', python3,
   ],
   env: [
     'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
+    'PYTHONPATH=' + meson.project_source_root()
+  ],
+  depends: [cinehdr_resources]
+)
+
+test('gnome_pipeline_trace_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_gnome_pipeline_trace.py'
+  ],
+  env: [
+    'PYTHONPATH=' + meson.project_source_root() / 'tools/validation' + ':' + meson.project_source_root()
+  ]
+)
+
+test('window_lifecycle_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_window_lifecycle.py'
+  ],
+  env: [
+    'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'GSETTINGS_BACKEND=memory',
+    'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
+    'PYTHONPATH=' + meson.project_source_root()
+  ],
+  depends: [cinehdr_resources]
+)
+
+test('diagnostics_report_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_diagnostics_report.py'
+  ],
+  env: [
+    'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'GSETTINGS_BACKEND=memory',
+    'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
+    'PYTHONPATH=' + meson.project_source_root()
+  ],
+  depends: [cinehdr_resources]
+)
+
+test('wayland_output_hdr_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_wayland_output_hdr.py'
+  ],
+  env: [
+    'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'GSETTINGS_BACKEND=memory',
+    'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
+    'PYTHONPATH=' + meson.project_source_root()
+  ],
+  depends: [cinehdr_resources]
+)
+
+test('video_widget_tests', python3,
+  args: [
+    meson.current_source_dir() / 'test_video_widget.py'
+  ],
+  env: [
+    'GSETTINGS_SCHEMA_DIR=' + meson.project_source_root() / 'data',
+    'GSETTINGS_BACKEND=memory',
     'CINEHDR_GRESOURCE=' + cinehdr_resources.full_path(),
     'PYTHONPATH=' + meson.project_source_root()
   ],

@@ -63,18 +63,22 @@
                 "test -e /app/lib/libmpv.so.2",
                 "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libavcodec.so.62]'",
                 "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libavutil.so.60]'",
-                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libplacebo.so.360]'",
+                "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libplacebo.so.387]'",
                 "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libdrm.so.2]'",
                 "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libdisplay-info.so.3]'",
                 "readelf -d /app/lib/libmpv.so.2 | grep -F 'Shared library: [libva-drm.so.2]'",
-                "readelf -d /app/lib/libplacebo.so.360 | grep -F 'Shared library: [libdovi.so.3]'"
+                "readelf -d /app/lib/libplacebo.so.387 | grep -F 'Shared library: [libdovi.so.3]'"
             ],
             "sources": [
                 {
                     "type": "git",
-                    "url": "https://github.com/lhc70000/mpv.git",
-                    "branch": "libmpv-gpu-next",
-                    "commit": "97179bce7ed980c53647d6344916f632fe689e9e"
+                    "url": "https://github.com/mpv-player/mpv.git",
+                    "tag": "v0.41.0",
+                    "commit": "41f6a645068483470267271e1d09966ca3b9f413"
+                },
+                {
+                    "type": "patch",
+                    "path": "fix-screenshots.diff"
                 }
             ],
             "modules": [
@@ -217,7 +221,7 @@
                     ],
                     "post-install": [
                         "test -e /app/lib/libplacebo.so",
-                        "pkg-config --atleast-version=7.360.1 libplacebo",
+                        "pkg-config --atleast-version=7.387.0 libplacebo",
                         "test \"$(pkg-config --variable=pl_has_dovi libplacebo)\" = \"1\"",
                         "test \"$(pkg-config --variable=pl_has_libdovi libplacebo)\" = \"1\""
                     ],
@@ -225,8 +229,8 @@
                         {
                             "type": "git",
                             "url": "https://github.com/haasn/libplacebo.git",
-                            "commit": "cee9b076f2c63104ccfd497fa79c39a867293ec4",
-                            "tag": "v7.360.1",
+                            "commit": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+                            "tag": "v7.387.0",
                             "x-checker-data": {
                                 "type": "git",
                                 "tag-pattern": "^v([\\d.]+)$"
@@ -248,8 +252,8 @@
                     "sources": [
                         {
                             "type": "archive",
-                            "url": "https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-unknown-linux-gnu.zip",
-                            "sha256": "8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530",
+                            "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip",
+                            "sha256": "e890975bc2549807bbcc0b584ffafda72cc7c93349dd99c80483dd784f6c4609",
                             "only-arches": [
                                 "x86_64"
                             ],
@@ -261,8 +265,8 @@
                         },
                         {
                             "type": "archive",
-                            "url": "https://github.com/denoland/deno/releases/download/v2.9.5/deno-aarch64-unknown-linux-gnu.zip",
-                            "sha256": "6b7cae3a8fc4385a59dea3146fcb8bad7fea4230e0ad36a8c692afacbc254be0",
+                            "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-aarch64-unknown-linux-gnu.zip",
+                            "sha256": "d49596c20b9788cf8f5d8ddf644103d4bde56ed239753f0bdb92ba9361d51905",
                             "only-arches": [
                                 "aarch64"
                             ],
@@ -307,8 +311,8 @@
                 {
                     "type": "git",
                     "url": "https://github.com/yt-dlp/yt-dlp.git",
-                    "tag": "2026.08.19",
-                    "commit": "3a08beaf031ab68f966401ead017ac81fe8486cf",
+                    "tag": "2026.10.21",
+                    "commit": "6ccd977303412151ee23352c6257dd658ffc1987",
                     "x-checker-data": {
                         "type": "git",
                         "tag-pattern": "^([\\d.]+)$"

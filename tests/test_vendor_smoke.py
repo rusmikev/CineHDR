@@ -22,11 +22,14 @@ class VendorSmokeOracleTests(unittest.TestCase):
         self.path_token = "a" * 64
 
     def valid_lines(self, *, api="opengl", mode="legacy", vendor="Intel", renderer="Iris"):
+        mpv_version = (
+            "mpv v0.41.0-dirty" if api == "opengl" else "mpv v0.41.0-dev-g97179bce7"
+        )
         return [
             f"INFO libmpv render backend requested={mode} active={api} fallback_reason=none",
             "INFO Render runtime libmpv=/app/lib/libmpv.so.2 "
-            "mpv=mpv v0.41.0-dev-g97179bce7 "
-            "libplacebo=v7.360.1 ffmpeg=8.1.2 configuration=pinned "
+            f"mpv={mpv_version} "
+            "libplacebo=v7.387.0 (v7.387.0) ffmpeg=8.1.2 configuration=pinned "
             f"OpenGL={vendor} / {renderer} / OpenGL 4.6",
             f"INFO Rendered first frame backend={api} target=1280x720 "
             "internal_format=0x881a depth=16",
@@ -90,6 +93,18 @@ class VendorSmokeOracleTests(unittest.TestCase):
         lines = [line.replace("ffmpeg=8.1.2", "ffmpeg=7.1.3") for line in self.valid_lines()]
         result = self.evaluated(lines)
         self.assertEqual(result["status"], "RUNTIME_MISMATCH")
+
+        old_placebo = [
+            line.replace("libplacebo=v7.387.0 (v7.387.0)", "libplacebo=v7.360.1")
+            for line in self.valid_lines()
+        ]
+        self.assertEqual(self.evaluated(old_placebo)["status"], "RUNTIME_MISMATCH")
+
+        wrong_mpv = [
+            line.replace("mpv=mpv v0.41.0-dirty", "mpv=mpv v0.41.0-dev-g97179bce7")
+            for line in self.valid_lines(api="opengl", mode="legacy")
+        ]
+        self.assertEqual(self.evaluated(wrong_mpv)["status"], "RUNTIME_MISMATCH")
 
     def test_source_hdr_and_dovi_contracts_are_checked(self):
         lines = [line.replace('"source_hdr": true', '"source_hdr": false') for line in self.valid_lines()]

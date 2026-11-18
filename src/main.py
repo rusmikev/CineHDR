@@ -33,6 +33,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gio, GLib, Gtk
 
+from .diagnostics_report import DIAGNOSTICS_EXPORT_DIR_ENV, DIAGNOSTICS_EXPORT_PATH_ENV
 from .gtk_cm_policy import (
     OPT_IN_NOT_REQUESTED,
     OPT_IN_TOO_LATE,
@@ -43,7 +44,7 @@ from .mpris import MPRIS
 from .preferences import Preferences, settings
 from .render_backend import select_process_backend
 from .save_session import is_same_playlist
-from .utils import set_window_size
+from .utils import load_optional_validation, set_window_size
 from .window import CineWindow
 
 logger = logging.getLogger(__name__)
@@ -84,12 +85,28 @@ class CineApplication(Adw.Application):
         if os.environ.get("CINEHDR_NON_UNIQUE", "").strip():
             application_flags |= Gio.ApplicationFlags.NON_UNIQUE
         if os.environ.get("CINEHDR_GPU_VALIDATION", "").strip():
-            from .gpu_validation import validation_config_from_env
-
-            self.gpu_validation_config = validation_config_from_env(os.environ)
+            gpu_val_mod = load_optional_validation(
+                __package__,
+                "gpu_validation",
+                "GPU validation is unavailable; install with -Dvalidation=true",
+                logger,
+            )
+            self.gpu_validation_config = gpu_val_mod.validation_config_from_env(os.environ)
             # A validation run must not be forwarded to an already-open normal
             # CineHDR process: its renderer is immutable for that process.
             application_flags |= Gio.ApplicationFlags.NON_UNIQUE
+        if (
+            os.environ.get(DIAGNOSTICS_EXPORT_PATH_ENV, "").strip()
+            or os.environ.get(DIAGNOSTICS_EXPORT_DIR_ENV, "").strip()
+        ):
+            # Fail closed before super().__init__() and app.run() so requests for
+            # diagnostics export terminate non-zero prior to any GTK callback.
+            load_optional_validation(
+                __package__,
+                "diagnostics_export",
+                "Diagnostics export is unavailable; install with -Dvalidation=true",
+                logger,
+            )
 
         super().__init__(
             application_id="io.github.rusmikev.CineHDR",
@@ -226,13 +243,13 @@ class CineApplication(Adw.Application):
 
         is_fixed_fixture_validation = False
         if self.gpu_validation_config is not None:
-            from .gpu_validation import _uses_publication_fixture_contract
+            from .validation.gpu_validation import _uses_publication_fixture_contract
 
             is_fixed_fixture_validation = _uses_publication_fixture_contract(
                 self.gpu_validation_config.mode
             )
             if self._gpu_validation_session is None:
-                from .gpu_validation import prepare_validation_player
+                from .validation.gpu_validation import prepare_validation_player
 
                 self._gpu_validation_setup_failures = prepare_validation_player(
                     win.mpv, self.gpu_validation_config.mode
@@ -257,7 +274,7 @@ class CineApplication(Adw.Application):
             self.gpu_validation_config is not None
             and self._gpu_validation_session is None
         ):
-            from .gpu_validation import GpuValidationSession
+            from .validation.gpu_validation import GpuValidationSession
 
             self._gpu_validation_session = GpuValidationSession(
                 win, self.gpu_validation_config

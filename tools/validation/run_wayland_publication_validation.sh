@@ -450,7 +450,7 @@ try:
 except Exception as e:
     sys.exit(f"FAIL: parsing FBO pixel measurements artifact failed: {e}")
 
-from src.gpu_validation import verify_fbo_pixel_measurements_artifact
+from src.validation.gpu_validation import verify_fbo_pixel_measurements_artifact
 pix_ok, pix_err = verify_fbo_pixel_measurements_artifact(pixel_data)
 if not pix_ok:
     sys.exit(f"FAIL: mandatory FBO pixel measurements artifact is incomplete or invalid: {pix_err}")

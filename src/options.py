@@ -27,6 +27,8 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
 
+from .utils import mpv_prop
+
 logger = logging.getLogger(__name__)
 
 RATIOS = [
@@ -250,8 +252,8 @@ class OptionsMenuButton(Gtk.MenuButton):
             self._win.mpv.command_async("set", "video-crop", "")
             return
 
-        w = cast(int, self._win.mpv._get_property("video-params/w"))
-        h = cast(int, self._win.mpv._get_property("video-params/h"))
+        w = cast(int, mpv_prop(self._win.mpv, "video-params/w"))
+        h = cast(int, mpv_prop(self._win.mpv, "video-params/h"))
 
         target_ratio = RATIOS[idx]
         current_ratio = w / h

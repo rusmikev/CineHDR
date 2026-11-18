@@ -25,7 +25,7 @@ jobs:
         with:
           bundle: CineHDR-x86_64.flatpak
           manifest-path: build-aux/flatpak/io.github.rusmikev.CineHDR.json
-          cache-key: flatpak-builder-release-${{ github.sha }}
+          cache-key: flatpak-builder-release-${{ hashFiles('build-aux/flatpak/**', '.gitmodules') }}
           run-tests: true
           arch: x86_64
 

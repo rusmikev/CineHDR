@@ -177,7 +177,7 @@ def make_fbo_pixel_measurements_artifact(
     min_distinction=0.150,
     modify_fn=None,
 ) -> dict:
-    from src.gpu_validation import CANONICAL_PATCH_NAMES, compute_samples_hash
+    from src.validation.gpu_validation import CANONICAL_PATCH_NAMES, compute_samples_hash
 
     sdr_samples = {
         name: (1.0, 1.0, 1.0, 1.0) if "white" in name else (0.0, 0.0, 0.0, 1.0)

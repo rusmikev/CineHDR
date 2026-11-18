@@ -43,7 +43,12 @@ class TestRenderBackendSelector(unittest.TestCase):
             def __init__(self, properties):
                 self.properties = properties
 
-            def _get_property(self, name):
+            def __getitem__(self, name):
+                if name in self.properties:
+                    return self.properties[name]
+                raise KeyError(name)
+
+            def get_property(self, name):
                 return self.properties.get(name)
 
         self.assertIsNone(media_frame_evidence(Player({})))
@@ -73,6 +78,28 @@ class TestRenderBackendSelector(unittest.TestCase):
         self.assertEqual(evidence.source_height, 2160)
         self.assertEqual(evidence.time_pos, 0.125)
         self.assertEqual(len(evidence.path_token), 64)
+
+    def test_media_frame_evidence_with_pure_subscriptable_player(self):
+        """Verify media_frame_evidence works with a player providing only __getitem__."""
+        class PureSubscriptablePlayer:
+            def __init__(self, data):
+                self._data = data
+
+            def __getitem__(self, key):
+                if key in self._data:
+                    return self._data[key]
+                raise KeyError(key)
+
+        player = PureSubscriptablePlayer({
+            "path": "/media/test.mkv",
+            "video-params": {"w": 1920, "h": 1080},
+            "time-pos": 1.5,
+        })
+        evidence = media_frame_evidence(player)
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence.source_width, 1920)
+        self.assertEqual(evidence.source_height, 1080)
+        self.assertEqual(evidence.time_pos, 1.5)
 
     def test_default_is_legacy(self):
         self.assertIs(requested_backend({}), RenderBackend.LEGACY)
@@ -1183,14 +1210,41 @@ class TestRuntimeDiagnostics(unittest.TestCase):
                 "mpv-configuration": "-Dlibmpv=true",
             }
 
-            def _get_property(self, name):
-                return self.values[name]
+            def __getitem__(self, name):
+                if name in self.values:
+                    return self.values[name]
+                raise KeyError(name)
+
+            def get_property(self, name):
+                return self.values.get(name)
 
         runtime = render_runtime_diagnostics(FakeMpvModule, Player())
         self.assertIn("libmpv", runtime["libmpv_path"])
         self.assertEqual(runtime["mpv_version"], "mpv test-revision")
         self.assertEqual(runtime["ffmpeg_version"], "8.test")
         self.assertEqual(runtime["mpv_configuration"], "-Dlibmpv=true")
+
+    def test_render_runtime_diagnostics_with_pure_subscriptable_player(self):
+        """Verify render_runtime_diagnostics works with a player providing only __getitem__."""
+        class FakeMpvModule:
+            backend_name = "legacy"
+            __file__ = "/usr/lib64/python3.15/site-packages/mpv.py"
+
+        class PureSubscriptablePlayer:
+            def __getitem__(self, key):
+                data = {
+                    "mpv-version": "mpv 0.38.0",
+                    "ffmpeg-version": "7.0",
+                    "mpv-configuration": "--enable-libmpv",
+                }
+                if key in data:
+                    return data[key]
+                raise KeyError(key)
+
+        runtime = render_runtime_diagnostics(FakeMpvModule, PureSubscriptablePlayer())
+        self.assertEqual(runtime["mpv_version"], "mpv 0.38.0")
+        self.assertEqual(runtime["ffmpeg_version"], "7.0")
+        self.assertEqual(runtime["mpv_configuration"], "--enable-libmpv")
 
     def test_update_cached_scale_and_limits_uses_fractional_monitor_scale(self):
         from src.video_widget import MpvVideoWidget

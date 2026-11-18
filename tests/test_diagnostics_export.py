@@ -82,12 +82,12 @@ from src.diagnostics_report import (
     EXPECTED_APP_COMMIT_ENV,
     EXPECTED_FLATPAK_INSTANCE_ENV,
     EXPECTED_RUNTIME_COMMIT_ENV,
-    DiagnosticsExporter,
     build_video_output_report,
     collect_video_output_facts,
     generate_video_output_report,
     read_flatpak_info,
 )
+from src.validation.diagnostics_export import DiagnosticsExporter
 from src.hdr_diagnostics import HdrDiagnosticsDialog
 
 

@@ -78,12 +78,13 @@ flatpak run --command=python3 io.github.rusmikev.CineHDR -c \
 # 1. [MUST сейчас] каждый src/*.py объявлен в src/meson.build (вывод пустой)
 diff <(ls src/*.py | xargs -n1 basename | sort) \
      <(grep -o "'[a-z_]*\.py'" src/meson.build | tr -d "'" | sort)
-# 2. [Вступает в силу как MUST после PLAN C6; до C6 в CI — continue-on-error]
-# приватный API python-mpv не используется
-grep -rn "_get_property\|self\.mpv\._\|player\._" src/
-# 3. [Вступает в силу как MUST после PLAN C4 (шаг 2); до C4 в CI — continue-on-error]
-# код валидации не устанавливается и не импортируется продуктом напрямую
-grep -n "gpu_validation\|DiagnosticsExporter" src/meson.build src/*.py
+# 2. [MUST] приватный API python-mpv не используется (исключая MPRIS callback _on_get_property)
+grep -rn --exclude-dir=__pycache__ "\._get_property\|self\.mpv\._\|player\._" src/
+# 3. [MUST] запрещены прямые импорты gpu_validation и DiagnosticsExporter в продукте;
+#    граница установки проверяется product_boundary_tests (-Dvalidation=false) и продуктовым Flatpak-экспортом
+grep -rn --exclude-dir=__pycache__ \
+     "DiagnosticsExporter\|from \.gpu_validation\|from \.\.gpu_validation\|import gpu_validation\|cinehdr\.gpu_validation" src/
+meson test -C build product_boundary_tests
 ```
 
 ## 3. Границы модулей [MUST]

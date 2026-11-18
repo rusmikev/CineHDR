@@ -17,6 +17,8 @@ import time
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from src.validation.gpu_validation import read_fbo_patch_samples  # noqa: E402
+
 # Make tests hermetic and isolated (F13)
 import shutil
 import subprocess
@@ -331,18 +333,20 @@ class TestApplyHDRSettings(unittest.TestCase):
         self.assertFalse(controller.committed_output_state.is_hdr)
 
     def test_hlg_and_pq_detection_logic(self):
-        """Gamma pq/hlg/st2084 or sig-peak > 1.0 correctly identify HDR content (excluding bt.2020 solo trigger)."""
-        from src.hdr_detection import is_hdr_content
+        """Strictly only PQ/HLG transfer functions identify HDR; sig-peak and primaries alone stay SDR."""
+        from src.hdr_detection import HDR_TRANSFERS, is_hdr_content
+        self.assertEqual(HDR_TRANSFERS, frozenset({"pq", "hlg"}))
         test_cases = [
             ({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1.0}, False),
-            ({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 600.0}, True),
+            ({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 600.0}, False),
+            ({"primaries": "bt.2020", "gamma": "bt.1886"}, False),
             ({"primaries": "bt.709", "gamma": "pq", "sig-peak": 1.0}, True),
             ({"primaries": "bt.709", "gamma": "hlg", "sig-peak": 1.0}, True),
-            ({"primaries": "bt.709", "gamma": "st2084", "sig-peak": 1.0}, True),
-            ({"primaries": "bt.709", "gamma": "slog3", "sig-peak": 1.0}, True),
+            ({"primaries": "bt.709", "gamma": "st2084", "sig-peak": 1.0}, False),
+            ({"primaries": "bt.709", "gamma": "slog3", "sig-peak": 1.0}, False),
             ({"primaries": "bt.709", "gamma": "bt.1886", "sig-peak": 1.0}, False),
             ({}, False),
-            (None, False)
+            (None, False),
         ]
         for params, expected in test_cases:
             self.assertEqual(is_hdr_content(params), expected, f"Failed detection for {params}")
@@ -884,8 +888,13 @@ class TestColorStateSelection(unittest.TestCase):
         self.assertFalse(self._is_hdr(True, "bt.2020", "srgb", sig_peak=1.0))
 
     def test_hdr_bt2020_srgb_gamma_high_peak(self):
-        """BT.2020 primaries + sRGB gamma + high peak (>1.0) → HDR color state."""
-        self.assertTrue(self._is_hdr(True, "bt.2020", "srgb", sig_peak=600.0))
+        """BT.2020 primaries + sRGB gamma + high peak (>1.0) → SDR (transfer criterion is strictly PQ/HLG)."""
+        self.assertFalse(self._is_hdr(True, "bt.2020", "srgb", sig_peak=600.0))
+
+    def test_wcg_sdr_bt2020_bt1886_is_sdr(self):
+        """BT.2020 primaries + bt.1886 gamma (WCG-SDR) → SDR regardless of sig-peak."""
+        self.assertFalse(self._is_hdr(True, "bt.2020", "bt.1886", sig_peak=1.0))
+        self.assertFalse(self._is_hdr(True, "bt.2020", "bt.1886", sig_peak=1000.0))
 
     def test_hdr_disabled_bt2020_pq(self):
         """BT.2020 + PQ but HDR disabled → SDR color state."""
@@ -908,10 +917,19 @@ class TestColorStateSelection(unittest.TestCase):
         from src.hdr_detection import is_hdr_content
         self.assertTrue(is_hdr_content({"primaries": "bt.2020", "gamma": "pq"}))
         self.assertTrue(is_hdr_content({"primaries": "bt.709", "gamma": "hlg"}))
-        self.assertTrue(is_hdr_content({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1000}))
+        self.assertFalse(is_hdr_content({"primaries": "bt.2020", "gamma": "bt.1886", "sig-peak": 1000}))
+        self.assertFalse(is_hdr_content({"primaries": "bt.2020", "gamma": "bt.1886"}))
         self.assertFalse(is_hdr_content({"primaries": "bt.2020", "gamma": "srgb", "sig-peak": 1.0}))
         self.assertFalse(is_hdr_content({"primaries": "bt.709", "gamma": "srgb"}))
         self.assertFalse(is_hdr_content(None))
+
+    def test_wayland_update_cache_calls_invalidate_support_decision(self):
+        """wayland_output_hdr._update_cache must invalidate support cache via invalidate_support_decision()."""
+        from src import wayland_output_hdr
+
+        with patch("src.hdr_detection.invalidate_support_decision") as mock_invalidate:
+            wayland_output_hdr._update_cache({})
+        mock_invalidate.assert_called_once_with()
 
 
 class TestGLFramebufferResource(unittest.TestCase):
@@ -3022,7 +3040,7 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
                 self.dovi_rpu_warning_count = 0
                 self.dovi_rpu_warning_text = None
                 self._dovi_rpu_logged = False
-                self.mpv = MagicMock()
+                self.mpv = MagicMock(spec=[])
         return DummyOwner()
 
     def test_first_warning_saved_and_text_captured(self):
@@ -3039,11 +3057,8 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
             owner.dovi_rpu_warning_text,
             "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 42",
         )
-        self.assertEqual(owner.mpv._dovi_rpu_warning_count, 1)
-        self.assertEqual(
-            owner.mpv._dovi_rpu_warning_text,
-            "ffmpeg/video: hevc: Multiple Dolby Vision RPUs found in frame 42",
-        )
+        self.assertFalse(hasattr(owner.mpv, "_dovi_rpu_warning_count"))
+        self.assertFalse(hasattr(owner.mpv, "_dovi_rpu_warning_text"))
         mock_logger.warning.assert_called_once()
         warning_args = mock_logger.warning.call_args[0]
         self.assertIn("further duplicate RPU warnings suppressed", warning_args[0])
@@ -3063,7 +3078,7 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
 
         self.assertEqual(owner.dovi_rpu_warning_count, 9)
         self.assertEqual(owner.dovi_rpu_warning_text, first_text)
-        self.assertEqual(owner.mpv._dovi_rpu_warning_count, 9)
+        self.assertFalse(hasattr(owner.mpv, "_dovi_rpu_warning_count"))
         self.assertEqual(mock_logger.warning.call_count, 1)
         mock_logger.log.assert_not_called()
 
@@ -3163,8 +3178,6 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
                 mock_win.dovi_rpu_warning_count = count
                 mock_win.dovi_rpu_warning_text = text
                 mock_mpv = MagicMock()
-                mock_mpv._dovi_rpu_warning_count = count
-                mock_mpv._dovi_rpu_warning_text = text
                 mock_mpv.get_property.return_value = None
                 mock_mpv.__getitem__.side_effect = KeyError
                 mock_win.mpv = mock_mpv
@@ -3250,8 +3263,6 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
         mock_win.dovi_rpu_warning_count = 1
         mock_win.dovi_rpu_warning_text = "ffmpeg: Multiple Dolby Vision RPUs found in frame 1"
         mock_mpv = MagicMock()
-        mock_mpv._dovi_rpu_warning_count = 1
-        mock_mpv._dovi_rpu_warning_text = mock_win.dovi_rpu_warning_text
         mock_mpv.get_property.return_value = None
         mock_mpv.__getitem__.side_effect = KeyError
         mock_win.mpv = mock_mpv
@@ -3269,7 +3280,6 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
 
         # 2. A new warning arrives in background (count becomes 2)
         mock_win.dovi_rpu_warning_count = 2
-        mock_mpv._dovi_rpu_warning_count = 2
 
         # 3. Export Copy Report without calling update_diagnostics()
         report_1 = diag._copy_report()
@@ -3328,8 +3338,6 @@ class TestDoviRpuWarningDiagnostics(unittest.TestCase):
         mock_win.dovi_rpu_warning_count = 0
         mock_win.dovi_rpu_warning_text = None
         mock_mpv = MagicMock()
-        mock_mpv._dovi_rpu_warning_count = 0
-        mock_mpv._dovi_rpu_warning_text = None
 
         props = {"hwdec": "vaapi-copy", "hwdec-current": "vaapi-copy"}
 
@@ -3803,7 +3811,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         }
 
     def _make_capture(self, phase: str, *, is_hdr: bool = False, delta: float = 0.0, patches: dict = None, epoch: int | None = None):
-        from src.gpu_validation import FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import FboPixelCapture, compute_samples_hash
         patch_samples = patches if patches is not None else self._sample_patches(is_hdr=is_hdr, delta=delta)
         samples_hash = compute_samples_hash(patch_samples)
         if epoch is None:
@@ -3834,7 +3842,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         )
 
     def test_complete_capture_and_successful_evaluation(self):
-        from src.gpu_validation import (
+        from src.validation.gpu_validation import (
             PausedTransitionPixelOracle,
             DEFAULT_SDR_REPEAT_TOLERANCE,
             DEFAULT_MIN_HDR_DISTINCTION,
@@ -3854,7 +3862,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_strict_canonical_8_patches_required(self):
         """Oracle strictly requires the full set of 8 canonical patches, rejecting subsets or missing keys."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         # Incomplete patches (missing neutral_gradient)
         incomplete = dict(self._sample_patches(is_hdr=False))
@@ -3869,7 +3877,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_strict_channel_count_and_provenance(self):
         """Oracle strictly verifies channel length (exactly 4 components per patch) and provenance."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         # Corrupt one patch to have 3 channels instead of 4
         corrupted = dict(self._sample_patches(is_hdr=False))
@@ -3884,7 +3892,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_provenance_dimension_mismatch_fails(self):
         """Oracle rejects captures with mismatched dimensions."""
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
         oracle = PausedTransitionPixelOracle()
         sdr_patches = self._sample_patches(is_hdr=False)
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
@@ -3903,12 +3911,12 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         self.assertTrue(any("dimension mismatch" in r for r in reasons))
 
     def test_hdr_not_distinguishable_from_sdr_fails(self):
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         # HDR capture erroneously containing SDR values (< 0.150 difference)
         sdr_as_hdr_patches = self._sample_patches(is_hdr=False)
-        from src.gpu_validation import FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import FboPixelCapture, compute_samples_hash
         oracle.record_capture(FboPixelCapture(
             phase="hdr", slot_id=123, epoch=2, frame_generation=2,
             fbo_format="GL_RGBA16F", is_float=True, width=1920, height=1080,
@@ -3924,7 +3932,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         self.assertTrue(any("not distinguishable from SDR reference" in r for r in reasons))
 
     def test_missing_captures_return_unverified(self):
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         status, reasons = oracle.evaluate()
@@ -3933,7 +3941,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_calibrated_tolerance_boundary(self):
         """Test calibrated tolerance (0.020): delta 0.018 passes, delta 0.025 fails."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         oracle.record_capture(self._make_capture("hdr", is_hdr=True))
@@ -3955,7 +3963,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
     def test_negative_control_substituting_hdr_pixels_fails(self):
         """ADR-0007 negative control: substitute HDR pixels into SDR evaluation.
         Even though metadata is valid SDR, pixel evaluation MUST fail deterministically."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         oracle.record_capture(self._make_capture("hdr", is_hdr=True))
@@ -4015,6 +4023,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
         oracle_captured = []
         widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captured.append(kwargs)
+        widget._fbo_pixel_oracle_sampler = read_fbo_patch_samples
 
         # libmpv may restore the default framebuffer before returning. The
         # caller-owned slot must be rebound before pixel readback.
@@ -4035,7 +4044,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         mock_builder = MagicMock()
         with patch("src.video_widget.should_render_frame", return_value=True), \
              patch("src.video_widget.glBindFramebuffer", side_effect=bind_framebuffer), \
-             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
              patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
             widget._render_pending_frame()
 
@@ -4067,7 +4076,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         """
         from types import SimpleNamespace
         from src.hdr_controller import HdrController
-        from src.gpu_validation import (
+        from src.validation.gpu_validation import (
             GpuValidationSession, PausedTransitionPixelOracle, compute_patch_centers,
         )
 
@@ -4104,6 +4113,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
                 session.steps = [None, None, None]
                 session.pixel_oracle = PausedTransitionPixelOracle()
                 widget._fbo_pixel_oracle_cb = session._on_fbo_pixel_capture
+                widget._fbo_pixel_oracle_sampler = read_fbo_patch_samples
                 centers = {xy: name for name, xy in compute_patch_centers(1920, 1080).items()}
 
                 def read_pixels(x, y, w, h, fmt, pixel_type, destination):
@@ -4127,8 +4137,8 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
                      patch("src.video_widget.glFenceSync", return_value=None), \
                      patch("src.video_widget.glFlush"), \
                      patch("src.video_widget.idle_add_once"), \
-                     patch("src.gpu_validation.glReadPixels", side_effect=read_pixels), \
-                     patch("src.gpu_validation.publication_texture_evidence", side_effect=texture_evidence), \
+                     patch("src.validation.gpu_validation.glReadPixels", side_effect=read_pixels), \
+                     patch("src.validation.gpu_validation.publication_texture_evidence", side_effect=texture_evidence), \
                      patch("src.video_widget.Gdk.GLTextureBuilder"):
                     for step_index, phase in enumerate(("initial_sdr", "hdr", "return_sdr")):
                         is_hdr = phase == "hdr"
@@ -4210,6 +4220,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
         oracle_captures = []
         widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captures.append(kwargs)
+        widget._fbo_pixel_oracle_sampler = read_fbo_patch_samples
 
         def mock_read_pixels(x, y, w, h, fmt, type_, data_ptr):
             buf = ctypes.cast(data_ptr, ctypes.POINTER(ctypes.c_uint8 * 4)).contents
@@ -4222,7 +4233,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         # 1. Single paused render event occurs
         with patch("src.video_widget.should_render_frame", return_value=True), \
              patch("src.video_widget.glBindFramebuffer"), \
-             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
              patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
             widget._render_pending_frame()
 
@@ -4289,6 +4300,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
         oracle_captures = []
         widget._fbo_pixel_oracle_cb = lambda **kwargs: oracle_captures.append(kwargs)
+        widget._fbo_pixel_oracle_sampler = read_fbo_patch_samples
 
         read_pixels_called = []
         def mock_read_pixels(x, y, w, h, fmt, type_, data_ptr):
@@ -4302,7 +4314,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         mock_builder = MagicMock()
         with patch("src.video_widget.should_render_frame", return_value=True), \
              patch("src.video_widget.glBindFramebuffer"), \
-             patch("src.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
+             patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_read_pixels), \
              patch("src.video_widget.Gdk.GLTextureBuilder", return_value=mock_builder):
             widget._render_pending_frame()
 
@@ -4321,7 +4333,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
         Rec.2100 PQ pixels in the FBO, failing the pixel oracle.
         With ADR-0007, forced render updates the FBO to SDR pixels, passing the oracle.
         """
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
 
         oracle = PausedTransitionPixelOracle(tolerance=0.020, min_hdr_distinction=0.150)
         sdr_ref = self._sample_patches(is_hdr=False)
@@ -4372,7 +4384,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_invalid_phase(self):
         """Oracle strictly rejects invalid phase strings."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         oracle.record_capture(self._make_capture("invalid_phase", is_hdr=False))
         self.assertEqual(len(oracle.provenance_errors), 1)
@@ -4382,7 +4394,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_stale_or_non_advancing_epoch(self):
         """Oracle rejects captures with non-advancing or stale epochs."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         # Case 1: hdr epoch <= initial_sdr epoch
         oracle1 = PausedTransitionPixelOracle()
         oracle1.record_capture(self._make_capture("initial_sdr", is_hdr=False, epoch=2))
@@ -4403,7 +4415,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_fixture_hash_and_media_mismatch(self):
         """Oracle rejects fixture hash mismatch and media_path mismatch."""
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
         # Fixture hash mismatch between initial_sdr and return_sdr
         oracle1 = PausedTransitionPixelOracle()
         oracle1.record_capture(self._make_capture("initial_sdr", is_hdr=False))
@@ -4439,7 +4451,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_empty_or_unconfirmed_target_properties(self):
         """Oracle rejects empty, unconfirmed, or non-matching target properties."""
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
         sdr_patches = self._sample_patches(is_hdr=False)
         # Empty properties
         oracle = PausedTransitionPixelOracle()
@@ -4458,7 +4470,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_rejects_overwrite_attempt(self):
         """Oracle strictly rejects overwrite attempts on already accepted phases."""
-        from src.gpu_validation import PausedTransitionPixelOracle
+        from src.validation.gpu_validation import PausedTransitionPixelOracle
         oracle = PausedTransitionPixelOracle()
         oracle.record_capture(self._make_capture("initial_sdr", is_hdr=False))
         # Second attempt to record initial_sdr
@@ -4471,7 +4483,7 @@ class TestPausedTransitionPixelOracle(unittest.TestCase):
 
     def test_oracle_unknown_provenance_returns_unverified(self):
         """Unknown provenance yields UNVERIFIED, not PASS or FAIL."""
-        from src.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
+        from src.validation.gpu_validation import PausedTransitionPixelOracle, FboPixelCapture, compute_samples_hash
         sdr_patches = self._sample_patches(is_hdr=False)
         # Unknown fixture hash
         oracle1 = PausedTransitionPixelOracle()
@@ -4612,6 +4624,392 @@ class TestWindowShutdownLifecycle(unittest.TestCase):
         mock_warn.assert_called_once()
         self.assertIn("timed out", mock_warn.call_args[0][0].lower())
         win.app.uninhibit.assert_called_once_with(42)
+
+
+class TestMpvProp(unittest.TestCase):
+    """Behavioral tests for utils.mpv_prop per AGENTS.md §6.2."""
+
+    def test_none_player_returns_default(self):
+        from src.utils import mpv_prop
+
+        self.assertIsNone(mpv_prop(None, "path"))
+        self.assertEqual(mpv_prop(None, "path", default="fallback"), "fallback")
+
+    def test_dict_access_and_falsy_preservation(self):
+        from src.utils import mpv_prop
+
+        data = {
+            "path": "/media/test.mkv",
+            "vid": 1,
+            "zero": 0,
+            "false": False,
+            "empty": "",
+            "options/vid": "auto",
+        }
+        self.assertEqual(mpv_prop(data, "path"), "/media/test.mkv")
+        self.assertEqual(mpv_prop(data, "vid"), 1)
+        self.assertEqual(mpv_prop(data, "zero"), 0)
+        self.assertIs(mpv_prop(data, "false"), False)
+        self.assertEqual(mpv_prop(data, "empty"), "")
+        self.assertEqual(mpv_prop(data, "missing", default=42), 42)
+
+    def test_options_prefix_handling(self):
+        from src.utils import mpv_prop
+
+        data = {"options/sub": 2}
+        self.assertEqual(mpv_prop(data, "options/sub"), 2)
+
+        data_stripped = {"sub": 2}
+        self.assertEqual(mpv_prop(data_stripped, "options/sub"), 2)
+
+    def test_pure_subscriptable_player(self):
+        from src.utils import mpv_prop
+
+        class SubscriptableOnly:
+            def __init__(self, items):
+                self._items = items
+
+            def __getitem__(self, key):
+                if key in self._items:
+                    return self._items[key]
+                raise KeyError(key)
+
+        player = SubscriptableOnly({"video-params": {"gamma": "pq"}, "time-pos": 10.0})
+        self.assertEqual(mpv_prop(player, "video-params"), {"gamma": "pq"})
+        self.assertEqual(mpv_prop(player, "time-pos"), 10.0)
+        self.assertIsNone(mpv_prop(player, "nonexistent"))
+        self.assertEqual(mpv_prop(player, "nonexistent", default="def"), "def")
+
+    def test_mock_get_property(self):
+        from src.utils import mpv_prop
+
+        class GetPropertyMock:
+            def __init__(self, items):
+                self._items = items
+
+            def get_property(self, name):
+                return self._items.get(name)
+
+        player = GetPropertyMock({"track-list": [{"type": "video"}]})
+        self.assertEqual(mpv_prop(player, "track-list"), [{"type": "video"}])
+        self.assertIsNone(mpv_prop(player, "missing"))
+
+    def test_attribute_fallback(self):
+        from src.utils import mpv_prop
+
+        class AttrPlayer:
+            path = "/media/sample.mp4"
+            video_params = {"primaries": "bt.2020"}
+            _private_attr = "should_not_leak"
+
+        player = AttrPlayer()
+        self.assertEqual(mpv_prop(player, "path"), "/media/sample.mp4")
+        self.assertEqual(mpv_prop(player, "video-params"), {"primaries": "bt.2020"})
+        # Private attribute access is blocked
+        self.assertIsNone(mpv_prop(player, "_private_attr"))
+
+    def test_raising_exceptions_return_default(self):
+        from src.utils import mpv_prop
+
+        class FailingPlayer:
+            def __getitem__(self, key):
+                raise RuntimeError("mpv failure")
+
+            def get_property(self, name):
+                raise AttributeError("mpv attribute error")
+
+        player = FailingPlayer()
+        self.assertIsNone(mpv_prop(player, "video-params"))
+        self.assertEqual(mpv_prop(player, "video-params", default="safe"), "safe")
+
+    def test_python_mpv_style_getitem_options_prefix_and_nested_runtime_props(self):
+        """Regression: runtime & nested props must work when __getitem__ prepends options/."""
+        from src.diagnostics_report import get_mpv_prop
+        from src.hdr_detection import get_dovi_info
+        from src.render_backend import media_frame_evidence, render_runtime_diagnostics
+        from src.utils import mpv_prop
+
+        class PythonMpvPublicDouble:
+            """Faithfully models installed mpv.py: __getitem__ -> options/, __getattr__ -> runtime props."""
+
+            def __init__(self, options, props):
+                object.__setattr__(self, "_options", dict(options))
+                object.__setattr__(self, "_props", dict(props))
+                object.__setattr__(self, "getattr_names", [])
+
+            def __getitem__(self, name, file_local=False):
+                prefix = "file-local-options/" if file_local else "options/"
+                if name in self._options:
+                    return self._options[name]
+                raise AttributeError("mpv property does not exist", -8, prefix + name)
+
+            def __getattr__(self, name):
+                self.getattr_names.append(name)
+                mpv_name = name.replace("_", "-")
+                if mpv_name in self._props:
+                    return self._props[mpv_name]
+                if mpv_name.startswith("options/"):
+                    opt = mpv_name[8:]
+                    if opt in self._options:
+                        return self._options[opt]
+                raise AttributeError("mpv property does not exist", -8, mpv_name)
+
+        player = PythonMpvPublicDouble(
+            options={"vid": "auto", "hwdec": ["auto"]},
+            props={
+                "path": "/media/dovi_p5.mkv",
+                "vid": 1,
+                "time-pos": 0.0,
+                "hwdec-current": "vaapi",
+                "mpv-version": "mpv v0.41.0",
+                "ffmpeg-version": "9.0.2",
+                "mpv-configuration": "-Dlibmpv=true",
+                "video-params": {"w": 3840, "h": 2160, "gamma": "pq", "sig-peak": 10.0},
+                "video-params/w": 3840,
+                "video-params/gamma": "pq",
+                "video-params/sig-peak": 10.0,
+                # libmpv returns None for bare 'current-tracks' and expects subproperties
+                "current-tracks": None,
+                "current-tracks/video/dolby-vision-profile": 5,
+                "current-tracks/video/dolby-vision-level": 6,
+                "track-list": [{"id": 1, "type": "video", "selected": True}],
+            },
+        )
+
+        # Must distinguish option ('auto') vs runtime track (1)
+        self.assertEqual(mpv_prop(player, "options/vid"), "auto")
+        self.assertEqual(mpv_prop(player, "vid"), 1)
+        # Runtime top-level properties (unavailable through __getitem__)
+        self.assertEqual(mpv_prop(player, "path"), "/media/dovi_p5.mkv")
+        self.assertEqual(mpv_prop(player, "hwdec-current"), "vaapi")
+        self.assertEqual(mpv_prop(player, "time-pos"), 0.0)
+        # Nested slash runtime properties
+        self.assertEqual(mpv_prop(player, "video-params/w"), 3840)
+        self.assertEqual(mpv_prop(player, "video-params/gamma"), "pq")
+        self.assertEqual(mpv_prop(player, "video-params/sig-peak"), 10.0)
+        self.assertEqual(mpv_prop(player, "current-tracks/video/dolby-vision-profile"), 5)
+        self.assertEqual(mpv_prop(player, "current-tracks/video/dolby-vision-level"), 6)
+        self.assertEqual(get_mpv_prop(player, "video-params/w"), 3840)
+
+        # Caller integration without _get_property or track-list fallback shortcuts
+        dovi_info = get_dovi_info(
+            {"colormatrix": "dolbyvision", "primaries": "bt.2020", "gamma": "pq"},
+            player,
+        )
+        self.assertEqual(dovi_info, {"profile": 5, "level": 6, "unsupported": True})
+
+        evidence = media_frame_evidence(player)
+        self.assertIsNotNone(evidence)
+        self.assertEqual((evidence.source_width, evidence.source_height, evidence.time_pos), (3840, 2160, 0.0))
+
+        class FakeMpvMod:
+            backend_name = "legacy"
+            __file__ = "/nonexistent/mpv.py"
+
+        runtime = render_runtime_diagnostics(FakeMpvMod, player)
+        self.assertEqual(runtime["mpv_version"], "mpv v0.41.0")
+        self.assertEqual(runtime["ffmpeg_version"], "9.0.2")
+        self.assertEqual(runtime["mpv_configuration"], "-Dlibmpv=true")
+
+        # Registered _MPV_TYPES fast path must hit option __getitem__ / runtime getattr
+        # directly in one read without probing non-existent get_property.
+        import src.utils as utils_mod
+
+        mpv_like = PythonMpvPublicDouble(
+            options={"vid": "auto"},
+            props={
+                "vid": 1,
+                "current-tracks/video/dolby-vision-profile": 5,
+            },
+        )
+        with patch.object(utils_mod, "_MPV_TYPES", (PythonMpvPublicDouble,)):
+            self.assertEqual(mpv_prop(mpv_like, "options/vid"), "auto")
+            self.assertEqual(mpv_prop(mpv_like, "vid"), 1)
+            self.assertEqual(mpv_prop(mpv_like, "current-tracks/video/dolby-vision-profile"), 5)
+        self.assertEqual(mpv_like.getattr_names, ["vid", "current-tracks/video/dolby-vision-profile"])
+
+    def test_python_mpv_style_top_level_attr_nested_container_traversal(self):
+        """Nested paths also resolve via parent dict/list containers when '/' is rejected in getattr."""
+        from src.hdr_detection import get_dovi_info
+        from src.utils import mpv_prop
+
+        class TopLevelOnlyAttrDouble:
+            def __init__(self):
+                object.__setattr__(self, "_options", {"vid": "auto"})
+                object.__setattr__(
+                    self,
+                    "_props",
+                    {
+                        "video-params": {"w": 1920, "h": 1080, "gamma": "hlg"},
+                        "current-tracks": {
+                            "video": {
+                                "dolby-vision-profile": 8,
+                                "dolby-vision-level": 4,
+                            }
+                        },
+                        "track-list": [
+                            {"id": 1, "type": "video", "selected": True, "dolby-vision-profile": 8}
+                        ],
+                    },
+                )
+
+            def __getitem__(self, name):
+                if name in self._options:
+                    return self._options[name]
+                raise AttributeError("mpv property does not exist", -8, f"options/{name}")
+
+            def __getattr__(self, name):
+                if "/" in name:
+                    raise AttributeError(f"slash path unsupported in top-level attr: {name}")
+                mpv_name = name.replace("_", "-")
+                if mpv_name in self._props:
+                    return self._props[mpv_name]
+                raise AttributeError(mpv_name)
+
+        player = TopLevelOnlyAttrDouble()
+        self.assertEqual(mpv_prop(player, "options/vid"), "auto")
+        self.assertEqual(mpv_prop(player, "video-params/w"), 1920)
+        self.assertEqual(mpv_prop(player, "video-params/gamma"), "hlg")
+        self.assertEqual(mpv_prop(player, "current-tracks/video/dolby-vision-profile"), 8)
+        self.assertEqual(mpv_prop(player, "current-tracks/video/dolby-vision-level"), 4)
+        self.assertEqual(mpv_prop(player, "track-list/0/dolby-vision-profile"), 8)
+        self.assertIsNone(mpv_prop(player, "video-params/nonexistent"))
+        self.assertEqual(
+            get_dovi_info({"colormatrix": "dolbyvision"}, player),
+            {"profile": 8, "level": 4, "unsupported": False},
+        )
+
+    def test_shutdown_error_aborts_lookup_immediately(self):
+        """ShutdownError during lookup must stop fallbacks and return default cleanly."""
+        import src.utils as utils_mod
+
+        class FakeShutdownError(SystemError):
+            pass
+
+        class DyingPlayer:
+            def __init__(self):
+                object.__setattr__(self, "calls", 0)
+
+            def __getitem__(self, key):
+                object.__setattr__(self, "calls", self.calls + 1)
+                raise FakeShutdownError("libmpv core has been shutdown")
+
+            def __getattr__(self, name):
+                object.__setattr__(self, "calls", self.calls + 1)
+                raise FakeShutdownError("libmpv core has been shutdown")
+
+        player = DyingPlayer()
+        with patch.object(utils_mod, "_MPV_SHUTDOWN_ERRORS", (FakeShutdownError,)):
+            self.assertIsNone(utils_mod.mpv_prop(player, "current-tracks/video/dolby-vision-profile"))
+            self.assertEqual(player.calls, 1)
+            self.assertEqual(utils_mod.mpv_prop(player, "options/vid", default="offline"), "offline")
+            self.assertEqual(player.calls, 2)
+
+    def test_mpv_prop_works_when_mpv_module_unavailable(self):
+        """src.utils must handle missing python-mpv/libmpv cleanly without depending on libmpv."""
+        import importlib.util
+        import pathlib
+        import sys
+
+        utils_path = pathlib.Path(__file__).resolve().parents[1] / "src" / "utils.py"
+        spec = importlib.util.spec_from_file_location("_test_utils_no_mpv", utils_path)
+        mod = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"mpv": None}):
+            spec.loader.exec_module(mod)
+        self.assertEqual(mod._MPV_SHUTDOWN_ERRORS, ())
+        self.assertEqual(mod._MPV_TYPES, ())
+        self.assertEqual(mod.mpv_prop({"path": "/x.mkv", "video-params": {"w": 1920}}, "video-params/w"), 1920)
+        self.assertEqual(mod.mpv_prop(None, "path", default="fallback"), "fallback")
+
+    def test_options_crop_changed_reads_video_params_via_mpv_prop(self):
+        """OptionsMenuButton._on_crop_changed must work via mpv_prop without _get_property."""
+        from types import SimpleNamespace
+        from src.options import OptionsMenuButton
+
+        commands = []
+
+        class CropPlayerDouble:
+            def __getitem__(self, name):
+                raise AttributeError("mpv property does not exist", -8, f"options/{name}")
+
+            def __getattr__(self, name):
+                if name == "video-params/w":
+                    return 3840
+                if name == "video-params/h":
+                    return 2160
+                raise AttributeError(name)
+
+            def command_async(self, *args):
+                commands.append(args)
+
+        menu = SimpleNamespace(
+            crop_reset_btn=MagicMock(),
+            _win=SimpleNamespace(mpv=CropPlayerDouble()),
+            _set_sensitive=MagicMock(),
+        )
+        # Index 2 in RATIOS is 4/3 (2160 * 4 / 3 = 2880 -> "2880x2160").
+        dropdown = SimpleNamespace(get_selected=lambda: 2)
+        OptionsMenuButton._on_crop_changed(menu, dropdown)
+        self.assertEqual(commands, [("set", "video-crop", "2880x2160")])
+        menu._set_sensitive.assert_called_once_with(menu.crop_reset_btn, True)
+
+
+@unittest.skipUnless(
+    os.environ.get("CINEHDR_RUN_MPV_INTEGRATION") == "1",
+    "Optional real libmpv integration test; set CINEHDR_RUN_MPV_INTEGRATION=1 to run",
+)
+class TestMpvPropRealMpvIntegration(unittest.TestCase):
+    """Optional out-of-process integration test against installed libmpv with no user config."""
+
+    def test_real_python_mpv_player_lifecycle_isolated(self):
+        import site
+        import subprocess
+        import sys
+        import tempfile
+
+        code = """
+import sys
+try:
+    import mpv
+except (ImportError, OSError):
+    sys.exit(77)
+
+from src.utils import mpv_prop
+
+p = mpv.MPV(vo="null", ao="null", config=False, input_default_bindings=False)
+try:
+    assert mpv_prop(p, "options/vid") == "auto"
+    assert mpv_prop(p, "vid") == "auto"
+    ver = mpv_prop(p, "mpv-version")
+    assert isinstance(ver, str) and ver.startswith("mpv")
+    assert mpv_prop(p, "path") is None
+    assert mpv_prop(p, "path", default="fallback") == "fallback"
+    assert mpv_prop(p, "current-tracks/video/dolby-vision-profile") is None
+finally:
+    p.terminate()
+
+assert mpv_prop(p, "vid") is None
+assert mpv_prop(p, "vid", default="offline") == "offline"
+assert mpv_prop(p, "path") is None
+"""
+        pythonpath_parts = [p for p in (os.environ.get("PYTHONPATH", ""), os.getcwd(), site.getusersitepackages()) if p]
+        with tempfile.TemporaryDirectory() as empty_cfg:
+            env = {
+                **os.environ,
+                "HOME": empty_cfg,
+                "XDG_CONFIG_HOME": empty_cfg,
+                "MPV_HOME": empty_cfg,
+                "PYTHONPATH": os.pathsep.join(pythonpath_parts),
+            }
+            proc = subprocess.run(
+                [sys.executable, "-c", code],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+        if proc.returncode == 77:
+            self.skipTest("python-mpv or libmpv unavailable")
+        self.assertEqual(proc.returncode, 0, f"Subprocess failed:\n{proc.stderr}")
 
 
 if __name__ == "__main__":

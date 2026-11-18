@@ -2,148 +2,197 @@
 
 ### CineHDR
 
-Play your videos with HDR support
+A GTK4 / libadwaita video player with native HDR output on Wayland.
 
 <br>
 
 [![Download Flatpak](https://img.shields.io/badge/Download-Flatpak%20(Releases)-283C54?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/rusmikev/CineHDR/releases)
 [![CI](https://github.com/rusmikev/CineHDR/actions/workflows/build-flatpak.yml/badge.svg)](https://github.com/rusmikev/CineHDR/actions/workflows/build-flatpak.yml)
 
----
+<p align="center"><img src="screenshots/video.png" alt="CineHDR playing a video"/></p>
 
-### 📢 CineHDR: AI-Enhanced HDR Fork
+## What it is
 
-> [!IMPORTANT]
-> **Disclaimer:** This repository is an independent fork of the original [Cine](https://github.com/diegopvlk/Cine) video player. 
-> The HDR implementation and UI modifications were co-developed with **Google Gemini (Advanced Agentic Coding AI)**. 
-> This software is provided **"as is"**, without warranty of any kind, express or implied. Use at your own risk.
->
-> **Дисклеймер:** Этот репозиторий является независимым форком оригинального видеоплеера [Cine](https://github.com/diegopvlk/Cine).
-> Поддержка HDR и изменения в интерфейсе разработаны совместно с **Google Gemini (Advanced Agentic Coding AI)**.
-> Программное обеспечение предоставляется **"как есть" (as is)**, без каких-либо явных или подразумеваемых гарантий.
+CineHDR is a fork of [Cine](https://github.com/diegopvlk/Cine) by Diego Povliuk, a
+clean mpv-based player for the GNOME desktop. Upstream Cine has no HDR output
+path. This fork adds one, so that HDR10 and HLG content is delivered to an HDR-enabled display through the Wayland
+color-management protocol.
 
-**Changes in this fork / Изменения в этом форке:**
-* Replaced standard `GtkGLArea` with a high-precision float rendering pipeline (`GL_RGBA16F` / `Rec.2100 PQ`).
-* Integrated GTK4 `GdkColorState` tagging (`rec2100-pq` / `srgb` textures) and `GtkGraphicsOffload` pipeline.
-* Built-in dynamic Wayland protocol probing (`wp_color_manager_v1` / `xx_color_manager_v4`) to automatically verify compositor and monitor HDR state before enabling PQ signaling.
-* Added a dedicated **HDR Settings** control icon on the playback panel (visible when playing HDR content) for real-time SDR/HDR switching and peak brightness adjustment.
-* Added experimental support for `libmpv`'s `gpu-next` rendering backend (`libplacebo` / Dolby Vision RPU pipeline).
-* Provided system integration launcher (**CineHDR**).
+**Status:** HDR10 and HLG output is verified on **GNOME 50/51 with AMD graphics**
+(see [Platform status](#platform-status)). Other desktops and GPUs are not yet
+verified. On unsupported setups the player falls back to normal SDR playback
+with tone mapping, exactly like upstream.
 
-**Known limitations / Известные ограничения:**
-* **Wayland Color Management Pipeline**: CineHDR prepares a true 16-bit `Rec.2100 PQ` surface and communicates target color states to GTK4. Preparing or publishing a PQ texture internally is client-side state and does NOT prove physical HDR presentation on the screen. End-to-end native HDR output requires:
-  1. Client-side texture publication (GDK float texture with `rec2100-pq` color state);
-  2. Protocol surface submission (L3p: `wp_color_management_surface_v1.set_image_description` + `wl_surface.commit` on the video surface);
-  3. Compositor presentation & physical display output (L4: visual verification on calibrated test patterns without clipping or unwanted tone-mapping).
-  * **GTK 4 Color Management Configuration**: In GTK 4 (4.18–4.24.0), Wayland color management is experimental and requires `GDK_DEBUG=color-mgmt`. Without this flag, GTK disables `wp_color_manager_v1`, causing surfaces to be mapped to sRGB (falling back to high-quality SDR tone mapping via `mpv`):
-    * **Flatpak (Default)**: In the installed Flatpak release (`cinehdr`), `GDK_DEBUG=color-mgmt` is enabled by default by the launcher before GTK initialization, preserving any other user-defined `GDK_DEBUG` flags. To opt out and disable automatic color management, set `CINEHDR_NO_COLOR_MGMT=1` (e.g., `flatpak run --env=CINEHDR_NO_COLOR_MGMT=1 io.github.rusmikev.CineHDR` or via `flatpak override --user --env=CINEHDR_NO_COLOR_MGMT=1 io.github.rusmikev.CineHDR`). Explicit `GDK_DEBUG=all:color-mgmt` is also respected as disabling color management.
-    * **Native & Development Runs (`run_dev.py`)**: For local development runs, color management remains opt-in to avoid modifying system environment defaults: use `CINEHDR_EXPERIMENTAL_COLOR_MGMT=1`, `--experimental-color-mgmt`, or export `GDK_DEBUG=color-mgmt`.
-  * **KDE Plasma (KWin)**: KWin advertises HDR capabilities (PQ, compound power 2.4) but does not advertise the `sRGB` transfer function (TF 9) in the tested protocol trace. GTK 4 requires `sRGB` to establish its baseline color space. CineHDR models GTK's policy (`gtk_cm_policy`); the intended SDR fallback still needs live KDE validation.
-  * **GNOME (Mutter)**: Mutter supports client color management for `wp_color_manager_v1` including `sRGB`. On GNOME ≥ 48, HDR is toggled directly per-monitor in **Settings → Displays** (no experimental flags needed); color management in GTK is enabled by default in the Flatpak build.
-* **Verified GNOME scope**: On GNOME/AMD, the legacy renderer passed HDR10 and HLG protocol submission and visual comparison with native mpv; a Dolby Vision Profile 8 clip passed as an HDR10-compatible base layer, without RPU processing. Live HDR mode, playlist, and monitor power transitions also passed on the single-monitor test setup. These observations do not establish photometric accuracy, frame-by-frame presentation, or behavior on KDE, Intel, or NVIDIA. The experimental `gpu-next` backend is outside this milestone.
-* **libmpv Render Backend Selection (`render-backend`)**: CineHDR distinguishes its internal video rendering backend in `libmpv` from GTK's scene-graph renderer (`GSK_RENDERER`):
-  * **Default**: `legacy` (`opengl` API) is the stable default backend.
-  * **Experimental `gpu-next`**: Available via persistent preference in **Preferences → Video** and **HDR & Video Output** menu (`render-backend: gpu-next`). Changing this setting saves the choice for the next normal launch and requires an application restart; live renderer swapping in a running process is not supported. If `opengl-next` context creation fails at startup, CineHDR falls back safely to `legacy` while preserving the saved preference for subsequent runs.
-  * **Developer Environment Override (`CINEHDR_RENDER_BACKEND`)**: Takes precedence over GSettings for testing:
-    * `CINEHDR_RENDER_BACKEND=gpu-next`: Strict mode; fails visibly if the experimental renderer cannot be created (no creation fallback).
-    * `CINEHDR_RENDER_BACKEND=auto`: Development mode with automatic fallback to `opengl` during context creation.
-    * `CINEHDR_RENDER_BACKEND=legacy`: Explicit legacy OpenGL.
-* **GTK Renderer Selection (`GSK_RENDERER`)**: Configures GTK's scene-graph renderer independently of the `libmpv` video backend (`legacy`/`gpu-next`). When `GSK_RENDERER` is not explicitly set by the user, CineHDR's policy (`gtk_cm_policy.apply_gsk_renderer_policy`) selects `gl` on GTK ≥ 4.18 and `ngl` on earlier GTK versions (< 4.18); under the Niri compositor (`NIRI_SOCKET` detected), it also defaults to `gl`. Any explicit user `GSK_RENDERER` environment variable is preserved as-is.
-* Check **HDR Diagnostics** in the playback menu for the live pipeline state, active renderer backend, compositor capabilities, and specific fallback reasons.
+## What this fork adds
 
----
+- **HDR rendering pipeline.** mpv renders into a floating-point `RGBA16F`
+  target tagged as Rec.2100 PQ; the frame reaches GTK as a `GdkGLTexture` with a
+  matching `GdkColorState` (via `GdkGLTextureBuilder`), and GTK passes the
+  color description to the compositor (`wp_color_manager_v1`).
+- **Runtime HDR detection.** A Wayland protocol probe reads what the compositor
+  and the monitor actually advertise, so HDR signaling is only enabled when the
+  output can take it. Unknown capabilities stay "Unknown", never guessed.
+- **HDR menu and diagnostics.** A playback-panel control for SDR/HDR switching
+  and peak brightness, plus an **HDR Diagnostics** dialog (and *Copy Report*)
+  showing the live pipeline: renderer backend, texture color state, compositor
+  capabilities, active `target-*` mpv settings, and the reason for any fallback.
+- **Validation tooling.** Automated checks that capture the Wayland protocol
+  trace and sample the rendered framebuffer, so that "HDR works" is backed by
+  recorded evidence instead of a claim. See [docs/TESTING.md](docs/TESTING.md).
+- **Experimental `gpu-next` backend** (libplacebo, Dolby Vision RPU path),
+  off by default and outside the 1.0 scope.
 
-### Verification & Platform Status / Статус проверки платформ
+Everything else (interface, playlists, audio/subtitle controls, video
+adjustments, MPRIS, translations) comes from upstream Cine.
 
-Testing status is recorded strictly per evidence levels defined in [docs/TESTING.md](docs/TESTING.md) (L2 = basic UI/playback integrity, L3p = Wayland protocol surface description & commit proof, L4 = visual comparison on test patterns):
+## Platform status
 
-| Environment / Окружение | Hardware & Stack | SDR Playback (L2) | mpv Reference (L3p) | HDR10 Protocol (L3p) | HDR10 Visual (L4) |
+Each result is recorded against the evidence levels defined in
+[docs/TESTING.md](docs/TESTING.md): **L2** playback works, **L3p** the client
+sent an HDR color description for the video surface and committed it on the
+Wayland protocol trace, **L4** visual comparison against mpv on a test pattern.
+
+| Environment | Stack | SDR playback (L2) | mpv reference (L3p) | HDR10 protocol (L3p) | HDR10 visual (L4) |
 |---|---|---|---|---|---|
-| **GNOME-AMD** | GNOME 50 / Mutter, AMD (Mesa) | **PASS** (2026-10-24) | **PASS** (2026-10-25) | **PASS** (2026-10-25; offload enabled 2026-11-02) | **PASS** (2026-10-30; visual comparison) |
-| **GNOME-Intel** | GNOME ≥ 48 / Mutter, Intel (Mesa) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
-| **GNOME-NVIDIA** | GNOME ≥ 48 / Mutter, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
-| **KDE-AMD** | Plasma ≥ 6.7 / KWin, AMD (Mesa) | `NOT_RUN` | N/A | N/A | N/A |
-| **KDE-NVIDIA** | Plasma ≥ 6.7 / KWin, NVIDIA (PRIME) | `NOT_RUN` | N/A | N/A | N/A |
+| **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** | **PASS** | **PASS** | **PASS** |
+| GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+| GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+| KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (three L2 runs; file open, playback, pause, seek, resize/fullscreen, and exit checked; logs reviewed; HDR/L3p not tested) | N/A | N/A | N/A |
+| KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | `NOT_RUN` | N/A | N/A | N/A |
 
-> [!NOTE]
-> Detailed per-scenario matrices, logs, and evidence requirements (including HLG, WCG-SDR, and runtime exit checks) are maintained in [docs/TESTING.md](docs/TESTING.md).
+`NOT_RUN` means not tested, not failing. Dates, builds and per-scenario detail
+are in [docs/TESTING.md](docs/TESTING.md). A Dolby Vision Profile 8 clip plays as
+its HDR10-compatible base layer (no RPU processing). These results do not
+establish photometric accuracy, frame-by-frame presentation, or behavior on
+other hardware.
 
----
+### Known limitations
 
-### Description
+- **GNOME ≥ 48 is required for native HDR.** Enable HDR per monitor in
+  *Settings → Displays*.
+- **KDE Plasma:** native HDR is deferred past 1.0. KWin no longer advertises the
+  `sRGB` transfer function that GTK 4.22+ requires, so GTK disables color
+  management; CineHDR then falls back to SDR tone mapping. The planned fix is an
+  upstream GTK change.
+- **Publishing an HDR texture is not proof of HDR on screen.** That needs the
+  protocol trace (L3p) and a visual check (L4), which is why the table above
+  separates them.
 
-CineHDR combines a clean interface with a high-performance engine to deliver a seamless viewing experience with HDR support.
+## Installation
 
-### Features
+### Pre-built Flatpak
 
-- **HDR & Color Management** — HDR content is rendered into a high-precision Rec.2100 PQ target with dynamic monitor-aware tone mapping and tri-state capability validation.
-- **Renderer Selection** — Support for both stable legacy OpenGL and experimental `gpu-next` (`libplacebo`) backends with automatic safe creation fallback.
-- **Simple Design** — A refined, distraction-free interface
-- **MPV-Based** — Leverages the robust power of MPV for great playback and format support
-- **Audio and Subtitles** — Control track selection and synchronization for both
-- **Video Controls** — Easily adjust brightness, contrast, zoom, aspect ratio, etc.
-
-### Screenshot
-
-<p align="center"><img src="screenshots/video.png" alt="Video Playing"/></p>
-
-<div>
-  <details>
-    <summary>More Screenshots (Expand):</summary><br>
-      <p align="center"><img height="943" src="screenshots/preferences.png" alt="Preferences"/></p>
-      <p align="center"><img src="screenshots/options.png" alt="Video Options"/></p>
-      <p align="center"><img src="screenshots/window.png" alt="Main Window"/></p>
-  </details>
-</div>
-
-### Donate (Upstream Project)
-
-If you want to support the original creator of Cine (Diego Povliuk), you can use:
-
-- [PayPal](https://www.paypal.com/donate?hosted_button_id=DVL7H35GA66X6)
-- [Ko-fi](https://ko-fi.com/diegopvlk)
-- Pix: diego.pvlk@gmail.com
-
-### Translations (Upstream Project)
-
-You can help translate upstream Cine using [Weblate](https://hosted.weblate.org/projects/cine/app/).
-Strings specific to this fork (the HDR menu and diagnostics) are not on Weblate — translation contributions for them are welcome as pull requests against `po/`.
-
-[![Translation status](https://hosted.weblate.org/widget/cine/app/multi-auto.svg)](https://hosted.weblate.org/engage/cine/)
-
-
-### Code of Conduct
-
-This project follows the [GNOME Code of Conduct](https://conduct.gnome.org).
-
-### Installation / Установка
-
-For general users, the easiest way to install **CineHDR** is using Flatpak:
-
-#### Option A: Pre-built Flatpak (Fastest) / Готовая сборка Flatpak
-1. Open the [GitHub Releases](https://github.com/rusmikev/CineHDR/releases) page and choose the desired release (including prereleases, when appropriate).
-2. Download its `CineHDR-x86_64.flatpak` asset.
-3. Install it by running the following command in your terminal:
+1. Open the [Releases](https://github.com/rusmikev/CineHDR/releases) page.
+2. Download `CineHDR-x86_64.flatpak` from the latest release.
+3. Install it:
    ```bash
    flatpak install --user CineHDR-x86_64.flatpak
+   flatpak run io.github.rusmikev.CineHDR
    ```
 
-#### Option B: Build Flatpak from source / Сборка Flatpak из исходников
-If you want to compile the Flatpak bundle yourself:
-1. Ensure `flatpak` and `flatpak-builder` are installed on your system.
-2. Add the Flathub repository (required for runtime dependencies):
-   ```bash
-   flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-   ```
-3. Build and install the application:
-   ```bash
-   flatpak-builder --user --install --force-clean build-dir build-aux/flatpak/io.github.rusmikev.CineHDR.json
-   ```
+### Build the Flatpak from source
 
-#### Option C: Native compilation / Локальная сборка
-1. Install development dependencies (`meson`, `ninja`, `python3-mpv`, and dependencies for GTK4/Adwaita).
-2. Clone the repo, open it in GNOME Builder and press run, or compile it manually using:
-   ```bash
-   meson setup build
-   meson compile -C build
-   ```
+```bash
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+git clone --recurse-submodules https://github.com/rusmikev/CineHDR.git
+cd CineHDR
+flatpak-builder --user --install --force-clean build-dir \
+  build-aux/flatpak/io.github.rusmikev.CineHDR.json
+flatpak run io.github.rusmikev.CineHDR
+```
+
+### Native build (development)
+
+Requires `meson`, `ninja`, `python3-mpv`, GTK4, libadwaita and blueprint-compiler.
+
+```bash
+meson setup build
+meson compile -C build
+meson test -C build --print-errorlogs
+python3 run_dev.py /path/to/video.mkv
+```
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HDR pipeline: mpv → FBO → GdkGLTexture → GSK → Wayland, and the invariants of each stage |
+| [docs/TESTING.md](docs/TESTING.md) | Test matrix, evidence levels (L1–L4), evidence bundle format |
+| [docs/PLAN.md](docs/PLAN.md) | Release plan, decisions D1–D13, task status |
+| [docs/adr/](docs/adr/) | Architecture decision records |
+| [tools/validation/README.md](tools/validation/README.md) | Validation tools: what each one proves and how to run it |
+| [AGENTS.md](AGENTS.md) | Engineering rules for AI coding agents working on this repository |
+| [CHANGELOG.md](CHANGELOG.md) | Changes by release |
+
+## How this project is built
+
+CineHDR is developed by its owner with AI coding assistants: first Google
+Gemini, then OpenAI ChatGPT, and now Anthropic Claude. Most of the HDR
+code was written by these assistants under written rules ([AGENTS.md](AGENTS.md))
+and an evidence protocol ([docs/TESTING.md](docs/TESTING.md)). The owner sets
+the goals and runs every hardware check; an assistant never claims a result it
+did not see. The software is provided **as is**, without warranty of any kind.
+
+## Credits and license
+
+- [Cine](https://github.com/diegopvlk/Cine) by Diego Povliuk and contributors is
+  the foundation of this project. To support the original author:
+  [Ko-fi](https://ko-fi.com/diegopvlk) · [PayPal](https://www.paypal.com/donate?hosted_button_id=DVL7H35GA66X6).
+- Built on [mpv](https://mpv.io), GTK4 and libadwaita.
+- Translations of upstream strings are managed on
+  [Weblate](https://hosted.weblate.org/projects/cine/app/). Strings specific to
+  this fork (HDR menu and diagnostics) are not on Weblate; pull requests
+  against `po/` are welcome.
+- Licensed under the [GNU GPL v3](LICENSE). This project follows the
+  [GNOME Code of Conduct](https://conduct.gnome.org).
+
+---
+
+## Configuration reference
+
+<details>
+<summary>GTK color management (<code>GDK_DEBUG=color-mgmt</code>)</summary>
+
+In GTK 4.18–4.24, Wayland color management is experimental. Without
+`GDK_DEBUG=color-mgmt`, GTK disables `wp_color_manager_v1` and surfaces are
+treated as sRGB, so playback falls back to SDR tone mapping in mpv.
+
+- **Flatpak (default):** the launcher enables `GDK_DEBUG=color-mgmt` before GTK
+  initializes and preserves any other `GDK_DEBUG` flags. To opt out, set
+  `CINEHDR_NO_COLOR_MGMT=1`, for example
+  `flatpak override --user --env=CINEHDR_NO_COLOR_MGMT=1 io.github.rusmikev.CineHDR`.
+  An explicit `GDK_DEBUG=all:color-mgmt` is also respected as disabling it.
+- **Native / `run_dev.py`:** opt-in, so system defaults are not modified. Use
+  `CINEHDR_EXPERIMENTAL_COLOR_MGMT=1`, `--experimental-color-mgmt`, or export
+  `GDK_DEBUG=color-mgmt`.
+
+</details>
+
+<details>
+<summary>Render backend (<code>render-backend</code>) and GTK renderer (<code>GSK_RENDERER</code>)</summary>
+
+CineHDR distinguishes mpv's internal video backend from GTK's scene-graph
+renderer.
+
+- **`render-backend`** (Preferences → Video, or the HDR & Video Output menu):
+  `legacy` (the `opengl` libmpv API) is the stable default; `gpu-next` is
+  experimental. Changing it takes effect on the next launch; live switching is
+  not supported. If `gpu-next` context creation fails at startup, CineHDR falls
+  back to `legacy` and keeps the saved preference.
+- **`CINEHDR_RENDER_BACKEND`** (developer override, takes precedence over
+  GSettings): `legacy`; `auto` (automatic fallback to `opengl` on creation
+  failure); `gpu-next` (strict, fails visibly).
+- **`GSK_RENDERER`:** if unset, CineHDR selects `gl` on GTK ≥ 4.18 (`ngl` on
+  older GTK, `gl` under Niri). An explicit user value is always kept.
+
+</details>
+
+<details>
+<summary>Reading the HDR Diagnostics report</summary>
+
+Open **HDR Diagnostics** from the playback menu for the live pipeline state,
+active renderer backend, compositor capabilities, and specific fallback
+reasons. *Copy Report* produces the same text for bug reports; it contains no
+personal paths or media names.
+
+</details>

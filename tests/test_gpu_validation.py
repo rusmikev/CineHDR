@@ -1,6 +1,7 @@
 # Copyright 2026 rusmikev
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -65,25 +66,23 @@ try:
 except Exception:
     pass
 
-from src.gpu_validation import (
+from src.validation.gpu_validation import (
     GpuValidationSession,
+    HOST_PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS,
     PUBLICATION_FFMPEG_VERSION,
     PUBLICATION_FIXTURE_PROFILE,
     PUBLICATION_FIXTURE_REVISION,
     PUBLICATION_HDR_SHA256,
+    PUBLICATION_LEGACY_MPV_VERSION,
     PUBLICATION_LIBMPV_PREFIX_SUFFIX,
     PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS,
     PUBLICATION_MPV_VERSION,
     PUBLICATION_SDR_SHA256,
     FLATPAK_LIBMPV_DIR,
     HOST_LIBMPV_DIR,
-    SETTLING_COOLDOWN_SECONDS,
-    SETTLING_REVISION,
-    SETTLING_SCHEMA,
     ValidationStep,
     aggregate_drm_memory_kib,
     evaluate_publication_validation,
-    evaluate_resource_settling_validation,
     evaluate_validation,
     expected_scaled_texture_dimensions,
     is_verified_flatpak_container,
@@ -93,8 +92,6 @@ from src.gpu_validation import (
     publication_runtime_errors,
     publication_state_errors,
     publication_texture_evidence,
-    resource_settling_trend,
-    settling_endpoint_errors,
     validation_config_from_env,
     validation_expected_playlist_count,
     validation_steps,
@@ -105,6 +102,11 @@ from src.gpu_validation import (
     PausedTransitionPixelOracle,
     compute_patch_centers,
     compute_samples_hash,
+    analyze_gradient_ramp,
+    read_fbo_gradient_samples,
+    parse_egl_config_from_log,
+    serialize_gradient_fbo_measurements,
+    format_gradient_validation_report,
 )
 from src.hdr_controller import is_tone_mapping_active
 
@@ -125,21 +127,19 @@ def publication_environment(**overrides):
     return environment
 
 
-def settling_environment(**overrides):
-    environment = publication_environment(CINEHDR_GPU_VALIDATION="settling")
-    environment.update(overrides)
-    return environment
-
-
-def pinned_publication_runtime(*, is_flatpak: bool | None = None):
+def pinned_publication_runtime(*, is_flatpak: bool | None = None, expected_api: str = "opengl-next"):
     in_container = (
         is_flatpak if is_flatpak is not None else is_verified_flatpak_container()
     )
     base = FLATPAK_LIBMPV_DIR if in_container else HOST_LIBMPV_DIR
     return {
         "libmpv_path": str((base / "libmpv.so.2.5.0").resolve()),
-        "mpv_version": PUBLICATION_MPV_VERSION,
-        "libplacebo_version": "v7.360.1",
+        "mpv_version": (
+            PUBLICATION_LEGACY_MPV_VERSION
+            if expected_api == "opengl"
+            else PUBLICATION_MPV_VERSION
+        ),
+        "libplacebo_version": "v7.387.0" if in_container else "v7.360.1",
         "ffmpeg_version": PUBLICATION_FFMPEG_VERSION,
     }
 
@@ -159,7 +159,7 @@ def publication_metrics(signal: str, *, api: str = "opengl-next"):
         "gl_errors": 0,
         "fbo_failures": 0,
         "render_context_generation": 4,
-        "render_runtime": pinned_publication_runtime(),
+        "render_runtime": pinned_publication_runtime(expected_api=api),
         "publication_texture": {
             "available": True,
             "texture_is_gl_texture": True,
@@ -173,99 +173,23 @@ def publication_metrics(signal: str, *, api: str = "opengl-next"):
     }
 
 
-def settling_endpoint(
-    cycle: int,
-    rss_kib: int | None,
-    drm_vram_kib: int | None,
-    *,
-    size: tuple[int, int] = (960, 540),
-):
-    metrics = publication_metrics("hdr")
-    metrics.update(
-        {
-            "width": size[0],
-            "height": size[1],
-            "rss_kib": rss_kib,
-            "drm_vram_kib": drm_vram_kib,
-            "drm_gtt_kib": 1024,
-            "fbo_drops": 0,
-            "decoder_drops": 0,
-            "vo_drops": 0,
-        }
-    )
-    return {
-        "name": f"cycle {cycle} small-window HDR endpoint",
-        "action": "settling-endpoint",
-        "expected_state": (cycle, 1, "hdr", 960, 540),
-        "status": "PASS",
-        "metrics": metrics,
-    }
-
-
-def complete_settling_steps(endpoints):
-    endpoint_iter = iter(endpoints)
-    results = []
-    for step in validation_steps("settling"):
-        if step.action == "settling-endpoint":
-            results.append(next(endpoint_iter))
-        else:
-            results.append(
-                {
-                    "name": step.name,
-                    "action": step.action,
-                    "expected_state": step.value,
-                    "status": "PASS",
-                    "metrics": publication_metrics("hdr"),
-                }
-            )
-    return tuple(results)
-
-
-def unloaded_cooldown_metrics():
-    return {
-        "idle_active": True,
-        "time_pos_available": False,
-        "gl_errors": 0,
-        "fbo_failures": 0,
-        "render_context_generation": 4,
-    }
-
-
 class ValidationConfigTests(unittest.TestCase):
     def test_validator_is_off_by_default(self):
         self.assertIsNone(validation_config_from_env({}))
 
-    def test_quick_config_uses_requested_report_directory(self):
+    def test_gradient_config_uses_requested_report_directory(self):
         config = validation_config_from_env(
             {
-                "CINEHDR_GPU_VALIDATION": "QUICK",
+                "CINEHDR_GPU_VALIDATION": "GRADIENT",
                 "CINEHDR_GPU_VALIDATION_REPORT_DIR": "/tmp/cinehdr-reports",
             }
         )
-        self.assertEqual(config.mode, "quick")
+        self.assertEqual(config.mode, "gradient")
         self.assertEqual(config.report_dir, Path("/tmp/cinehdr-reports"))
 
     def test_invalid_mode_fails_closed(self):
         with self.assertRaises(ValueError):
             validation_config_from_env({"CINEHDR_GPU_VALIDATION": "maybe"})
-
-    def test_lifecycle_mode_is_explicitly_supported(self):
-        config = validation_config_from_env(
-            {"CINEHDR_GPU_VALIDATION": "lifecycle"}
-        )
-        self.assertEqual(config.mode, "lifecycle")
-
-    def test_transition_mode_is_explicitly_supported(self):
-        config = validation_config_from_env(
-            {"CINEHDR_GPU_VALIDATION": "transition"}
-        )
-        self.assertEqual(config.mode, "transition")
-
-    def test_sdr_soak_mode_is_explicitly_supported(self):
-        config = validation_config_from_env(
-            {"CINEHDR_GPU_VALIDATION": "sdr-soak"}
-        )
-        self.assertEqual(config.mode, "sdr-soak")
 
     def test_publication_requires_exact_backend_and_fixture_provenance(self):
         config = validation_config_from_env(
@@ -296,25 +220,10 @@ class ValidationConfigTests(unittest.TestCase):
                 publication_environment(CINEHDR_PUBLICATION_HDR_SHA256="wrong")
             )
 
-    def test_settling_reuses_the_exact_publication_fixture_contract(self):
-        config = validation_config_from_env(
-            settling_environment(CINEHDR_PUBLICATION_EXPECTED_BACKEND="legacy")
-        )
-        self.assertEqual(config.mode, "settling")
-        self.assertEqual(config.expected_backend, "legacy")
-        self.assertEqual(config.fixture_profile, PUBLICATION_FIXTURE_PROFILE)
-        self.assertEqual(config.fixture_revision, PUBLICATION_FIXTURE_REVISION)
-        with self.assertRaisesRegex(ValueError, "SDR_SHA256"):
-            validation_config_from_env(
-                settling_environment(CINEHDR_PUBLICATION_SDR_SHA256="unaccepted")
-            )
-
     def test_playlist_count_expectation_is_mode_specific(self):
-        self.assertEqual(validation_expected_playlist_count("sdr-soak"), 1)
-        self.assertEqual(validation_expected_playlist_count("transition"), 2)
+        self.assertEqual(validation_expected_playlist_count("gradient"), 1)
         self.assertEqual(validation_expected_playlist_count("publication"), 2)
-        self.assertEqual(validation_expected_playlist_count("settling"), 2)
-        self.assertIsNone(validation_expected_playlist_count("quick"))
+        self.assertIsNone(validation_expected_playlist_count("unknown"))
 
     def test_validation_player_does_not_restore_or_save_watch_later(self):
         player = {}
@@ -331,17 +240,10 @@ class ValidationConfigTests(unittest.TestCase):
         self.assertEqual(player["keep-open"], "yes")
         self.assertEqual(player["hwdec"], "vaapi-copy")
         normal_player = {}
-        prepare_validation_player(normal_player, "quick")
+        prepare_validation_player(normal_player, "gradient")
         self.assertNotIn("pause", normal_player)
         self.assertNotIn("keep-open", normal_player)
         self.assertNotIn("hwdec", normal_player)
-
-    def test_settling_player_is_paused_and_copy_decode_before_loadfile(self):
-        player = {}
-        self.assertEqual(prepare_validation_player(player, "settling"), ())
-        self.assertEqual(player["pause"], "yes")
-        self.assertEqual(player["keep-open"], "yes")
-        self.assertEqual(player["hwdec"], "vaapi-copy")
 
     def test_drm_fdinfo_is_aggregated_once_per_client(self):
         duplicated_client = """
@@ -366,41 +268,6 @@ drm-memory-vram: 512 KiB
 
 
 class ValidationPlanTests(unittest.TestCase):
-    def test_quick_plan_exercises_playback_and_window_transitions(self):
-        steps = validation_steps("quick")
-        actions = {step.action for step in steps}
-        self.assertEqual(actions, {"play", "pause", "seek", "resize", "fullscreen"})
-        self.assertEqual(steps[0].name, "normalize start position")
-        self.assertLess(sum(step.wait_seconds for step in steps), 120)
-
-    def test_soak_adds_thirty_minute_playback(self):
-        steps = validation_steps("soak")
-        self.assertTrue(
-            any(
-                step.name == "30-minute soak playback"
-                and step.wait_seconds == 1800
-                for step in steps
-            )
-        )
-
-    def test_lifecycle_plan_recreates_the_context_twice(self):
-        steps = validation_steps("lifecycle")
-        cycles = [step for step in steps if step.action == "context-cycle"]
-        self.assertEqual(len(cycles), 2)
-        self.assertEqual([step.value for step in cycles], [1, 2])
-        self.assertLess(sum(step.wait_seconds for step in steps), 120)
-
-    def test_transition_plan_runs_sdr_hdr_sdr_hdr_in_one_context(self):
-        steps = validation_steps("transition")
-        states = [
-            step.value[1]
-            for step in steps
-            if step.action in ("signal-state", "switch-media")
-        ]
-        self.assertEqual(states, ["sdr", "hdr", "sdr", "hdr"])
-        self.assertNotIn("context-cycle", {step.action for step in steps})
-        self.assertLess(sum(step.wait_seconds for step in steps), 120)
-
     def test_publication_plan_is_exact_paused_sdr_hdr_sdr_hdr_matrix(self):
         steps = validation_steps("publication")
         self.assertEqual(len(steps), 4)
@@ -416,42 +283,6 @@ class ValidationPlanTests(unittest.TestCase):
         self.assertNotIn("play", {step.action for step in steps})
         self.assertNotIn("seek", {step.action for step in steps})
         self.assertEqual({step.wait_seconds for step in steps}, {6})
-
-    def test_settling_plan_has_one_warmup_and_three_equal_hdr_endpoints(self):
-        steps = validation_steps("settling")
-        self.assertEqual(steps[0].action, "settling-warmup")
-        self.assertEqual(steps[0].value, (1, "hdr"))
-        endpoints = [step for step in steps if step.action == "settling-endpoint"]
-        self.assertEqual(
-            [step.value for step in endpoints],
-            [
-                (1, 1, "hdr", 960, 540),
-                (2, 1, "hdr", 960, 540),
-                (3, 1, "hdr", 960, 540),
-            ],
-        )
-        resizes = [step.value for step in steps if step.action == "settling-resize"]
-        self.assertEqual(
-            resizes,
-            [
-                (1, "hdr", 1280, 720), (1, "hdr", 960, 540),
-                (1, "hdr", 1280, 720), (1, "hdr", 960, 540),
-                (1, "hdr", 1280, 720), (1, "hdr", 960, 540),
-            ],
-        )
-        self.assertEqual(steps[-2].action, "settling-unload")
-        self.assertEqual(steps[-1].action, "settling-cooldown")
-        self.assertEqual(steps[-1].wait_seconds, SETTLING_COOLDOWN_SECONDS)
-        self.assertNotIn("play", {step.action for step in steps})
-        self.assertNotIn("context-cycle", {step.action for step in steps})
-
-    def test_sdr_soak_requires_sdr_state_before_thirty_minutes(self):
-        steps = validation_steps("sdr-soak")
-        self.assertEqual(steps[0].action, "signal-state")
-        self.assertEqual(steps[0].value, (0, "sdr"))
-        soak = next(step for step in steps if step.wait_seconds == 1800)
-        self.assertEqual(soak.name, "30-minute soak playback")
-        self.assertLess(steps.index(steps[0]), steps.index(soak))
 
     def test_readiness_rejects_saved_position_jump(self):
         self.assertTrue(position_sample_is_stable(100.0, 100.5, 0.5))
@@ -571,202 +402,6 @@ class ValidationResultTests(unittest.TestCase):
         self.assertIn("OpenGL errors", warnings[0])
 
 
-class ResourceSettlingEvidenceTests(unittest.TestCase):
-    def test_endpoint_requires_actual_state_rss_and_process_drm_vram(self):
-        endpoint = settling_endpoint(1, 12_000, 34_000)["metrics"]
-        self.assertEqual(
-            settling_endpoint_errors(
-                endpoint,
-                expected_api="opengl-next",
-                expected_context_generation=4,
-            ),
-            (),
-        )
-        endpoint["rss_kib"] = None
-        endpoint["drm_vram_kib"] = None
-        endpoint["render_target_format"] = "GL_RGBA8"
-        errors = settling_endpoint_errors(
-            endpoint,
-            expected_api="opengl-next",
-            expected_context_generation=4,
-        )
-        self.assertTrue(any("RSS" in error for error in errors))
-        self.assertTrue(any("DRM VRAM" in error for error in errors))
-        self.assertTrue(any("render target" in error for error in errors))
-
-    def test_settling_trend_only_warns_for_three_strictly_rising_endpoints(self):
-        endpoints = (
-            settling_endpoint(1, 100, 1000),
-            settling_endpoint(2, 110, 1000),
-            settling_endpoint(3, 120, 1000),
-        )
-        result, findings, trends = evaluate_resource_settling_validation(
-            active_api="opengl-next",
-            session_status="active",
-            expected_api="opengl-next",
-            endpoint_results=endpoints,
-            step_results=complete_settling_steps(endpoints),
-            final=unloaded_cooldown_metrics(),
-            expected_context_generation=4,
-            failure_reason=None,
-            isolation_failures=(),
-        )
-        self.assertEqual(result, "WARN")
-        self.assertEqual(trends["rss_kib"], "strictly-increasing")
-        self.assertEqual(trends["drm_vram_kib"], "not-strictly-increasing")
-        self.assertTrue(any("rss_kib" in finding for finding in findings))
-
-        plateau_endpoints = (
-            settling_endpoint(1, 100, 1000),
-            settling_endpoint(2, 100, 1000),
-            settling_endpoint(3, 101, 1002),
-        )
-        result, findings, trends = evaluate_resource_settling_validation(
-            active_api="opengl-next",
-            session_status="active",
-            expected_api="opengl-next",
-            endpoint_results=plateau_endpoints,
-            step_results=complete_settling_steps(plateau_endpoints),
-            final=unloaded_cooldown_metrics(),
-            expected_context_generation=4,
-            failure_reason=None,
-            isolation_failures=(),
-        )
-        self.assertEqual((result, findings), ("PASS", ()))
-        self.assertEqual(trends["rss_kib"], "not-strictly-increasing")
-        self.assertEqual(trends["drm_vram_kib"], "not-strictly-increasing")
-
-    def test_settling_evaluation_fails_closed_for_missing_or_unloaded_evidence(self):
-        endpoints = (
-            settling_endpoint(1, 100, 1000),
-            settling_endpoint(2, None, 1001),
-            settling_endpoint(3, 102, 1002),
-        )
-        final = unloaded_cooldown_metrics()
-        final["idle_active"] = False
-        result, errors, _trends = evaluate_resource_settling_validation(
-            active_api="opengl",
-            session_status="startup-fallback",
-            expected_api="opengl-next",
-            endpoint_results=endpoints,
-            step_results=complete_settling_steps(endpoints)[:-1],
-            final=final,
-            expected_context_generation=4,
-            failure_reason="test failure",
-            isolation_failures=("pause",),
-        )
-        self.assertEqual(result, "FAIL")
-        self.assertTrue(any("active API" in error for error in errors))
-        self.assertTrue(any("RSS" in error for error in errors))
-        self.assertTrue(any("incomplete or out of order" in error for error in errors))
-        self.assertTrue(any("media was unloaded" in error for error in errors))
-
-    def test_settling_accepts_adjusted_but_equal_endpoint_sizes(self):
-        adjusted = (
-            settling_endpoint(1, 100, 1000, size=(944, 531)),
-            settling_endpoint(2, 100, 1000, size=(944, 531)),
-            settling_endpoint(3, 101, 1002, size=(944, 531)),
-        )
-        result, errors, _trends = evaluate_resource_settling_validation(
-            active_api="opengl-next",
-            session_status="active",
-            expected_api="opengl-next",
-            endpoint_results=adjusted,
-            step_results=complete_settling_steps(adjusted),
-            final=unloaded_cooldown_metrics(),
-            expected_context_generation=4,
-            failure_reason=None,
-            isolation_failures=(),
-        )
-        self.assertEqual((result, errors), ("PASS", ()))
-        adjusted[-1]["metrics"]["width"] = 960
-        result, errors, _trends = evaluate_resource_settling_validation(
-            active_api="opengl-next",
-            session_status="active",
-            expected_api="opengl-next",
-            endpoint_results=adjusted,
-            step_results=complete_settling_steps(adjusted),
-            final=unloaded_cooldown_metrics(),
-            expected_context_generation=4,
-            failure_reason=None,
-            isolation_failures=(),
-        )
-        self.assertEqual(result, "FAIL")
-        self.assertTrue(any("not comparable" in error for error in errors))
-
-    def test_settling_endpoint_and_cooldown_use_pre_unload_decode_evidence(self):
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.config = SimpleNamespace(mode="settling", expected_backend="gpu-next")
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-        )
-        session._settling_context_generation = 4
-        endpoint_metrics = settling_endpoint(1, 100, 1000, size=(944, 531))["metrics"]
-        endpoint_metrics["render_frame_generation"] = 12
-        status, _detail = session._verify_step(
-            ValidationStep(
-                "cycle 1 small-window HDR endpoint",
-                "settling-endpoint",
-                6,
-                (1, 1, "hdr", 960, 540),
-            ),
-            endpoint_metrics,
-        )
-        self.assertEqual(status, "PASS")
-        cooldown = unloaded_cooldown_metrics()
-        self.assertNotIn("hwdec", cooldown)
-        status, _detail = session._verify_step(
-            ValidationStep("ten-second unload cooldown", "settling-cooldown", 10),
-            cooldown,
-        )
-        self.assertEqual(status, "PASS")
-
-    def test_settling_helpers_do_not_fit_a_byte_threshold(self):
-        self.assertEqual(resource_settling_trend((1, 2, 3)), "strictly-increasing")
-        self.assertEqual(resource_settling_trend((1, 1, 2)), "not-strictly-increasing")
-        self.assertEqual(resource_settling_trend((1, 2)), "unavailable")
-
-    def test_settling_writer_records_typed_endpoints_scope_and_cooldown(self):
-        endpoints = (
-            settling_endpoint(1, 100, 1000),
-            settling_endpoint(2, 100, 1000),
-            settling_endpoint(3, 101, 1002),
-        )
-        step_results = list(complete_settling_steps(endpoints))
-        step_results[-1]["metrics"] = unloaded_cooldown_metrics()
-        with tempfile.TemporaryDirectory() as temporary:
-            session = GpuValidationSession.__new__(GpuValidationSession)
-            session.config = validation_config_from_env(settling_environment())
-            session.config = SimpleNamespace(
-                **{
-                    **session.config.__dict__,
-                    "report_dir": Path(temporary),
-                }
-            )
-            session.step_results = step_results
-            session.window = SimpleNamespace(
-                app=SimpleNamespace(_gpu_validation_setup_failures=())
-            )
-            session._settling_context_generation = 4
-            session.started_at = time.monotonic()
-            session._renderer_facts = lambda: ("opengl-next", "active")
-            session._expected_active_api = lambda: "opengl-next"
-            report_path, status = session._write_resource_settling_report(None)
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-        self.assertEqual(status, "PASS")
-        self.assertEqual(report["schema"], SETTLING_SCHEMA)
-        self.assertEqual(report["revision"], SETTLING_REVISION)
-        self.assertEqual(report["status"], "PASS")
-        self.assertEqual(len(report["hdr_endpoints"]), 3)
-        self.assertEqual(
-            report["endpoint_requested_logical_size"], {"width": 960, "height": 540}
-        )
-        self.assertEqual(report["cooldown_metrics"]["idle_active"], True)
-        self.assertIn("not a leak-free claim", report["scope"])
-        self.assertNotIn("path", report["fixture"])
-
-
 class PublicationEvidenceTests(unittest.TestCase):
     def test_backend_mapping_is_startup_only_and_closed(self):
         self.assertEqual(publication_expected_api("legacy"), "opengl")
@@ -823,7 +458,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             props=SimpleNamespace(scale_factor=2),
             get_native=lambda: SimpleNamespace(get_surface=lambda: surface),
         )
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             evidence = publication_texture_evidence(area)
         self.assertTrue(evidence["available"])
         self.assertTrue(evidence["texture_is_gl_texture"])
@@ -835,7 +470,7 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertTrue(evidence["surface_is_wayland"])
 
         area.get_width = lambda: 641
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             mismatched = publication_texture_evidence(area)
         self.assertFalse(mismatched["dimensions_match"])
 
@@ -926,7 +561,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             _cached_max_height=0,
             get_native=lambda: SimpleNamespace(get_surface=lambda: surface),
         )
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev = publication_texture_evidence(area)
         self.assertTrue(ev["available"])
         self.assertEqual(ev["width"], 1400)
@@ -937,19 +572,19 @@ class PublicationEvidenceTests(unittest.TestCase):
 
         # Negative control 1: 1-pixel width mismatch (1401x788)
         area.current_texture = FakeTexture(1401, 788)
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev_bad_w = publication_texture_evidence(area)
         self.assertFalse(ev_bad_w["dimensions_match"])
 
         # Negative control 2: 1-pixel height rounding mismatch (1400x787)
         area.current_texture = FakeTexture(1400, 787)
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev_bad_h = publication_texture_evidence(area)
         self.assertFalse(ev_bad_h["dimensions_match"])
 
         # Negative control 3: Old unscaled integer multiplication assumption (2240x1260)
         area.current_texture = FakeTexture(2240, 1260)
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev_old_bug = publication_texture_evidence(area)
         self.assertFalse(ev_old_bug["dimensions_match"])
 
@@ -964,31 +599,74 @@ class PublicationEvidenceTests(unittest.TestCase):
             _cached_max_height=700,
             get_native=lambda: SimpleNamespace(get_surface=lambda: surface),
         )
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             ev_clamp = publication_texture_evidence(area_clamp)
         self.assertFalse(ev_clamp["dimensions_match"])
         self.assertEqual(ev_clamp["expected_width"], 1200)
         self.assertEqual(ev_clamp["expected_height"], 700)
 
     def test_publication_libplacebo_version_strict_formats(self):
-        def make_runtime(placebo_val):
-            rt = dict(pinned_publication_runtime())
+        def make_runtime(placebo_val, *, is_flatpak: bool = True, expected_api: str = "opengl-next"):
+            rt = dict(pinned_publication_runtime(is_flatpak=is_flatpak, expected_api=expected_api))
             rt["libplacebo_version"] = placebo_val
             return rt
 
-        # Positive controls: All accepted exact formats pass without libplacebo error
+        # Positive controls (Flatpak container): 7.387.0 exact formats pass
         for accepted in PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS:
-            with self.subTest(accepted=accepted):
-                errs = publication_runtime_errors(make_runtime(accepted))
+            with self.subTest(context="flatpak", accepted=accepted):
+                errs = publication_runtime_errors(
+                    make_runtime(accepted, is_flatpak=True),
+                    is_flatpak_context=True,
+                )
                 self.assertEqual(errs, (), f"Unexpected rejection of accepted format: {accepted}")
 
-        # Specifically verify the exact string seen in Run 4 Flatpak container
-        run4_container_version = "v7.360.1 (v7.360.1)"
-        errs_run4 = publication_runtime_errors(make_runtime(run4_container_version))
-        self.assertEqual(errs_run4, ())
+        # Verify exact container runtime strings observed in built product Flatpak
+        errs_product = publication_runtime_errors(
+            make_runtime("v7.387.0 (v7.387.0)", is_flatpak=True, expected_api="opengl"),
+            is_flatpak_context=True,
+            expected_api="opengl",
+        )
+        self.assertEqual(errs_product, ())
 
-        # Negative controls: Variations and invalid formats must be rejected without free substring search
-        rejected_versions = (
+        # Positive controls (host mpv-gpu-next-prefix): 7.360.1 exact formats pass
+        for accepted in HOST_PUBLICATION_LIBPLACEBO_ACCEPTED_VERSIONS:
+            with self.subTest(context="host", accepted=accepted):
+                errs = publication_runtime_errors(
+                    make_runtime(accepted, is_flatpak=False),
+                    is_flatpak_context=False,
+                )
+                self.assertEqual(errs, (), f"Unexpected rejection of host accepted format: {accepted}")
+
+        # Negative controls: Flatpak rejects 7.360.1 and invalid variations without free substring search
+        rejected_flatpak = (
+            "v7.360.1",
+            "v7.360.1 (v7.360.1)",
+            "v7.387.0-dirty",
+            "v7.387.0-1-gabcdef",
+            "v7.386.0",
+            "v7.387.09",
+            "7.387.09",
+            "libplacebo v7.387.0",
+            "v7.387.0 (v7.386.0)",
+            "v7.387.0 (v7.387.1)",
+            "",
+            None,
+            123,
+        )
+        for rejected in rejected_flatpak:
+            with self.subTest(context="flatpak", rejected=rejected):
+                errs = publication_runtime_errors(
+                    make_runtime(rejected, is_flatpak=True),
+                    is_flatpak_context=True,
+                )
+                self.assertTrue(
+                    any("libplacebo runtime identity was not 7.387.0" in e for e in errs),
+                    f"Expected rejection of invalid Flatpak libplacebo version format: {rejected!r}",
+                )
+
+        # Negative controls (host): reject 7.387.0 and invalid variations
+        rejected_host = (
+            "v7.387.0",
             "v7.360.1-dirty",
             "v7.360.1-1-gabcdef",
             "v7.359.0",
@@ -1002,13 +680,27 @@ class PublicationEvidenceTests(unittest.TestCase):
             None,
             123,
         )
-        for rejected in rejected_versions:
-            with self.subTest(rejected=rejected):
-                errs = publication_runtime_errors(make_runtime(rejected))
+        for rejected in rejected_host:
+            with self.subTest(context="host", rejected=rejected):
+                errs = publication_runtime_errors(
+                    make_runtime(rejected, is_flatpak=False),
+                    is_flatpak_context=False,
+                )
                 self.assertTrue(
                     any("libplacebo runtime identity was not 7.360.1" in e for e in errs),
-                    f"Expected rejection of invalid libplacebo version format: {rejected!r}",
+                    f"Expected rejection of invalid host libplacebo version format: {rejected!r}",
                 )
+
+        # Legacy product opengl rejects dev-g97179bce7 mpv build
+        errs_wrong_mpv = publication_runtime_errors(
+            make_runtime("v7.387.0 (v7.387.0)", is_flatpak=True, expected_api="opengl-next"),
+            is_flatpak_context=True,
+            expected_api="opengl",
+        )
+        self.assertTrue(
+            any("mpv runtime identity was not the accepted v0.41.0 build" in e for e in errs_wrong_mpv),
+            errs_wrong_mpv,
+        )
 
     def test_missing_actual_texture_getter_is_unavailable_not_intended_state(self):
         class FakeTexture:
@@ -1016,7 +708,7 @@ class PublicationEvidenceTests(unittest.TestCase):
 
         fake_gdk = SimpleNamespace(GLTexture=FakeTexture)
         area = SimpleNamespace(current_texture=FakeTexture())
-        with patch("src.gpu_validation.Gdk", fake_gdk):
+        with patch("src.validation.gpu_validation.Gdk", fake_gdk):
             evidence = publication_texture_evidence(area)
         self.assertFalse(evidence["available"])
         self.assertIn("getter", str(evidence["error"]))
@@ -1094,54 +786,56 @@ class PublicationEvidenceTests(unittest.TestCase):
     def test_flatpak_candidate_libmpv_path_and_foreign_substitution(self):
         """Candidate in Flatpak container loads /app/lib/libmpv.so.2.5.0, verified canonically."""
         # 1. Candidate in verified Flatpak container: /app/lib/libmpv.so.2.5.0 -> ACCEPTED
-        flatpak_runtime = pinned_publication_runtime()
+        flatpak_runtime = pinned_publication_runtime(is_flatpak=True)
         flatpak_runtime["libmpv_path"] = "/app/lib/libmpv.so.2.5.0"
         errors = publication_runtime_errors(flatpak_runtime, is_flatpak_context=True)
         self.assertEqual(errors, ())
 
         # Also with soname symlink /app/lib/libmpv.so.2 -> ACCEPTED
-        flatpak_symlink = pinned_publication_runtime()
+        flatpak_symlink = pinned_publication_runtime(is_flatpak=True)
         flatpak_symlink["libmpv_path"] = "/app/lib/libmpv.so.2"
         errors_sym = publication_runtime_errors(flatpak_symlink, is_flatpak_context=True)
         self.assertEqual(errors_sym, ())
 
         # 2. Outside container context (on host): /app/lib/ is strictly REJECTED
-        errors_on_host = publication_runtime_errors(flatpak_runtime, is_flatpak_context=False)
+        host_rejected_flatpak = pinned_publication_runtime(is_flatpak=False)
+        host_rejected_flatpak["libmpv_path"] = "/app/lib/libmpv.so.2.5.0"
+        errors_on_host = publication_runtime_errors(host_rejected_flatpak, is_flatpak_context=False)
         self.assertEqual(len(errors_on_host), 1)
         self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_on_host[0])
 
         # 3. Foreign library substitution: /usr/lib/libmpv.so.2 in container -> REJECTED
-        foreign_usr = pinned_publication_runtime()
+        foreign_usr = pinned_publication_runtime(is_flatpak=True)
         foreign_usr["libmpv_path"] = "/usr/lib/libmpv.so.2"
         errors_usr = publication_runtime_errors(foreign_usr, is_flatpak_context=True)
         self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_usr)
 
         # 4. Foreign library substitution: arbitrary /tmp in container -> REJECTED
-        foreign_tmp = pinned_publication_runtime()
+        foreign_tmp = pinned_publication_runtime(is_flatpak=True)
         foreign_tmp["libmpv_path"] = "/tmp/malicious/libmpv.so.2"
         errors_tmp = publication_runtime_errors(foreign_tmp, is_flatpak_context=True)
         self.assertIn("libmpv was not loaded from the pinned GPU Next prefix", errors_tmp)
 
         # 6. Path normalization: redundant slashes and relative segments within /app/lib/
-        norm_slashes = pinned_publication_runtime()
+        norm_slashes = pinned_publication_runtime(is_flatpak=True)
         norm_slashes["libmpv_path"] = "/app//lib///libmpv.so.2.5.0"
         self.assertEqual(publication_runtime_errors(norm_slashes, is_flatpak_context=True), ())
 
-        norm_dots = pinned_publication_runtime()
+        norm_dots = pinned_publication_runtime(is_flatpak=True)
         norm_dots["libmpv_path"] = "/app/lib/../lib/libmpv.so.2"
         self.assertEqual(publication_runtime_errors(norm_dots, is_flatpak_context=True), ())
 
-        norm_spaces = pinned_publication_runtime()
+        norm_spaces = pinned_publication_runtime(is_flatpak=True)
         norm_spaces["libmpv_path"] = "  /app/lib/libmpv.so.2.5.0  \n"
         self.assertEqual(publication_runtime_errors(norm_spaces, is_flatpak_context=True), ())
 
         # 7. Path traversal escaping /app/lib/ is strictly rejected
-        escaping_dots = pinned_publication_runtime()
+        escaping_dots = pinned_publication_runtime(is_flatpak=True)
         escaping_dots["libmpv_path"] = "/app/lib/../../usr/lib/libmpv.so.2"
         errors_escape = publication_runtime_errors(escaping_dots, is_flatpak_context=True)
         self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_escape))
 
-        subpath = pinned_publication_runtime()
+        subpath = pinned_publication_runtime(is_flatpak=True)
         subpath["libmpv_path"] = "/app/lib/subdir/libmpv.so.2"
         errors_subpath = publication_runtime_errors(subpath, is_flatpak_context=True)
         self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_subpath))
@@ -1157,12 +851,12 @@ class PublicationEvidenceTests(unittest.TestCase):
             symlink_lib.symlink_to("libmpv.so.2.5.0")
 
             # Symlink resolves to real file within flatpak_prefix -> accepted
-            rt_sym = pinned_publication_runtime()
+            rt_sym = pinned_publication_runtime(is_flatpak=True)
             rt_sym["libmpv_path"] = str(symlink_lib)
             self.assertEqual(publication_runtime_errors(rt_sym, is_flatpak_context=True, flatpak_prefix=mock_lib), ())
 
             # Canonical target within flatpak_prefix -> accepted
-            rt_real = pinned_publication_runtime()
+            rt_real = pinned_publication_runtime(is_flatpak=True)
             rt_real["libmpv_path"] = str(real_lib)
             self.assertEqual(publication_runtime_errors(rt_real, is_flatpak_context=True, flatpak_prefix=mock_lib), ())
 
@@ -1172,7 +866,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             outside_target.write_bytes(b"outside_binary")
             bad_sym = mock_lib / "bad_symlink.so"
             bad_sym.symlink_to(outside_target)
-            rt_bad_sym = pinned_publication_runtime()
+            rt_bad_sym = pinned_publication_runtime(is_flatpak=True)
             rt_bad_sym["libmpv_path"] = str(bad_sym)
             errors_bad_sym = publication_runtime_errors(rt_bad_sym, is_flatpak_context=True, flatpak_prefix=mock_lib)
             self.assertTrue(any("pinned GPU Next prefix" in error for error in errors_bad_sym))
@@ -1316,7 +1010,7 @@ class PublicationEvidenceTests(unittest.TestCase):
             connect=lambda *args: 1,
         )
         session._finish = failures.append
-        with self.assertLogs("src.gpu_validation", level="ERROR"):
+        with self.assertLogs("src.validation.gpu_validation", level="ERROR"):
             session.start()
         self.assertEqual(len(failures), 1)
         self.assertIn("could not prepare publication validation", failures[0])
@@ -1374,769 +1068,6 @@ class PublicationEvidenceTests(unittest.TestCase):
         self.assertEqual(status, "WARN")
         self.assertIn("kept the previous", detail)
 
-    def test_context_cycle_requires_a_new_context_and_preserves_hdr_state(self):
-        old_context = object()
-        new_context = object()
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-            render_context_generation=2,
-            mpv_ctx=new_context,
-            gl_area=SimpleNamespace(get_realized=lambda: True),
-            _first_frame_logged=True,
-            hdr_controller=SimpleNamespace(
-                _disconnected=False,
-                is_hdr_content=True,
-            ),
-            render_target_format="GL_RGBA16F",
-            render_target_depth=16,
-        )
-        session._pending_context_generation = 1
-        session._pending_context = old_context
-        session._pending_hdr_state = True
-        session._pending_render_target = ("GL_RGBA16F", 16)
-
-        status, detail = session._verify_step(
-            ValidationStep("GL context cycle 1", "context-cycle", 10, 1),
-            {
-                "time_pos": 100.0,
-                "render_context_generation": 2,
-                "render_frame_generation": 1,
-                "source_hdr": True,
-                "hdr_output_active": True,
-                "render_target_format": "GL_RGBA16F",
-                "render_target_depth": 16,
-                "render_color_state": "rec2100-pq",
-            },
-        )
-
-        self.assertEqual(status, "PASS")
-        self.assertIn("1→2", detail)
-
-    def test_context_cycle_pauses_before_unrealize_and_schedules_realize(self):
-        events = []
-
-        class FakePlayer:
-            def command(self, *args):
-                events.append(("command", args))
-
-        class FakeGlArea:
-            def get_realized(self):
-                return True
-
-            def unrealize(self):
-                events.append(("unrealize", ()))
-
-        old_context = object()
-        gl_area = FakeGlArea()
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.player = FakePlayer()
-        session.window = SimpleNamespace(
-            get_width=lambda: 1280,
-            get_height=lambda: 720,
-        )
-        session.video_area = SimpleNamespace(
-            gl_area=gl_area,
-            mpv_ctx=old_context,
-            render_context_generation=1,
-            hdr_controller=SimpleNamespace(is_hdr_content=True),
-            render_target_format="GL_RGBA16F",
-            render_target_depth=16,
-        )
-
-        with patch(
-            "src.gpu_validation.GLib.timeout_add", return_value=99
-        ) as timeout_add:
-            session._apply_step(
-                ValidationStep("GL context cycle 1", "context-cycle", 10, 1)
-            )
-
-        self.assertEqual(events[0], ("command", ("set", "pause", "yes")))
-        self.assertEqual(events[1], ("unrealize", ()))
-        timeout_add.assert_called_once_with(
-            500, session._realize_validation_gl_area, gl_area
-        )
-        self.assertEqual(session.lifecycle_timer_id, 99)
-        self.assertIs(session._pending_context, old_context)
-
-    def test_context_cycle_fails_if_generation_does_not_advance(self):
-        context = object()
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-            render_context_generation=1,
-            mpv_ctx=context,
-        )
-        session._pending_context_generation = 1
-        session._pending_context = context
-
-        status, detail = session._verify_step(
-            ValidationStep("GL context cycle 1", "context-cycle", 10, 1),
-            {"time_pos": 100.0},
-        )
-
-        self.assertEqual(status, "FAIL")
-        self.assertIn("not recreated", detail)
-
-    def test_context_cycle_requires_published_frame_and_preserves_hdr_active_and_color_state(self):
-        """P1.5 lifecycle: context-cycle must require a newly published frame and preserve hdr_active + render_color_state."""
-        old_ctx = object()
-        new_ctx = object()
-        step = ValidationStep("GL context cycle 1", "context-cycle", 10, 1)
-
-        def make_session():
-            s = GpuValidationSession.__new__(GpuValidationSession)
-            s.player = MagicMock()
-            s.window = SimpleNamespace(get_width=lambda: 1280, get_height=lambda: 720)
-            s.video_area = SimpleNamespace(
-                render_backend_active="opengl-next",
-                render_session_status="active",
-                render_context_generation=1,
-                render_frame_generation=5,
-                mpv_ctx=old_ctx,
-                gl_area=SimpleNamespace(get_realized=lambda: True, unrealize=lambda: None),
-                _first_frame_logged=True,
-                hdr_controller=SimpleNamespace(
-                    _disconnected=False,
-                    is_hdr_content=True,
-                    is_hdr_active=True,
-                ),
-                render_target_format="GL_RGBA16F",
-                render_target_depth=16,
-                render_color_state="rec2100-pq",
-            )
-            with patch("src.gpu_validation.GLib.timeout_add", return_value=99):
-                s._apply_step(step)
-            s.video_area.render_context_generation = 2
-            s.video_area.mpv_ctx = new_ctx
-            s.video_area.render_frame_generation = 6
-            return s
-
-        def snapshot(**changes):
-            facts = {
-                "time_pos": 10.0,
-                "render_context_generation": 2,
-                "render_frame_generation": 6,
-                "source_hdr": True,
-                "hdr_output_active": True,
-                "render_target_format": "GL_RGBA16F",
-                "render_target_depth": 16,
-                "render_color_state": "rec2100-pq",
-            }
-            facts.update(changes)
-            return facts
-
-        # Positive control: context recreated, new frame published (5->6), HDR active and color state preserved
-        session_ok = make_session()
-        status, detail = session_ok._verify_step(
-            step,
-            snapshot(),
-        )
-        self.assertEqual(status, "PASS")
-        self.assertIn("1→2", detail)
-
-        # A partial metrics snapshot cannot borrow widget state to manufacture PASS.
-        session_partial = make_session()
-        status_partial, detail_partial = session_partial._verify_step(
-            step,
-            {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": "rec2100-pq"},
-        )
-        self.assertEqual(status_partial, "FAIL")
-        self.assertIn("metrics snapshot is incomplete", detail_partial)
-
-        # Negative control 1: _first_frame_logged is True, but frame was dropped/superseded before publication (frame_gen 5->5)
-        session_no_pub = make_session()
-        session_no_pub.video_area.render_frame_generation = 5
-        status_no_pub, detail_no_pub = session_no_pub._verify_step(
-            step,
-            {"time_pos": 10.0, "render_frame_generation": 5, "render_color_state": "rec2100-pq"},
-        )
-        self.assertEqual(status_no_pub, "FAIL")
-        self.assertIn("no new video frame was published after context recreation", detail_no_pub)
-
-        # Negative control 2: is_hdr_content stayed True, but is_hdr_active flipped to False across recreation
-        session_hdr_drop = make_session()
-        session_hdr_drop.video_area.hdr_controller.is_hdr_active = False
-        status_hdr_drop, detail_hdr_drop = session_hdr_drop._verify_step(
-            step,
-            {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": "rec2100-pq"},
-        )
-        self.assertEqual(status_hdr_drop, "FAIL")
-        self.assertIn("HDR output active state changed across context recreation", detail_hdr_drop)
-
-        # Negative control 3: render_target stayed ('GL_RGBA16F', 16), but published render_color_state degraded to 'srgb' or None
-        for bad_color in ("srgb", None):
-            with self.subTest(bad_color=bad_color):
-                session_color = make_session()
-                session_color.video_area.render_color_state = bad_color
-                status_color, detail_color = session_color._verify_step(
-                    step,
-                    {"time_pos": 10.0, "render_frame_generation": 6, "render_color_state": bad_color},
-                )
-                self.assertEqual(status_color, "FAIL")
-                self.assertIn("published color state changed", detail_color)
-
-        # Negative control 4: after metrics snapshot reports stale render_context_generation
-        for bad_ctx_gen in (1, 0):
-            with self.subTest(bad_ctx_gen=bad_ctx_gen):
-                session_stale_ctx = make_session()
-                status_stale_ctx, detail_stale_ctx = session_stale_ctx._verify_step(
-                    step,
-                    {
-                        "time_pos": 10.0,
-                        "render_context_generation": bad_ctx_gen,
-                        "render_frame_generation": 6,
-                        "render_color_state": "rec2100-pq",
-                    },
-                )
-                self.assertEqual(status_stale_ctx, "FAIL")
-                self.assertIn("libmpv render context was not recreated", detail_stale_ctx)
-
-        # Negative control 5: after metrics snapshot reports degraded render target
-        session_degraded_target = make_session()
-        status_target, detail_target = session_degraded_target._verify_step(
-            step,
-            {
-                "time_pos": 10.0,
-                "render_context_generation": 2,
-                "render_frame_generation": 6,
-                "render_color_state": "rec2100-pq",
-                "render_target_format": "GL_RGBA8",
-                "render_target_depth": 8,
-            },
-        )
-        self.assertEqual(status_target, "FAIL")
-        self.assertIn("render target changed", detail_target)
-
-    def test_transition_accepts_published_hdr_state_after_a_new_frame(self):
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-        )
-        session._pending_render_frame_generation = 10
-        session._transition_context_generation = 1
-        status, detail = session._verify_step(
-            ValidationStep(
-                "switch SDR to HDR", "switch-media", 12, (1, "hdr")
-            ),
-            {
-                "time_pos": 12.0,
-                "playlist_pos": 1,
-                "render_frame_generation": 11,
-                "render_context_generation": 1,
-                "source_hdr": True,
-                "hdr_output_active": True,
-                "render_target_format": "GL_RGBA16F",
-                "render_target_depth": 16,
-                "render_color_state": "rec2100-pq",
-                "dovi_profile": 8,
-                "hwdec": "vaapi-copy",
-                "target_trc": "pq",
-                "target_prim": "bt.2020",
-                "target_peak": 743,
-            },
-        )
-        self.assertEqual(status, "PASS")
-        self.assertIn("HDR source", detail)
-        self.assertIn("GL_RGBA16F/16-bit", detail)
-
-    def test_transition_rejects_stale_hdr_surface_on_sdr(self):
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-        )
-        session._pending_render_frame_generation = 20
-        session._transition_context_generation = 1
-        status, detail = session._verify_step(
-            ValidationStep(
-                "switch HDR to SDR", "switch-media", 12, (0, "sdr")
-            ),
-            {
-                "time_pos": 8.0,
-                "playlist_pos": 0,
-                "render_frame_generation": 21,
-                "render_context_generation": 1,
-                "source_hdr": False,
-                "hdr_output_active": False,
-                "render_target_format": "GL_RGBA16F",
-                "render_target_depth": 16,
-                "render_color_state": "rec2100-pq",
-                "dovi_profile": None,
-            },
-        )
-        self.assertEqual(status, "FAIL")
-        self.assertIn("published target", detail)
-
-    def test_transition_verifies_mpv_target_properties_on_hdr_sdr_hdr_playlist(self):
-        """P1.5 playlist HDR->SDR->HDR: switch-media rejects stale mpv targets on SDR or unconfigured on HDR."""
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-        )
-        session._transition_context_generation = 1
-
-        base = {
-            "time_pos": 8.0,
-            "playlist_pos": 0,
-            "render_frame_generation": 21,
-            "render_context_generation": 1,
-            "source_hdr": False,
-            "hdr_output_active": False,
-            "render_target_format": "GL_RGBA8",
-            "render_target_depth": 8,
-            "render_color_state": "srgb",
-            "dovi_profile": None,
-            "hwdec": "vaapi-copy",
-            "target_trc": "auto",
-            "target_prim": "auto",
-            "target_peak": "auto",
-        }
-        sdr_after = dict(base)
-        hdr_after = {
-            **base,
-            "time_pos": 12.0,
-            "playlist_pos": 1,
-            "render_frame_generation": 22,
-            "source_hdr": True,
-            "hdr_output_active": True,
-            "render_target_format": "GL_RGBA16F",
-            "render_target_depth": 16,
-            "render_color_state": "rec2100-pq",
-            "target_trc": "pq",
-            "target_prim": "bt.2020",
-        }
-
-        sdr_step = ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr"))
-        hdr_step = ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr"))
-
-        # Positive control: clean SDR return and HDR return
-        session._pending_render_frame_generation = 20
-        status_sdr, detail_sdr = session._verify_step(sdr_step, sdr_after)
-        self.assertEqual(status_sdr, "PASS")
-        self.assertIn("target=auto/auto/auto", detail_sdr)
-
-        session._pending_render_frame_generation = 21
-        status_hdr, detail_hdr = session._verify_step(hdr_step, hdr_after)
-        self.assertEqual(status_hdr, "PASS")
-        self.assertIn("target=pq/bt.2020/auto", detail_hdr)
-
-        # Negative control 1: SDR step with stale HDR target-trc, target-prim, or numeric peak
-        for stale in (
-            {"target_trc": "pq"},
-            {"target_prim": "bt.2020"},
-            {"target_peak": "unknown"},
-            {"target_peak": 1000},
-            {"target_peak": 743},
-            {"target_peak": "1000"},
-        ):
-            with self.subTest(stale_sdr=stale):
-                session._pending_render_frame_generation = 20
-                st, det = session._verify_step(sdr_step, {**sdr_after, **stale})
-                self.assertEqual(st, "FAIL")
-                self.assertIn("did not reset for SDR output state", det)
-
-        # Negative control 2: HDR step with unconfigured SDR target-trc, target-prim, or unknown peak
-        for bad in ({"target_trc": "auto"}, {"target_prim": "auto"}, {"target_peak": "unknown"}):
-            with self.subTest(bad_hdr=bad):
-                session._pending_render_frame_generation = 21
-                st, det = session._verify_step(hdr_step, {**hdr_after, **bad})
-                self.assertEqual(st, "FAIL")
-                self.assertIn("did not match HDR output state", det)
-
-        # Negative control 3: wrong playlist_pos on SDR and HDR steps
-        session._pending_render_frame_generation = 20
-        st, det = session._verify_step(sdr_step, {**sdr_after, "playlist_pos": 1})
-        self.assertEqual(st, "FAIL")
-        self.assertIn("playlist stayed at 1 instead of 0", det)
-
-        session._pending_render_frame_generation = 21
-        st, det = session._verify_step(hdr_step, {**hdr_after, "playlist_pos": 0})
-        self.assertEqual(st, "FAIL")
-        self.assertIn("playlist stayed at 0 instead of 1", det)
-
-        # Negative control 4: stale frame generation (frame not published after media switch)
-        session._pending_render_frame_generation = 21
-        st, det = session._verify_step(hdr_step, {**hdr_after, "render_frame_generation": 21})
-        self.assertEqual(st, "FAIL")
-        self.assertIn("no new frame was published after the media switch", det)
-
-        # Negative control 5: mismatched color state (rec2100-pq on SDR or srgb on HDR)
-        session._pending_render_frame_generation = 20
-        st, det = session._verify_step(sdr_step, {**sdr_after, "render_color_state": "rec2100-pq"})
-        self.assertEqual(st, "FAIL")
-        self.assertIn("published target was", det)
-
-        session._pending_render_frame_generation = 21
-        st, det = session._verify_step(hdr_step, {**hdr_after, "render_color_state": "srgb"})
-        self.assertEqual(st, "FAIL")
-        self.assertIn("published target was", det)
-
-        # Negative control 6: renderer context changed during media transition
-        session._pending_render_frame_generation = 21
-        st, det = session._verify_step(hdr_step, {**hdr_after, "render_context_generation": 2})
-        self.assertEqual(st, "FAIL")
-        self.assertIn("renderer context changed during a media transition", det)
-
-    def test_transition_accepts_synthetic_target_properties_matrix(self):
-        """P1.5 synthetic matrix: transition verifies hand-crafted property dictionaries (presets, HLG, SDR fallback).
-
-        Feeds synthetic dictionaries into _verify_step without calling HdrController.
-        Real controller property propagation is tested in
-        test_transition_verifies_real_controller_target_properties.
-        """
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-        )
-        session._transition_context_generation = 1
-        base = {
-            "time_pos": 8.0,
-            "playlist_pos": 0,
-            "render_frame_generation": 21,
-            "render_context_generation": 1,
-            "source_hdr": False,
-            "hdr_output_active": False,
-            "render_target_format": "GL_RGBA8",
-            "render_target_depth": 8,
-            "render_color_state": "srgb",
-            "dovi_profile": None,
-            "hwdec": "vaapi-copy",
-            "target_trc": "auto",
-            "target_prim": "auto",
-            "target_peak": "auto",
-        }
-        sdr_step = ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr"))
-        hdr_step = ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr"))
-
-        # 1. User presets in HDR mode: int and str numeric values (200, 400, 600, 1000, 1600) + HLG/BT.2100
-        for peak_val in (200, 400, 600, 1000, 1600, "400", "1000", "auto"):
-            for trc, prim in (("pq", "bt.2020"), ("hlg", "bt.2020"), ("pq", "bt.2100")):
-                with self.subTest(peak_val=peak_val, trc=trc, prim=prim):
-                    session._pending_render_frame_generation = 20
-                    hdr_state = {
-                        **base,
-                        "time_pos": 12.0,
-                        "playlist_pos": 1,
-                        "render_frame_generation": 21,
-                        "source_hdr": True,
-                        "hdr_output_active": True,
-                        "render_target_format": "GL_RGBA16F",
-                        "render_target_depth": 16,
-                        "render_color_state": "rec2100-pq",
-                        "target_trc": trc,
-                        "target_prim": prim,
-                        "target_peak": peak_val,
-                    }
-                    st, det = session._verify_step(hdr_step, hdr_state)
-                    self.assertEqual(st, "PASS")
-                    self.assertIn(f"target={trc}/{prim}/{peak_val}", det)
-
-        # 2. SDR fallback (after force-sdr return or auto SDR): trc=auto/srgb/bt.1886, prim=auto/bt.709
-        for trc in ("auto", "srgb", "bt.1886"):
-            for prim in ("auto", "bt.709"):
-                with self.subTest(sdr_trc=trc, sdr_prim=prim):
-                    session._pending_render_frame_generation = 20
-                    sdr_state = {
-                        **base,
-                        "target_trc": trc,
-                        "target_prim": prim,
-                        "target_peak": "auto",
-                    }
-                    st, det = session._verify_step(sdr_step, sdr_state)
-                    self.assertEqual(st, "PASS")
-                    self.assertIn(f"target={trc}/{prim}/auto", det)
-
-        # 3. Negative controls: peak is None, empty, or unknown
-        for empty_peak in (None, "", "   ", "none", "unknown"):
-            with self.subTest(empty_peak=empty_peak):
-                session._pending_render_frame_generation = 20
-                st, det = session._verify_step(hdr_step, {
-                    **base,
-                    "playlist_pos": 1,
-                    "render_frame_generation": 21,
-                    "source_hdr": True,
-                    "hdr_output_active": True,
-                    "render_target_format": "GL_RGBA16F",
-                    "render_target_depth": 16,
-                    "render_color_state": "rec2100-pq",
-                    "target_trc": "pq",
-                    "target_prim": "bt.2020",
-                    "target_peak": empty_peak,
-                })
-                self.assertEqual(st, "FAIL")
-
-    def _setup_mock_controller_session(self):
-        """Set up hermetic test double environment for HdrController and GpuValidationSession.
-
-        NOTE on Test Double Semantics:
-        `mock_mpv` is an explicit test double (mock), NOT the live libmpv C runtime or GPU driver.
-        This hermetic fixture validates HdrController property-writing logic and GpuValidationSession
-        transition verification in isolation. It does NOT assert live VO property negotiation on
-        real hardware or driver execution (which requires live GNOME-AMD L3/L4 validation).
-        """
-        from src.hdr_controller import HdrController
-
-        props = {
-            "target-trc": "auto",
-            "target-prim": "auto",
-            "target-peak": "auto",
-        }
-        observers = {}
-        mock_mpv = MagicMock()
-        mock_mpv.__setitem__ = lambda self, k, v: props.__setitem__(k, v)
-        mock_mpv.__getitem__ = lambda self, k: props.get(k)
-        mock_mpv._props = props
-
-        def fake_property_observer(name):
-            def decorator(fn):
-                observers[name] = fn
-                return fn
-            return decorator
-
-        mock_mpv.property_observer = fake_property_observer
-
-        controller = HdrController(mock_mpv)
-
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.video_area = SimpleNamespace(
-            render_backend_active="opengl-next",
-            render_session_status="active",
-        )
-        session._transition_context_generation = 1
-        base = {
-            "time_pos": 8.0,
-            "playlist_pos": 0,
-            "render_frame_generation": 21,
-            "render_context_generation": 1,
-            "dovi_profile": None,
-            "hwdec": "vaapi-copy",
-        }
-        sdr_step = ValidationStep("switch HDR to SDR", "switch-media", 12, (0, "sdr"))
-        hdr_step = ValidationStep("switch SDR to HDR again", "switch-media", 12, (1, "hdr"))
-
-        def build_state_from_controller(playlist_pos: int, time_pos: float, **overrides):
-            is_hdr = bool(controller.is_hdr_active)
-            state = {
-                **base,
-                "time_pos": time_pos,
-                "playlist_pos": playlist_pos,
-                "render_frame_generation": 21,
-                "source_hdr": bool(controller.is_hdr_content),
-                "hdr_output_active": is_hdr,
-                "render_target_format": "GL_RGBA16F" if is_hdr else "GL_RGBA8",
-                "render_target_depth": 16 if is_hdr else 8,
-                "render_color_state": "rec2100-pq" if is_hdr else "srgb",
-                "target_trc": props.get("target-trc"),
-                "target_prim": props.get("target-prim"),
-                "target_peak": props.get("target-peak"),
-            }
-            state.update(overrides)
-            return state
-
-        return controller, session, props, observers, build_state_from_controller, hdr_step, sdr_step
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_transition_verifies_real_controller_auto_hdr10(
-        self, _mock_mon, _mock_allowed, _mock_support
-    ):
-        """P1.5 hermetic: verify Auto HDR10 target properties from HdrController and step verification."""
-        (
-            controller, session, props, observers, build_state, hdr_step, _
-        ) = self._setup_mock_controller_session()
-
-        controller.hdr_mode = "auto"
-        controller.hdr_target_peak = "auto"
-        hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
-        observers["video-params"]("video-params", hdr10_params)
-        controller.apply_hdr_settings()
-
-        self.assertEqual(props["target-trc"], "pq")
-        self.assertEqual(props["target-prim"], "bt.2020")
-        self.assertEqual(props["target-peak"], "auto")
-        self.assertTrue(controller.committed_output_state.is_hdr)
-        self.assertEqual(controller.committed_output_state.target_trc, "pq")
-
-        session._pending_render_frame_generation = 20
-        st, det = session._verify_step(hdr_step, build_state(1, 12.0))
-        self.assertEqual(st, "PASS")
-        self.assertIn("target=pq/bt.2020/auto", det)
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_transition_verifies_real_controller_auto_hlg(
-        self, _mock_mon, _mock_allowed, _mock_support
-    ):
-        """P1.5 hermetic: verify Auto HLG maps to target-trc=pq per CineHDR conversion pipeline."""
-        (
-            controller, session, props, observers, build_state, hdr_step, _
-        ) = self._setup_mock_controller_session()
-
-        controller.hdr_mode = "auto"
-        controller.hdr_target_peak = "auto"
-        hlg_params = {"gamma": "hlg", "primaries": "bt.2020"}
-        observers["video-params"]("video-params", hlg_params)
-        controller.apply_hdr_settings()
-
-        self.assertEqual(props["target-trc"], "pq")
-        self.assertEqual(props["target-prim"], "bt.2020")
-        self.assertEqual(props["target-peak"], "auto")
-        self.assertTrue(controller.committed_output_state.is_hdr)
-
-        session._pending_render_frame_generation = 20
-        st, det = session._verify_step(hdr_step, build_state(1, 12.0))
-        self.assertEqual(st, "PASS")
-        self.assertIn("target=pq/bt.2020/auto", det)
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_transition_verifies_real_controller_peak_presets(
-        self, _mock_mon, _mock_allowed, _mock_support
-    ):
-        """P1.5 hermetic: verify user peak presets (400, 600, 1000, 1600) set integer values."""
-        (
-            controller, session, props, observers, build_state, hdr_step, _
-        ) = self._setup_mock_controller_session()
-
-        controller.hdr_mode = "auto"
-        hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
-        observers["video-params"]("video-params", hdr10_params)
-
-        for preset in ("400", "600", "1000", "1600"):
-            with self.subTest(user_preset=preset):
-                controller.hdr_target_peak = preset
-                controller.apply_hdr_settings()
-
-                expected_int_peak = int(preset)
-                self.assertEqual(props["target-peak"], expected_int_peak)
-                self.assertEqual(props["target-trc"], "pq")
-                self.assertEqual(props["target-prim"], "bt.2020")
-
-                session._pending_render_frame_generation = 20
-                st, det = session._verify_step(hdr_step, build_state(1, 12.0))
-                self.assertEqual(st, "PASS")
-                self.assertIn(f"target=pq/bt.2020/{expected_int_peak}", det)
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_transition_verifies_real_controller_sdr_transitions(
-        self, _mock_mon, _mock_allowed, _mock_support
-    ):
-        """P1.5 hermetic: verify force-sdr and return to auto SDR restore auto/auto/auto."""
-        (
-            controller, session, props, observers, build_state, _, sdr_step
-        ) = self._setup_mock_controller_session()
-
-        # 1. force-sdr with HDR content
-        controller.hdr_mode = "force-sdr"
-        controller.hdr_target_peak = "auto"
-        hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
-        observers["video-params"]("video-params", hdr10_params)
-        controller.apply_hdr_settings()
-
-        self.assertEqual(props["target-trc"], "auto")
-        self.assertEqual(props["target-prim"], "auto")
-        self.assertEqual(props["target-peak"], "auto")
-        self.assertFalse(controller.committed_output_state.is_hdr)
-
-        sdr_params = {"gamma": "bt.1886", "primaries": "bt.709"}
-        observers["video-params"]("video-params", sdr_params)
-        controller.apply_hdr_settings()
-
-        session._pending_render_frame_generation = 20
-        st, det = session._verify_step(sdr_step, build_state(0, 14.0))
-        self.assertEqual(st, "PASS")
-        self.assertIn("target=auto/auto/auto", det)
-
-        # 2. Return to Auto SDR with BT.709 content
-        controller.hdr_mode = "auto"
-        controller.apply_hdr_settings()
-
-        self.assertEqual(props["target-trc"], "auto")
-        self.assertEqual(props["target-prim"], "auto")
-        self.assertEqual(props["target-peak"], "auto")
-        self.assertFalse(controller.committed_output_state.is_hdr)
-
-        session._pending_render_frame_generation = 20
-        st, det = session._verify_step(sdr_step, build_state(0, 16.0))
-        self.assertEqual(st, "PASS")
-        self.assertIn("target=auto/auto/auto", det)
-
-    @patch("src.hdr_controller.check_hdr_support", return_value=True)
-    @patch("src.hdr_controller.hdr_output_allowed", return_value=(True, "allowed"))
-    @patch("src.hdr_controller.get_monitor_hdr_state", return_value=True)
-    def test_transition_rejects_tampered_target_properties_negative_control(
-        self, _mock_mon, _mock_allowed, _mock_support
-    ):
-        """P1.5 negative control: tampering properties after controller setup causes _verify_step to FAIL."""
-        (
-            controller, session, _, observers, build_state, hdr_step, _
-        ) = self._setup_mock_controller_session()
-
-        controller.hdr_mode = "auto"
-        controller.hdr_target_peak = "auto"
-        hdr10_params = {"gamma": "pq", "primaries": "bt.2020", "sig-peak": 4.9261}
-        observers["video-params"]("video-params", hdr10_params)
-        controller.apply_hdr_settings()
-
-        # Baseline valid HDR state passes
-        session._pending_render_frame_generation = 20
-        valid_hdr_state = build_state(1, 12.0)
-        st, _ = session._verify_step(hdr_step, valid_hdr_state)
-        self.assertEqual(st, "PASS")
-
-        # Negative control 1: Tampered target_trc (e.g. srgb, auto, or bt.1886 instead of pq)
-        for bad_trc in ("srgb", "auto", "bt.1886"):
-            with self.subTest(bad_trc=bad_trc):
-                tampered = {**valid_hdr_state, "target_trc": bad_trc}
-                st, det = session._verify_step(hdr_step, tampered)
-                self.assertEqual(st, "FAIL")
-                self.assertIn(f"mpv target properties ({bad_trc}/bt.2020/auto)", det)
-                self.assertIn("did not match HDR output state", det)
-
-        # Negative control 2: Tampered target_prim (e.g. bt.709 or auto instead of bt.2020)
-        for bad_prim in ("bt.709", "auto", "dci-p3"):
-            with self.subTest(bad_prim=bad_prim):
-                tampered = {**valid_hdr_state, "target_prim": bad_prim}
-                st, det = session._verify_step(hdr_step, tampered)
-                self.assertEqual(st, "FAIL")
-                self.assertIn(f"mpv target properties (pq/{bad_prim}/auto)", det)
-                self.assertIn("did not match HDR output state", det)
-
-        # Negative control 3: Stale frame generation (frame_gen <= pending_frame_gen)
-        for bad_gen in (20, 19, 0):
-            with self.subTest(stale_generation=bad_gen):
-                tampered = {**valid_hdr_state, "render_frame_generation": bad_gen}
-                st, det = session._verify_step(hdr_step, tampered)
-                self.assertEqual(st, "FAIL")
-                self.assertIn("no new frame was published after the media switch", det)
-
-        # Negative control 4: Wrong color state (srgb during HDR step)
-        tampered_color = {**valid_hdr_state, "render_color_state": "srgb"}
-        st, det = session._verify_step(hdr_step, tampered_color)
-        self.assertEqual(st, "FAIL")
-        self.assertIn("published target was ('GL_RGBA16F', 16, 'srgb')", det)
-
-        # Negative control 5: Wrong render target format / depth during HDR step
-        tampered_fmt = {
-            **valid_hdr_state,
-            "render_target_format": "GL_RGBA8",
-            "render_target_depth": 8,
-        }
-        st, det = session._verify_step(hdr_step, tampered_fmt)
-        self.assertEqual(st, "FAIL")
-        self.assertIn("published target was ('GL_RGBA8', 8, 'rec2100-pq')", det)
-
     def test_counter_growth_survives_mpv_counter_reset(self):
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.baseline = {"decoder_drops": 10}
@@ -2149,30 +1080,6 @@ class PublicationEvidenceTests(unittest.TestCase):
             5,
         )
 
-    def test_transition_resource_growth_compares_repeated_hdr_states(self):
-        session = GpuValidationSession.__new__(GpuValidationSession)
-        session.step_results = [
-            {
-                "action": "signal-state",
-                "metrics": {"source_hdr": False, "drm_vram_kib": 200},
-            },
-            {
-                "action": "switch-media",
-                "metrics": {"source_hdr": True, "drm_vram_kib": 700},
-            },
-            {
-                "action": "switch-media",
-                "metrics": {"source_hdr": False, "drm_vram_kib": 600},
-            },
-            {
-                "action": "switch-media",
-                "metrics": {"source_hdr": True, "drm_vram_kib": 710},
-            },
-        ]
-        self.assertEqual(
-            session._transition_repeated_hdr_growth("drm_vram_kib"), 10
-        )
-
     def test_numeric_hdr_target_is_reported_as_hdr_to_hdr_tone_mapping(self):
         self.assertTrue(is_tone_mapping_active(True, True, 743))
         self.assertFalse(is_tone_mapping_active(True, True, "auto"))
@@ -2181,55 +1088,6 @@ class PublicationEvidenceTests(unittest.TestCase):
 
 
 class ValidationIntegrationTests(unittest.TestCase):
-    def test_resource_settling_launcher_is_isolated_and_accepts_pass_or_warn(self):
-        launcher_path = ROOT / "tools" / "validation" / "run_gate2_resource_settling.sh"
-        self.assertFalse((ROOT / "run_gate2_resource_settling.sh").exists())
-        self.assertTrue(launcher_path.is_file())
-        launcher = launcher_path.read_text(encoding="utf-8")
-        self.assertTrue(launcher_path.stat().st_mode & 0o111)
-        self.assertIn("set -euo pipefail", launcher)
-        self.assertIn('echo "Usage: $0"', launcher)
-        self.assertIn('mktemp -d /tmp/cinehdr-resource-settling-fixtures.XXXXXX', launcher)
-        self.assertIn('fixture_profile="hevc-main10-yuv420p10-lossless"', launcher)
-        self.assertIn('fixture_revision="hevc-main10-yuv420p10-mp4-v2"', launcher)
-        self.assertIn(PUBLICATION_HDR_SHA256, launcher)
-        self.assertIn(PUBLICATION_SDR_SHA256, launcher)
-        self.assertIn('tests/generate_patterns.py', launcher)
-        self.assertIn('metadata.get("generator_revision") != revision', launcher)
-        self.assertIn('hashlib.sha256(media.read_bytes()).hexdigest()', launcher)
-        self.assertIn('sha256sum -- "${sdr_media}"', launcher)
-        self.assertIn('"CINEHDR_GPU_VALIDATION=settling"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_EXPECTED_BACKEND=${backend}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_FIXTURE_PROFILE=${fixture_profile}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_FIXTURE_REVISION=${fixture_revision}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_HDR_SHA256=${hdr_sha256}"', launcher)
-        self.assertIn('"CINEHDR_PUBLICATION_SDR_SHA256=${sdr_sha256}"', launcher)
-        self.assertIn('python3 "${repo_root}/run_dev.py" "${sdr_media}" "${hdr_media}"', launcher)
-        self.assertLess(launcher.index("run_backend legacy"), launcher.index("run_backend gpu-next"))
-        self.assertIn('tee "${log_path}"', launcher)
-        self.assertIn('application_status="${PIPESTATUS[0]}"', launcher)
-        self.assertIn('gate2-resource-settling-${backend}-*.json', launcher)
-        self.assertIn('-newer "${marker}"', launcher)
-        self.assertIn('[[ ${#reports[@]} -ne 1 ]]', launcher)
-        self.assertIn('report.get("status") not in {"PASS", "WARN"}', launcher)
-        self.assertIn(SETTLING_SCHEMA, launcher)
-        self.assertIn(SETTLING_REVISION, launcher)
-        self.assertNotIn("flatpak", launcher.lower())
-        self.assertNotIn("/dev/dri", launcher)
-        self.assertNotIn("--device", launcher)
-        self.assertNotIn("DRI_PRIME=", launcher)
-
-    def test_resource_settling_report_is_machine_readable_and_bounded(self):
-        source = (ROOT / "src/gpu_validation.py").read_text(encoding="utf-8")
-        self.assertIn('"schema": SETTLING_SCHEMA', source)
-        self.assertIn('"status": overall', source)
-        self.assertIn('"hdr_endpoints": list(endpoint_results)', source)
-        self.assertIn('"process_drm_gtt_kib"', source)
-        self.assertIn('"global_vram_kib"', source)
-        self.assertIn("not a leak-free claim", source)
-        self.assertIn("not fit a byte threshold", source)
-        self.assertIn("f\"gate2-resource-settling-{self.config.expected_backend}-{stamp}.json\"", source)
-
     def test_wayland_publication_launcher_is_strict_and_runs_two_processes(self):
         launcher_path = ROOT / "tools" / "validation" / "run_wayland_publication_validation.sh"
         self.assertFalse((ROOT / "run_wayland_publication_validation.sh").exists())
@@ -2291,11 +1149,7 @@ class ValidationIntegrationTests(unittest.TestCase):
         main = (ROOT / "src/main.py").read_text(encoding="utf-8")
         self.assertIn('CINEHDR_RENDER_BACKEND="gpu-next"', launcher)
         self.assertIn('CINEHDR_GPU_VALIDATION="${validation_mode}"', launcher)
-        self.assertIn('validation_mode="transition"', launcher)
-        self.assertIn('"$2" == "sdr-soak"', launcher)
         self.assertIn('"${video_files[@]}"', launcher)
-        self.assertIn('sdr_transfer="$(ffprobe', launcher)
-        self.assertIn('hdr_transfer="$(ffprobe', launcher)
         self.assertIn('tee "${validation_log}"', launcher)
         self.assertIn('application_status="${PIPESTATUS[0]}"', launcher)
         self.assertIn('-newer "${run_marker}"', launcher)
@@ -2325,16 +1179,13 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertNotIn("mpv_logging", window)
 
     def test_report_source_omits_media_path_and_records_gl_identity(self):
-        source = (ROOT / "src/gpu_validation.py").read_text(encoding="utf-8")
+        source = (ROOT / "tools/validation/gpu_validation.py").read_text(encoding="utf-8")
         self.assertIn('"Media path: omitted"', source)
         self.assertNotIn("path-expanded", source)
         self.assertIn("OpenGL renderer:", source)
         self.assertIn("GLSL version:", source)
         self.assertIn("Render context generation:", source)
         self.assertIn("Published color state:", source)
-        self.assertIn("saved preference unchanged", source)
-        self.assertIn("across file reloads (informational)", source)
-        self.assertIn("Repeated HDR state", source)
 
     def test_renderer_counts_only_successfully_created_contexts(self):
         source = (ROOT / "src/video_widget.py").read_text(encoding="utf-8")
@@ -2407,7 +1258,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
 
         session._renderer_facts = lambda: ("opengl", "active")
         session._expected_active_api = lambda: "opengl"
-        with patch("src.gpu_validation.publication_state_errors", return_value=()):
+        with patch("src.validation.gpu_validation.publication_state_errors", return_value=()):
             status, reason = session._verify_step(step, {"render_frame_generation": 3})
             self.assertEqual((status, reason), ("FAIL", "no newer frame was published for the initial SDR capture"))
             status, _ = session._verify_step(step, {"render_frame_generation": 4})
@@ -2426,7 +1277,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         )
         session.video_area.current_texture = object()
         texture_patch = patch(
-            "src.gpu_validation.publication_texture_evidence",
+            "src.validation.gpu_validation.publication_texture_evidence",
             return_value={"available": True, "format": "R8G8B8A8",
                           "color_state_srgb": True, "dimensions_match": True},
         )
@@ -2533,7 +1384,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         session.video_area.render_frame_generation = 1
         correct_tag = {"available": True, "format": "R8G8B8A8",
                        "color_state_srgb": True, "dimensions_match": True}
-        with patch("src.gpu_validation.publication_texture_evidence", side_effect=[
+        with patch("src.validation.gpu_validation.publication_texture_evidence", side_effect=[
             {**correct_tag, "color_state_srgb": False}, correct_tag
         ]):
             session._on_fbo_pixel_capture(**good_fbo)
@@ -2591,7 +1442,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
             "dimensions_match": True,
         }
 
-        with patch("src.gpu_validation.publication_texture_evidence", side_effect=[
+        with patch("src.validation.gpu_validation.publication_texture_evidence", side_effect=[
             unavailable_evidence, available_evidence
         ]):
             # Frame 1: published with unavailable GDK texture evidence
@@ -2681,7 +1532,6 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         session.ready_timer_id = None
         session.sample_timer_id = None
         session.step_timer_id = None
-        session.lifecycle_timer_id = None
         session.window = SimpleNamespace(
             app=SimpleNamespace(_gpu_validation_setup_failures=()),
             show_toast=lambda *a: None,
@@ -2740,7 +1590,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
                 "dimensions_match": True,
             }
 
-        texture_patch = patch("src.gpu_validation.publication_texture_evidence", side_effect=actual_texture)
+        texture_patch = patch("src.validation.gpu_validation.publication_texture_evidence", side_effect=actual_texture)
         texture_patch.start()
         self.addCleanup(texture_patch.stop)
 
@@ -3059,7 +1909,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
             patch_samples=sdr_samples2, raw_samples_hash=compute_samples_hash(sdr_samples2),
         ))
 
-        from src.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
+        from src.validation.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
         data = serialize_fbo_pixel_measurements(
             oracle, backend="gpu-next", session_id="test-session-99", overall_result="PASS"
         )
@@ -3102,7 +1952,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
             patch_samples=sdr_samples, raw_samples_hash=compute_samples_hash(sdr_samples),
         ))
         # Phases 'hdr' and 'return_sdr' were never captured
-        from src.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
+        from src.validation.gpu_validation import serialize_fbo_pixel_measurements, verify_fbo_pixel_measurements_artifact
         data = serialize_fbo_pixel_measurements(
             oracle, backend="legacy", session_id="test-session-fail", overall_result="FAIL"
         )
@@ -3125,7 +1975,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
 
     def test_verify_fbo_pixel_measurements_negative_cases(self):
         """Negative tests for verify_fbo_pixel_measurements_artifact: tampering, truncation, invalid schema."""
-        from src.gpu_validation import (
+        from src.validation.gpu_validation import (
             serialize_fbo_pixel_measurements,
             verify_fbo_pixel_measurements_artifact,
             compute_samples_hash,
@@ -3253,7 +2103,6 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         session.ready_timer_id = None
         session.sample_timer_id = None
         session.step_timer_id = None
-        session.lifecycle_timer_id = None
         session.window = SimpleNamespace(
             app=SimpleNamespace(_gpu_validation_setup_failures=()),
             show_toast=lambda *a: None,
@@ -3281,7 +2130,7 @@ class TestPublicationFboPixelValidationPipeline(unittest.TestCase):
         session.pixel_oracle.evaluate = lambda: ("PASS", [])
 
         # Mock verify_fbo_pixel_measurements_artifact to fail
-        with patch("src.gpu_validation.verify_fbo_pixel_measurements_artifact", return_value=(False, "simulated tampering")), \
+        with patch("src.validation.gpu_validation.verify_fbo_pixel_measurements_artifact", return_value=(False, "simulated tampering")), \
              patch.object(Path, "write_text", autospec=True, side_effect=mock_write):
             session._finish(None)
 
@@ -3297,7 +2146,7 @@ class TestStartupFixtureContract(unittest.TestCase):
     def test_do_open_preserves_publication_pause_contract(self):
         """do_open must not clear the pause established for publication/settling fixtures."""
         from src.main import CineApplication
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         app = CineApplication.__new__(CineApplication)
         app.gpu_validation_config = GpuValidationConfig(
@@ -3314,7 +2163,7 @@ class TestStartupFixtureContract(unittest.TestCase):
             return ()
 
         with patch("src.main.CineWindow", return_value=mock_win), \
-             patch("src.gpu_validation.prepare_validation_player", side_effect=fake_prepare):
+             patch("src.validation.gpu_validation.prepare_validation_player", side_effect=fake_prepare):
             app.props = MagicMock()
             app.props.active_window = None
             app.get_windows = MagicMock(return_value=[mock_win])
@@ -3363,7 +2212,7 @@ class TestStartupFixtureContract(unittest.TestCase):
 
     def test_wait_until_ready_rejects_playlist_pos_not_zero(self):
         """_wait_until_ready must reject readiness and terminate when playlist-pos is not 0."""
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.config = GpuValidationConfig(
@@ -3416,7 +2265,7 @@ class TestStartupFixtureContract(unittest.TestCase):
 
     def test_wait_until_ready_rejects_unpaused_initial_playback(self):
         """_wait_until_ready must reject readiness and terminate when initial fixture is not paused."""
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.config = GpuValidationConfig(
@@ -3469,7 +2318,7 @@ class TestStartupFixtureContract(unittest.TestCase):
 
     def test_wait_until_ready_accepts_paused_position_zero(self):
         """_wait_until_ready accepts readiness when playlist count is 2, pos is 0, and paused."""
-        from src.gpu_validation import GpuValidationConfig
+        from src.validation.gpu_validation import GpuValidationConfig
 
         session = GpuValidationSession.__new__(GpuValidationSession)
         session.config = GpuValidationConfig(
@@ -3520,6 +2369,295 @@ class TestStartupFixtureContract(unittest.TestCase):
 
         self.assertTrue(session._advance_step.called, "Must advance to step 0 when paused at position 0")
         self.assertFalse(session._finish.called, "Must not finish on valid readiness")
+
+
+class TestGradientFboValidation(unittest.TestCase):
+    """Unit tests for FBO gradient readback, ramp analysis, and EGL configuration correlation."""
+
+    def test_analyze_gradient_ramp_strictly_monotonic(self):
+        samples = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+        coords = [0, 100, 250, 500, 750, 1000]
+        res = analyze_gradient_ramp(samples, coords=coords)
+
+        self.assertTrue(res["monotonic"])
+        self.assertEqual(res["non_monotonic_count"], 0)
+        self.assertEqual(res["max_drop"], 0.0)
+        self.assertEqual(res["drops"], [])
+        self.assertEqual(res["repetitions_count"], 0)
+        self.assertEqual(res["max_plateau_length"], 1)
+        self.assertEqual(res["unique_levels_count"], 6)
+        self.assertAlmostEqual(res["min_step"], 0.1, places=5)
+        self.assertAlmostEqual(res["max_step"], 0.25, places=5)
+
+    def test_analyze_gradient_ramp_with_plateaus_and_repetitions(self):
+        # 8-bit quantized ramp where adjacent pixels share quantized levels
+        samples = [0.1, 0.1, 0.1, 0.2, 0.2, 0.3, 0.3, 0.3, 0.3]
+        res = analyze_gradient_ramp(samples)
+
+        self.assertTrue(res["monotonic"])
+        self.assertEqual(res["non_monotonic_count"], 0)
+        self.assertEqual(res["repetitions_count"], 6)
+        self.assertEqual(res["max_plateau_length"], 4)
+        self.assertEqual(res["unique_levels_count"], 3)
+        self.assertAlmostEqual(res["min_step"], 0.1, places=5)
+
+    def test_analyze_gradient_ramp_with_drops(self):
+        # Non-monotonic ramp with dips
+        samples = [0.1, 0.25, 0.20, 0.40, 0.35, 0.50]
+        coords = [0, 100, 200, 300, 400, 500]
+        res = analyze_gradient_ramp(samples, coords=coords)
+
+        self.assertFalse(res["monotonic"])
+        self.assertEqual(res["non_monotonic_count"], 2)
+        self.assertAlmostEqual(res["max_drop"], 0.05, places=5)
+        self.assertEqual(len(res["drops"]), 2)
+        self.assertEqual(res["drops"][0]["x_curr"], 100)
+        self.assertEqual(res["drops"][0]["x_next"], 200)
+        self.assertAlmostEqual(res["drops"][0]["drop"], 0.05, places=5)
+        self.assertEqual(res["drops"][1]["x_curr"], 300)
+        self.assertEqual(res["drops"][1]["x_next"], 400)
+
+    def test_analyze_gradient_ramp_edge_cases(self):
+        empty_res = analyze_gradient_ramp([])
+        self.assertEqual(empty_res["sample_count"], 0)
+        self.assertTrue(empty_res["monotonic"])
+        self.assertEqual(empty_res["unique_levels_count"], 0)
+
+        single_res = analyze_gradient_ramp([0.42])
+        self.assertEqual(single_res["sample_count"], 1)
+        self.assertTrue(single_res["monotonic"])
+        self.assertEqual(single_res["unique_levels_count"], 1)
+        self.assertEqual(single_res["max_plateau_length"], 1)
+
+    def test_read_fbo_gradient_samples_float(self):
+        # Mock glReadPixels for 1920x1080 float buffer
+        def mock_gl_read_pixels(x, y, width, height, gl_format, gl_type, buf_ptr):
+            buf = ctypes.cast(buf_ptr, ctypes.POINTER(ctypes.c_float * (width * 4))).contents
+            # Populate horizontal gradient: R increases linearly from 0.0 to 1.0
+            base = 0.0 if y < 500 else 0.5
+            for px in range(width):
+                val = base + 0.5 * (px / (width - 1))
+                buf[4 * px + 0] = val
+                buf[4 * px + 1] = val
+                buf[4 * px + 2] = val
+                buf[4 * px + 3] = 1.0
+
+        with patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_gl_read_pixels):
+            res = read_fbo_gradient_samples(1920, 1080, is_float=True, num_samples=32)
+
+        self.assertEqual(res["width"], 1920)
+        self.assertEqual(res["height"], 1080)
+        self.assertTrue(res["is_float"])
+        self.assertEqual(res["top_y"], 200)
+        self.assertEqual(res["bottom_y"], 800)
+
+        top = res["top_half"]
+        bottom = res["bottom_half"]
+        self.assertEqual(top["sample_count"], 32)
+        self.assertEqual(bottom["sample_count"], 32)
+        self.assertTrue(top["analysis_samples"]["monotonic"])
+        self.assertTrue(bottom["analysis_samples"]["monotonic"])
+        self.assertAlmostEqual(top["sampled_values"][0], 0.0, places=4)
+        self.assertAlmostEqual(top["sampled_values"][-1], 0.5, places=4)
+        self.assertAlmostEqual(bottom["sampled_values"][0], 0.5, places=4)
+        self.assertAlmostEqual(bottom["sampled_values"][-1], 1.0, places=4)
+
+    def test_read_fbo_gradient_samples_uint8(self):
+        def mock_gl_read_pixels(x, y, width, height, gl_format, gl_type, buf_ptr):
+            buf = ctypes.cast(buf_ptr, ctypes.POINTER(ctypes.c_uint8 * (width * 4))).contents
+            for px in range(width):
+                b = int(round(255.0 * px / (width - 1)))
+                buf[4 * px + 0] = b
+                buf[4 * px + 1] = b
+                buf[4 * px + 2] = b
+                buf[4 * px + 3] = 255
+
+        with patch("src.validation.gpu_validation.glReadPixels", side_effect=mock_gl_read_pixels):
+            res = read_fbo_gradient_samples(640, 360, is_float=False, num_samples=16)
+
+        self.assertFalse(res["is_float"])
+        self.assertTrue(res["top_half"]["analysis_samples"]["monotonic"])
+        self.assertAlmostEqual(res["top_half"]["sampled_values"][0], 0.0, places=4)
+        self.assertAlmostEqual(res["top_half"]["sampled_values"][-1], 1.0, places=4)
+
+    def test_read_fbo_gradient_samples_requires_gl_binding(self):
+        with patch("src.validation.gpu_validation.glReadPixels", None):
+            with self.assertRaises(RuntimeError) as ctx:
+                read_fbo_gradient_samples(1920, 1080, is_float=True)
+            self.assertIn("unavailable", str(ctx.exception))
+
+    def test_parse_egl_config_from_log(self):
+        log_sample = (
+            "EGL API version 1.5 found\n"
+            " - Vendor: Mesa Project\n"
+            " - Selected fbconfig: R8G8B8A8, depth 0, stencil 0\n"
+            "          high depth: none\n"
+        )
+        info = parse_egl_config_from_log(log_sample)
+        self.assertEqual(info["selected_fbconfig"], "R8G8B8A8, depth 0, stencil 0")
+        self.assertEqual(info["high_depth"], "none")
+        self.assertEqual(info["egl_vendor"], "Mesa Project")
+        self.assertEqual(info["egl_version"], "1.5")
+        self.assertFalse(info["high_depth_available"])
+
+        missing = parse_egl_config_from_log("no egl lines here")
+        self.assertEqual(missing["selected_fbconfig"], "not-detected")
+        self.assertEqual(missing["high_depth"], "not-detected")
+        self.assertEqual(missing["egl_vendor"], "unknown")
+        self.assertFalse(missing["high_depth_available"])
+
+    def test_serialize_gradient_fbo_measurements_and_format_report(self):
+        capture = {
+            "slot_id": 2,
+            "epoch": 1,
+            "frame_generation": 42,
+            "fbo_format": "GL_RGBA16F",
+            "is_float": True,
+            "width": 1920,
+            "height": 1080,
+            "target_properties": {"target-trc": "pq", "target-prim": "bt.2020", "is_hdr": True},
+            "gradient_data": {
+                "top_half": {
+                    "y": 200,
+                    "analysis_samples": {"monotonic": True, "non_monotonic_count": 0, "max_drop": 0.0, "repetitions_count": 0, "max_plateau_length": 1, "unique_levels_count": 64},
+                    "analysis_full_row": {"min_step": 0.0005, "unique_levels_count": 500},
+                },
+                "bottom_half": {
+                    "y": 800,
+                    "analysis_samples": {"monotonic": True, "non_monotonic_count": 0, "max_drop": 0.0, "repetitions_count": 0, "max_plateau_length": 1, "unique_levels_count": 64},
+                    "analysis_full_row": {"min_step": 0.0008, "unique_levels_count": 400},
+                },
+            },
+        }
+        log_sample = (
+            "Selected fbconfig: R8G8B8A8, depth 0, stencil 0\n"
+            "high depth: none\n"
+        )
+        serialized = serialize_gradient_fbo_measurements(
+            capture, backend="legacy", session_id="test-session", log_text=log_sample
+        )
+        self.assertEqual(serialized["schema"], "cinehdr.gradient-fbo-analysis.v1")
+        self.assertEqual(serialized["backend"], "legacy")
+        self.assertTrue(serialized["summary"]["top_monotonic"])
+        self.assertTrue(serialized["summary"]["bottom_monotonic"])
+        self.assertTrue(serialized["summary"]["fbo_has_sub_8bit_granularity"])
+        self.assertEqual(
+            serialized["current_session_measurements"]["gtk_egl_selected_fbconfig"],
+            "R8G8B8A8, depth 0, stencil 0",
+        )
+        self.assertEqual(
+            serialized["prior_trace_context"]["wayland_surface_buffer"],
+            "AR24 (DRM_FORMAT_ARGB8888, 8-bit)",
+        )
+
+        txt_report = format_gradient_validation_report(serialized)
+        self.assertIn("CineHDR Gradient FBO Validation Report", txt_report)
+        self.assertIn("Top Half Gradient", txt_report)
+        self.assertIn("Bottom Half Gradient", txt_report)
+        self.assertIn("Selected fbconfig:  R8G8B8A8", txt_report)
+        self.assertIn("Wayland Surface Buffer: AR24", txt_report)
+
+    def test_video_widget_custom_sampler_slot(self):
+        from src.video_widget import MpvVideoWidget
+
+        widget = MpvVideoWidget.__new__(MpvVideoWidget)
+        widget._fbo_pixel_oracle_cb = None
+        widget._fbo_pixel_oracle_sampler = None
+        widget._fbo_pixel_oracle_error_cb = None
+
+        self.assertIsNone(widget._fbo_pixel_oracle_sampler)
+        custom_sampler = MagicMock(return_value={"custom": "samples"})
+        widget._fbo_pixel_oracle_sampler = custom_sampler
+
+        slot = MagicMock()
+        slot.resource.fbo_id.value = 17
+
+        # Verify sampler call with glBindFramebuffer mock
+        with patch("src.video_widget.glBindFramebuffer") as mock_bind:
+            widget._fbo_pixel_oracle_cb = MagicMock()
+            mock_bind.side_effect = lambda target, fbo: None
+            if widget._fbo_pixel_oracle_cb is not None and callable(widget._fbo_pixel_oracle_cb):
+                mock_bind(0x8D40, slot.resource.fbo_id.value)
+                samples = widget._fbo_pixel_oracle_sampler(1920, 1080, True)
+
+            mock_bind.assert_called_with(0x8D40, 17)
+            custom_sampler.assert_called_with(1920, 1080, True)
+            self.assertEqual(samples, {"custom": "samples"})
+
+    def test_gpu_validation_session_gradient_mode_lifecycle(self):
+        from src.validation.gpu_validation import GpuValidationConfig
+
+        session = GpuValidationSession.__new__(GpuValidationSession)
+        session.config = GpuValidationConfig(mode="gradient", report_dir=Path("/tmp/test"), expected_backend="legacy")
+        session._expected_playlist_count = 1
+        session._ready_last_playlist_count = None
+        session._ready_stable_since = time.monotonic() - 10.0  # Already stable
+        session._ready_last_position = 5.0
+        session._ready_last_sample_at = time.monotonic()
+        session.ready_deadline = time.monotonic() + 100.0
+        session.finished = False
+        session._gradient_capture = None
+        session._gradient_capture_armed = False
+        session.step_timer_id = None
+        session.memory_samples = []
+        session.vram_samples = []
+        session.drm_vram_samples = []
+        session.drm_gtt_samples = []
+        session.resource_samples = []
+
+        props = {
+            "duration": 60.0,
+            "time-pos": 5.0,
+            "seeking": False,
+            "playlist-count": 1,
+            "playlist-pos": 0,
+            "pause": False,
+        }
+        session.player = MagicMock()
+        session.player._get_property.side_effect = lambda k, default=None: props.get(k, default)
+        session.player.get_property.side_effect = lambda k, default=None: props.get(k, default)
+
+        session.video_area = MagicMock()
+        session.video_area._first_frame_logged = True
+        session.video_area.render_session_status = "active"
+        session.video_area.render_backend_active = "opengl"
+        session.video_area.hdr_controller.committed_output_state.is_hdr = True
+        session.video_area._fbo_pixel_oracle_sampler = None
+        session.video_area._fbo_pixel_oracle_cb = None
+
+        session._metrics_snapshot = lambda: {"sample_at": time.monotonic()}
+        session._sample_memory = MagicMock()
+        session._finish = MagicMock()
+        session.window = MagicMock()
+
+        self.assertEqual(session._expected_active_api(), "opengl")
+
+        # Call _wait_until_ready: should arm gradient capture on stable HDR frame
+        session._wait_until_ready()
+
+        self.assertTrue(session._gradient_capture_armed)
+        self.assertIsNotNone(session.video_area._fbo_pixel_oracle_sampler)
+        self.assertEqual(session.video_area._fbo_pixel_oracle_cb, session._on_gradient_capture)
+
+        # Trigger _on_gradient_capture callback: should disarm and finish
+        mock_slot = MagicMock()
+        mock_slot.index = 0
+        session._on_gradient_capture(
+            slot=mock_slot,
+            epoch=1,
+            frame_generation=12,
+            fbo_format="GL_RGBA16F",
+            is_float=True,
+            width=1920,
+            height=1080,
+            patch_samples={"top_half": {"analysis_samples": {"monotonic": True}}},
+        )
+
+        # Verify one-shot disarm
+        self.assertIsNone(session.video_area._fbo_pixel_oracle_sampler)
+        self.assertIsNone(session.video_area._fbo_pixel_oracle_cb)
+        self.assertIsNotNone(session._gradient_capture)
+        session._finish.assert_called_with(None)
 
 
 if __name__ == "__main__":

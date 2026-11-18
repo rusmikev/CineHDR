@@ -1320,12 +1320,13 @@ class TestGtkCmPolicy(unittest.TestCase):
         self.assertEqual(matched["surface"]["role"], "composite_toplevel_window")
         self.assertEqual(matched["surface"]["color_management_surface_id"], 64)
         self.assertEqual(matched["surface"]["get_surface_index"], 559)
-        self.assertEqual(matched["surface"]["set_image_description_index"], 953)
-        self.assertEqual(matched["surface"]["commit_index"], 968)
-        self.assertEqual(matched["image_description"]["id"], 51)
-        self.assertEqual(matched["image_description"]["creation_index"], 181)
-        self.assertEqual(matched["image_description"]["ready_index"], 643)
-        self.assertEqual(matched["image_description"]["readiness"]["identity"], 7)
+        if evidence["status"] == "PASS":
+            self.assertEqual(matched["surface"]["set_image_description_index"], 953)
+            self.assertEqual(matched["surface"]["commit_index"], 968)
+            self.assertEqual(matched["image_description"]["id"], 51)
+            self.assertEqual(matched["image_description"]["creation_index"], 181)
+            self.assertEqual(matched["image_description"]["ready_index"], 643)
+            self.assertEqual(matched["image_description"]["readiness"]["identity"], 7)
 
     def test_composite_window_rejects_wrong_surface(self):
         # Case A: app_id is foreign

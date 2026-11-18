@@ -57,10 +57,11 @@ cine_sources = [
   'shaders/flip-h.glsl',
   'shaders/flip-v.glsl',
   '__init__.py',
+  'diagnostics_facts.py',
+  'diagnostics_format.py',
   'diagnostics_report.py',
   'gl_bindings.py',
   'gl_renderer.py',
-  'gpu_validation.py',
   'gtk_cm_policy.py',
   'hdr_controller.py',
   'hdr_detection.py',
@@ -78,9 +79,25 @@ cine_sources = [
   'shortcuts.py',
   'utils.py',
   'video_widget.py',
+  'video_widget_lifecycle.py',
+  'video_widget_render.py',
   'wayland_cm_probe.py',
+  'wayland_cm_protocol.py',
   'wayland_output_hdr.py',
+  'wayland_output_hdr_async.py',
+  'wayland_output_hdr_sync.py',
   'window.py',
+  'window_controls.py',
+  'window_diagnostics.py',
+  'window_input.py',
+  'window_media.py',
+  'window_observers.py',
 ]
+
+if get_option('validation')
+  install_data('validation/__init__.py', install_dir: moduledir / 'validation')
+  install_data('../tools/validation/gpu_validation.py', install_dir: moduledir / 'validation')
+  install_data('../tools/validation/diagnostics_export.py', install_dir: moduledir / 'validation')
+endif
 
 install_data(cine_sources, install_dir: moduledir)

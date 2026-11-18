@@ -17,9 +17,12 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+from collections.abc import Mapping, Sequence
 import ctypes
+import importlib
 import logging
 import os
+from typing import Any
 from urllib.parse import urlparse
 
 import gi
@@ -495,3 +498,174 @@ SUB_EXTS: tuple = (
     ".txt",
     ".vtt",
 )
+
+try:
+    import mpv
+
+    _MPV_SHUTDOWN_ERRORS: tuple[type[BaseException], ...] = (
+        getattr(mpv, "ShutdownError", RuntimeError),
+    )
+    _MPV_TYPES: tuple[type, ...] = (
+        (getattr(mpv, "MPV"),) if hasattr(mpv, "MPV") else ()
+    )
+except (ImportError, OSError, AttributeError) as exc:
+    logger.debug("python-mpv unavailable while configuring mpv_prop: %s", exc)
+    _MPV_SHUTDOWN_ERRORS = ()
+    _MPV_TYPES = ()
+
+_MISSING = object()
+
+
+def _walk_nested_value(container: Any, parts: list[str]) -> Any:
+    """Resolve nested Mapping/Sequence keys along a split slash property path."""
+    cur = container
+    for part in parts:
+        if isinstance(cur, Mapping):
+            if part in cur:
+                cur = cur[part]
+                continue
+            alt = part.replace("_", "-") if "_" in part else part.replace("-", "_")
+            if alt != part and alt in cur:
+                cur = cur[alt]
+                continue
+            return _MISSING
+        if isinstance(cur, Sequence) and not isinstance(cur, (str, bytes, bytearray)):
+            if not part.isdigit():
+                return _MISSING
+            idx = int(part)
+            if idx >= len(cur):
+                return _MISSING
+            cur = cur[idx]
+            continue
+        return _MISSING
+    return cur
+
+
+def _query_mapping_prop(data: Mapping[str, Any], name: str, default: Any) -> Any:
+    if name in data:
+        val = data[name]
+        return val if val is not None else default
+    if name.startswith("options/"):
+        val = data.get(name[8:], _MISSING)
+        return val if val is not _MISSING and val is not None else default
+    if "/" in name:
+        parts = name.split("/")
+        for split_idx in range(len(parts) - 1, 0, -1):
+            prefix = "/".join(parts[:split_idx])
+            if prefix in data and data[prefix] is not None:
+                val = _walk_nested_value(data[prefix], parts[split_idx:])
+                if val is not _MISSING and val is not None:
+                    return val
+    return default
+
+
+def _query_mpv_instance(player: Any, name: str, default: Any) -> Any:
+    # python-mpv: MPV.__getitem__ prepends 'options/', while MPV.__getattr__
+    # resolves runtime properties and slash-separated subproperties.
+    if name.startswith("options/"):
+        try:
+            val = player[name[8:]]
+        except (AttributeError, KeyError, RuntimeError):
+            return default
+        return val if val is not None else default
+    try:
+        val = getattr(player, name)
+    except (AttributeError, RuntimeError):
+        return default
+    return val if val is not None else default
+
+
+def _read_double_attr_or_nested(player: Any, name: str) -> Any:
+    attr_name = name if "/" in name else name.replace("-", "_")
+    try:
+        val = getattr(player, attr_name)
+    except (AttributeError, RuntimeError):
+        val = _MISSING
+    if val is not _MISSING and val is not None:
+        return val
+    if "/" in name:
+        head, _, rest = name.partition("/")
+        try:
+            container = getattr(player, head.replace("-", "_"))
+        except (AttributeError, RuntimeError):
+            container = _MISSING
+        if container is not _MISSING and container is not None:
+            return _walk_nested_value(container, rest.split("/"))
+    return _MISSING
+
+
+def _read_double_item_or_nested(player: Any, name: str) -> Any:
+    try:
+        val = player[name]
+    except (AttributeError, IndexError, KeyError, RuntimeError, TypeError):
+        val = _MISSING
+    if val is not _MISSING and val is not None:
+        return val
+    if "/" in name:
+        head, _, rest = name.partition("/")
+        try:
+            container = player[head]
+        except (AttributeError, IndexError, KeyError, RuntimeError, TypeError):
+            container = _MISSING
+        if container is not _MISSING and container is not None:
+            return _walk_nested_value(container, rest.split("/"))
+    return _MISSING
+
+
+def _query_player_double(player: Any, name: str, default: Any) -> Any:
+    getter = getattr(player, "get_property", None)
+    if callable(getter):
+        try:
+            val = getter(name)
+        except (AttributeError, KeyError, RuntimeError, TypeError):
+            return default
+        return val if val is not None else default
+
+    if name.startswith("options/"):
+        try:
+            val = player[name[8:]]
+        except (AttributeError, IndexError, KeyError, RuntimeError, TypeError):
+            return default
+        return val if val is not None else default
+
+    val = _read_double_attr_or_nested(player, name)
+    if val is _MISSING:
+        val = _read_double_item_or_nested(player, name)
+    return val if val is not _MISSING and val is not None else default
+
+
+def mpv_prop(player: Any, name: str, default: Any = None) -> Any:
+    """Safely query an mpv option or runtime/nested property via public APIs.
+
+    Uses player[opt] for 'options/*' lookups and public attribute/nested access
+    for runtime properties on python-mpv, with Mapping/double fallbacks for
+    tests. Handles shutdown and missing-property errors cleanly.
+    """
+    if player is None or not name or name.startswith("_"):
+        return default
+    try:
+        if isinstance(player, Mapping):
+            return _query_mapping_prop(player, name, default)
+        if _MPV_TYPES and isinstance(player, _MPV_TYPES):
+            return _query_mpv_instance(player, name, default)
+        return _query_player_double(player, name, default)
+    except _MPV_SHUTDOWN_ERRORS as exc:
+        logger.debug("mpv shutdown while querying property %s: %s", name, exc)
+        return default
+
+
+def load_optional_validation(
+    package: str | None,
+    submodule: str,
+    unavailable_message: str,
+    target_logger: logging.Logger,
+):
+    """Lazily import an optional validation submodule, exiting 2 when absent."""
+    pkg = package or __package__
+    try:
+        return importlib.import_module(f".validation.{submodule}", package=pkg)
+    except ModuleNotFoundError as error:
+        if error.name in {f"{pkg}.validation", f"{pkg}.validation.{submodule}"}:
+            target_logger.error("%s", unavailable_message)
+            raise SystemExit(2) from error
+        raise
