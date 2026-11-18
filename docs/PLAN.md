@@ -95,9 +95,9 @@
 | # | Задача | Исп. | Готово, когда | Статус |
 |---|---|---|---|---|
 | P3.1 | Убрать проверку `get_dmabuf_formats().get_n_formats() == 0` из `_check_hdr_support_uncached` (не относится к GL-текстурному пути; блокирует NVIDIA); оставить только там, где решается offload | A | тесты | IN PROGRESS (код и L1-тесты готовы в 4ebb263/5913d3f; аппаратная проверка на NVIDIA в P3.4/P3.5) |
-| P3.2 | Intel Mesa, GNOME: SDR L2/L3; hwdec `vaapi` vs `vaapi-copy` (в продукте не форсировать `vaapi-copy`); 4K60 без пропусков; путь `set_sync`; GL errors = 0 | O → A | ячейки GNOME-Intel | TODO |
-| P3.3 | Intel + внешний HDR-монитор (если HDMI на Intel): L3p + L4 + перенос окна HDR↔SDR панель (отложенный из P1.5) | O | ячейка или N/A | TODO |
-| P3.4 | NVIDIA PRIME во Flatpak: рабочий набор env (`__NV_PRIME_RENDER_OFFLOAD=1`, `__GLX_VENDOR_LIBRARY_NAME=nvidia`, EGL vendor) так, чтобы GTK и mpv были на одном GPU; README «advanced» | O → A | SDR PASS на NVIDIA | TODO |
+| P3.2 | Intel Mesa, GNOME: SDR L2/L3; hwdec `vaapi` vs `vaapi-copy` (в продукте не форсировать `vaapi-copy`); 4K60 без пропусков; путь `set_sync`; GL errors = 0 | O → A | ячейки GNOME-Intel | IN PROGRESS 2026-11-18 `63f62ba`, Flatpak `a788f1eb`, пакет `2026-11-18-132651-gnome-both`: L2 SDR PASS (ограниченный), vaapi и vaapi-copy активны в своих 4K60-прогонах; критерий без пропусков не выполнен (VO +15 / +300). GTK set_sync API доступен; фактический показ не измерялся |
+| P3.3 | Intel + внешний HDR-монитор (если HDMI на Intel): L3p + L4 + перенос окна HDR↔SDR панель (отложенный из P1.5) | O | ячейка или N/A | TODO: 2026-11-18 `63f62ba`, Flatpak `a788f1eb`, пакет `2026-11-18-132651-gnome-both` DRM относит подключённые HDMI и eDP к Intel. HDR L3p/L4 и перенос окна ещё не проверены |
+| P3.4 | NVIDIA PRIME во Flatpak: рабочий набор env (`__NV_PRIME_RENDER_OFFLOAD=1`, `__GLX_VENDOR_LIBRARY_NAME=nvidia`, EGL vendor) так, чтобы GTK и mpv были на одном GPU; README «advanced» | O → A | SDR PASS на NVIDIA | BLOCKED(NVIDIA EGL vendor JSON не найден раннером внутри Flatpak, приложение не запущено) 2026-11-18 `63f62ba`, Flatpak `a788f1eb`, пакет `2026-11-18-132651-gnome-both`. Проверить драйвер хоста и расширение GL в песочнице |
 | P3.5 | NVIDIA: fence/`set_sync` без stall, нет tearing, fp16-surface при HDR (если HDMI на dGPU) либо честный `Unknown/blocked: <reason>`; GSK renderer pin `gl` подтверждён или заменён | O → A | ячейки GNOME-NVIDIA, KDE-NVIDIA (SDR обязательно) | TODO |
 | P3.6 | Известные ограничения по вендорам → README | A | README | TODO |
 
