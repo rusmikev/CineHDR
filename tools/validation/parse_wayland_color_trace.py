@@ -22,6 +22,7 @@ TRACE_SCHEMA = "cinehdr.gate2.wayland-color-management-trace.v1"
 TRACE_REVISION = "wayland-client-submission-v1"
 MULTIPHASE_REVISION = "wayland-multiphase-publication-v1"
 PRIMARY_COMPOSITE_REVISION = "wayland-composite-window-hdr-submission-v1"
+SDR_FALLBACK_REVISION = "wayland-sdr-fallback-teardown-v1"
 SCOPE = (
     "PASS proves a ready image description was submitted and committed by the "
     "Wayland client without a traced protocol rejection. It does not prove "
@@ -68,6 +69,13 @@ TRACE_ONLY_FAIL_SCOPE = (
     "L3p protocol evidence: FAIL records a hash-linked raw client trace that did not "
     "satisfy the Wayland color-management submission contract. It is not acceptance "
     "evidence and does not prove compositor or physical display behavior."
+)
+TRACE_ONLY_SDR_FALLBACK_SCOPE = (
+    "L3p protocol evidence (SDR fallback): PASS proves wp_color_manager_v1 was advertised "
+    "and bound on the target application's connection without TF_SRGB, the client cleanly "
+    "destroyed wp_color_manager_v1 without creating color-managed surfaces or submitting "
+    "image descriptions, and the target window surface committed a non-null wl_buffer "
+    "without protocol errors. It does not prove physical display output or tone-mapping quality."
 )
 
 
@@ -1342,6 +1350,53 @@ def _matches_windows_scrgb_feature(args: str) -> bool:
     return _matches_feature(args, FEATURE_WINDOWS_SCRGB, "windows_scrgb")
 
 
+TF_NAMED_NAME_TO_ID: dict[str, int] = {
+    "bt1886": TF_NAMED_BT1886,
+    "gamma22": TF_NAMED_GAMMA22,
+    "gamma28": TF_NAMED_GAMMA28,
+    "st240": TF_NAMED_ST240,
+    "ext_linear": TF_NAMED_EXT_LINEAR,
+    "log_100": TF_NAMED_LOG_100,
+    "log_316": TF_NAMED_LOG_316,
+    "xvycc": TF_NAMED_XVYCC,
+    "srgb": TF_NAMED_SRGB,
+    "ext_srgb": TF_NAMED_EXT_SRGB,
+    "st2084_pq": TF_NAMED_ST2084_PQ,
+    "st428": TF_NAMED_ST428,
+    "hlg": TF_NAMED_HLG,
+    "compound_power_2_4": TF_NAMED_COMPOUND_POWER_2_4,
+}
+PRIM_NAMED_NAME_TO_ID: dict[str, int] = {
+    "srgb": PRIM_NAMED_SRGB,
+    "pal_m": PRIM_NAMED_PAL_M,
+    "pal": PRIM_NAMED_PAL,
+    "ntsc": PRIM_NAMED_NTSC,
+    "generic_film": PRIM_NAMED_GENERIC_FILM,
+    "bt2020": PRIM_NAMED_BT2020,
+    "cie1931_xyz": PRIM_NAMED_CIE1931_XYZ,
+    "dci_p3": PRIM_NAMED_DCI_P3,
+    "display_p3": PRIM_NAMED_DISPLAY_P3,
+    "adobe_rgb": PRIM_NAMED_ADOBE_RGB,
+}
+
+
+def _parse_named_enum_arg(args: str, name_map: dict[str, int] | None = None) -> int | None:
+    """Parse a single protocol enum argument given as integer or identifier string."""
+    match = SUPPORTED_FEATURE_RE.match(args)
+    if match is None:
+        return None
+    val = match.group("val")
+    if val is not None:
+        try:
+            return int(val, 0)
+        except ValueError:
+            return None
+    name = match.group("name") or match.group("ident")
+    if name is None or name_map is None:
+        return None
+    return name_map.get(name)
+
+
 def _classify_named_color_metadata(
     primaries_named: int | None,
     tf_named: int | None,
@@ -2152,45 +2207,16 @@ def _partition_by_connection(
     return effective_trace, selected_conn, total_conns, None
 
 
-def validate_composite_window_trace(
-    trace: str,
-    expected_app_id: str = DEFAULT_APP_ID,
-    *,
-    trace_only: bool = False,
-) -> dict[str, Any]:
-    """Validate passive Wayland color-management submission for CineHDR's composite window.
-
-    Full ADR-0004 criteria for dynamically found window surface:
-    1. wp_color_manager_v1 advertised and bound;
-    2. Manager capability burst includes perceptual intent (supported_intent(0)) and completes with done();
-    3. CineHDR's toplevel window surface dynamically identified via:
-       xdg_wm_base.get_xdg_surface(..., wl_surface#X) -> xdg_surface.get_toplevel(...) -> xdg_toplevel.set_app_id(expected_app_id);
-    4. wp_color_manager_v1.get_surface called for that exact window surface;
-    5. wp_image_description_v1 received ready (or ready2) event before set_image_description;
-    6. set_image_description called with perceptual intent (intent=0);
-    7. wl_surface.commit called on that exact window surface after set_image_description;
-    8. Free of protocol errors, descriptor failed events, and fatal errors.
-    """
-    expected_app_id = _validate_app_id(expected_app_id)
-    fatal = _fatal_error(trace)
-    if fatal is not None:
-        raise fatal
-
-    effective_trace, selected_conn, total_conns, unknown_ev = _partition_by_connection(
-        trace, expected_app_id, trace_only=trace_only
-    )
-    if unknown_ev is not None:
-        return unknown_ev
-    trace = effective_trace
-
-    def _finalize(ev: dict[str, Any]) -> dict[str, Any]:
-        if selected_conn is not None:
-            ev["selected_connection_id"] = selected_conn
-            ev["total_connections_observed"] = total_conns
-            ev["connection_tags_verified"] = True
-        return ev
-    calls = _calls(trace)
-    calls_by_index = {call.index: call for call in calls}
+def _collect_manager_bindings(
+    calls: list[TraceCall],
+) -> tuple[
+    list[tuple[TraceCall, int, int]],
+    dict[tuple[str, int], list[int]],
+    dict[int, list[tuple[str, int]]],
+    list[tuple[TraceCall, TraceCall, int, int, int, int]],
+    dict[int, int],
+]:
+    """Collect wp_color_manager_v1 globals, object creations, and valid wl_registry binds."""
     globals_ = [
         (call, GLOBAL_RE.match(call.args))
         for call in calls
@@ -2201,8 +2227,6 @@ def validate_composite_window_trace(
         for call, match in globals_
         if match is not None
     ]
-    if not manager_globals:
-        raise TraceValidationError("wp_color_manager_v1 was not advertised by the registry")
 
     creations: dict[tuple[str, int], list[int]] = {}
     creations_by_id: dict[int, list[tuple[str, int]]] = {}
@@ -2275,6 +2299,83 @@ def validate_composite_window_trace(
         bindings.append(
             (call, global_call, global_id, manager_id, advertised_version, bound_version)
         )
+    return manager_globals, creations, creations_by_id, bindings, manager_bind_counts
+
+
+def _check_unexpected_post_delete(
+    calls: list[TraceCall], bind: TraceCall, manager_id: int
+) -> None:
+    """Reject wp_color_manager_v1 method calls issued after delete_id without a new bind."""
+    first_delete_after_bind = next(
+        (
+            cd.index
+            for cd in calls
+            if cd.interface == "wl_display"
+            and cd.method == "delete_id"
+            and cd.args == str(manager_id)
+            and cd.index > bind.index
+        ),
+        None,
+    )
+    if first_delete_after_bind is not None and any(
+        c.interface == "wp_color_manager_v1"
+        and c.object_id == manager_id
+        and c.index > first_delete_after_bind
+        for c in calls
+    ):
+        raise TraceValidationError(
+            f"wp_color_manager_v1#{manager_id} was used after delete_id without a new bind"
+        )
+
+
+def validate_composite_window_trace(
+    trace: str,
+    expected_app_id: str = DEFAULT_APP_ID,
+    *,
+    trace_only: bool = False,
+) -> dict[str, Any]:
+    """Validate passive Wayland color-management submission for CineHDR's composite window.
+
+    Full ADR-0004 criteria for dynamically found window surface:
+    1. wp_color_manager_v1 advertised and bound;
+    2. Manager capability burst includes perceptual intent (supported_intent(0)) and completes with done();
+    3. CineHDR's toplevel window surface dynamically identified via:
+       xdg_wm_base.get_xdg_surface(..., wl_surface#X) -> xdg_surface.get_toplevel(...) -> xdg_toplevel.set_app_id(expected_app_id);
+    4. wp_color_manager_v1.get_surface called for that exact window surface;
+    5. wp_image_description_v1 received ready (or ready2) event before set_image_description;
+    6. set_image_description called with perceptual intent (intent=0);
+    7. wl_surface.commit called on that exact window surface after set_image_description;
+    8. Free of protocol errors, descriptor failed events, and fatal errors.
+    """
+    expected_app_id = _validate_app_id(expected_app_id)
+    fatal = _fatal_error(trace)
+    if fatal is not None:
+        raise fatal
+
+    effective_trace, selected_conn, total_conns, unknown_ev = _partition_by_connection(
+        trace, expected_app_id, trace_only=trace_only
+    )
+    if unknown_ev is not None:
+        return unknown_ev
+    trace = effective_trace
+
+    def _finalize(ev: dict[str, Any]) -> dict[str, Any]:
+        if selected_conn is not None:
+            ev["selected_connection_id"] = selected_conn
+            ev["total_connections_observed"] = total_conns
+            ev["connection_tags_verified"] = True
+        return ev
+    calls = _calls(trace)
+    calls_by_index = {call.index: call for call in calls}
+    (
+        manager_globals,
+        creations,
+        creations_by_id,
+        bindings,
+        manager_bind_counts,
+    ) = _collect_manager_bindings(calls)
+    if not manager_globals:
+        raise TraceValidationError("wp_color_manager_v1 was not advertised by the registry")
     if not bindings:
         raise TraceValidationError("wp_color_manager_v1 was advertised but not bound")
 
@@ -2295,26 +2396,7 @@ def validate_composite_window_trace(
     for bind, global_call, global_id, manager_id, advertised_version, bound_version in bindings:
         valid_gen, mgr_end_index = _is_valid_manager_generation(bindings, bind, manager_id, calls)
         if not valid_gen:
-            first_delete_after_bind = next(
-                (
-                    cd.index
-                    for cd in calls
-                    if cd.interface == "wl_display"
-                    and cd.method == "delete_id"
-                    and cd.args == str(manager_id)
-                    and cd.index > bind.index
-                ),
-                None,
-            )
-            if first_delete_after_bind is not None and any(
-                c.interface == "wp_color_manager_v1"
-                and c.object_id == manager_id
-                and c.index > first_delete_after_bind
-                for c in calls
-            ):
-                raise TraceValidationError(
-                    f"wp_color_manager_v1#{manager_id} was used after delete_id without a new bind"
-                )
+            _check_unexpected_post_delete(calls, bind, manager_id)
             continue
         perceptual = next(
             (
@@ -3433,6 +3515,219 @@ def create_failure_evidence(
     }
 
 
+_SDR_FALLBACK_FORBIDDEN_CALLS = frozenset({
+    ("wp_color_manager_v1", "get_surface"),
+    ("wp_color_manager_v1", "create_windows_scrgb"),
+    ("wp_color_manager_v1", "create_parametric_creator"),
+    ("wp_color_manager_v1", "create_icc_creator"),
+    ("wp_color_management_surface_v1", "set_image_description"),
+    ("wp_color_management_surface_v1", "set_default_image_description"),
+})
+
+
+def _collect_sdr_fallback_bursts(
+    calls: list[TraceCall],
+    bindings: list[tuple[TraceCall, TraceCall, int, int, int, int]],
+) -> list[dict[str, Any]]:
+    """Collect capability burst and destroy lifecycle for valid wp_color_manager_v1 binds."""
+    bursts: list[dict[str, Any]] = []
+    for bind, _, global_id, manager_id, advertised_version, bound_version in bindings:
+        valid_gen, mgr_end_index = _is_valid_manager_generation(bindings, bind, manager_id, calls)
+        if not valid_gen:
+            _check_unexpected_post_delete(calls, bind, manager_id)
+            continue
+        mgr_calls = [
+            c
+            for c in calls
+            if c.interface == "wp_color_manager_v1"
+            and c.object_id == manager_id
+            and bind.index < c.index <= mgr_end_index
+        ]
+        done_call = next((c for c in mgr_calls if c.method == "done"), None)
+        destroy_call = next((c for c in mgr_calls if c.method == "destroy"), None)
+        burst_end = done_call.index if done_call is not None else mgr_end_index
+
+        intents: set[int] = set()
+        tfs: set[int] = set()
+        primaries: set[int] = set()
+        features: set[int] = set()
+        for c in mgr_calls:
+            if c.index >= burst_end:
+                continue
+            if c.method == "supported_intent" and (v := _parse_named_enum_arg(c.args)) is not None:
+                intents.add(v)
+            elif c.method == "supported_tf_named" and (v := _parse_named_enum_arg(c.args, TF_NAMED_NAME_TO_ID)) is not None:
+                tfs.add(v)
+            elif c.method == "supported_primaries_named" and (v := _parse_named_enum_arg(c.args, PRIM_NAMED_NAME_TO_ID)) is not None:
+                primaries.add(v)
+            elif c.method == "supported_feature" and (v := _parse_named_enum_arg(c.args)) is not None:
+                features.add(v)
+
+        bursts.append({
+            "global_id": global_id,
+            "registry_id": bind.object_id,
+            "manager_id": manager_id,
+            "advertised_version": advertised_version,
+            "bound_version": bound_version,
+            "done_index": done_call.index if done_call is not None else None,
+            "destroy_index": destroy_call.index if destroy_call is not None else None,
+            "supported_intents": intents,
+            "supported_tfs": tfs,
+            "supported_primaries": primaries,
+            "supported_features": features,
+        })
+    return bursts
+
+
+def _select_sdr_fallback_window_commit(
+    calls: list[TraceCall],
+    target_window_surfaces: list[int],
+    expected_app_id: str,
+) -> tuple[int, int, int]:
+    """Return (wl_surface_id, commit_index, effective_buffer_id) for presented target window."""
+    if not target_window_surfaces:
+        raise TraceValidationError(
+            f"no xdg_toplevel window surface found for app_id {expected_app_id!r}"
+        )
+    target_set = set(target_window_surfaces)
+    for call in reversed(calls):
+        if call.interface == "wl_surface" and call.method == "commit" and call.object_id in target_set:
+            buf_id = _effective_buffer_at_commit(calls, call.object_id, call.index)
+            if buf_id is not None:
+                return call.object_id, call.index, buf_id
+    latest_commit = next(
+        (
+            call.index
+            for call in reversed(calls)
+            if call.interface == "wl_surface" and call.method == "commit" and call.object_id in target_set
+        ),
+        len(calls),
+    )
+    raise _diagnose_missing_buffer(calls, target_window_surfaces[0], latest_commit, "SDR fallback")
+
+
+def validate_sdr_fallback_trace(
+    trace: str,
+    expected_app_id: str = DEFAULT_APP_ID,
+    *,
+    trace_only: bool = False,
+) -> dict[str, Any]:
+    """Validate GTK/KWin SDR fallback protocol contract when TF_SRGB is absent."""
+    expected_app_id = _validate_app_id(expected_app_id)
+    effective_trace, selected_conn, total_conns, unknown_ev = _partition_by_connection(
+        trace, expected_app_id, trace_only=trace_only
+    )
+    if unknown_ev is not None:
+        if selected_conn is None and "untagged" not in unknown_ev.get("reason", ""):
+            fatal_global = _fatal_error(trace)
+            if fatal_global is not None:
+                raise fatal_global
+        unknown_ev["oracle"] = "sdr_fallback"
+        unknown_ev["revision"] = SDR_FALLBACK_REVISION
+        return unknown_ev
+
+    fatal = _fatal_error(effective_trace)
+    if fatal is not None:
+        raise fatal
+
+    calls = _calls(effective_trace)
+    for call in calls:
+        if (call.interface, call.method) in _SDR_FALLBACK_FORBIDDEN_CALLS:
+            raise TraceValidationError(
+                f"unexpected color-management call {call.interface}.{call.method} at call {call.index} during SDR fallback"
+            )
+
+    manager_globals, _, _, bindings, _ = _collect_manager_bindings(calls)
+    if not manager_globals:
+        raise TraceValidationError("wp_color_manager_v1 was not advertised by the registry")
+    if not bindings:
+        raise TraceValidationError("wp_color_manager_v1 was advertised but not bound")
+
+    bursts = _collect_sdr_fallback_bursts(calls, bindings)
+    done_bursts = [b for b in bursts if b["done_index"] is not None]
+    if not done_bursts:
+        raise TraceValidationError("bound wp_color_manager_v1 never completed capability burst with done()")
+    destroyed_bursts = [
+        b
+        for b in done_bursts
+        if b["destroy_index"] is not None and b["done_index"] < b["destroy_index"]
+    ]
+    if not destroyed_bursts:
+        raise TraceValidationError(
+            "wp_color_manager_v1 was not cleanly destroyed after capability burst"
+        )
+
+    chosen = destroyed_bursts[0]
+    registry_ok, registry_reason, registry_unproven, _ = _check_single_registry_origin(
+        calls, chosen["registry_id"], is_cross=False
+    )
+    if not registry_ok:
+        if registry_unproven:
+            unknown = _unknown_composite_evidence(registry_reason or "registry origin cannot be proven")
+            unknown.update({"oracle": "sdr_fallback", "revision": SDR_FALLBACK_REVISION})
+            return unknown
+        raise TraceValidationError(registry_reason or "invalid registry origin")
+    if TF_NAMED_SRGB in chosen["supported_tfs"]:
+        raise TraceValidationError(
+            "wp_color_manager_v1 advertised TF srgb (9); missing TF_SRGB fallback precondition does not hold"
+        )
+    if not (chosen["supported_tfs"] & {TF_NAMED_GAMMA22, TF_NAMED_COMPOUND_POWER_2_4}):
+        raise TraceValidationError(
+            "wp_color_manager_v1 did not advertise replacement SDR transfer function (gamma22 or compound_power_2_4)"
+        )
+
+    toplevel_surfaces, _, _, _ = _surface_roles_and_attaches(calls)
+    target_window_surfaces = [
+        surf for surf, app in toplevel_surfaces.items() if app == expected_app_id
+    ]
+    surf_id, commit_idx, buf_id = _select_sdr_fallback_window_commit(
+        calls, target_window_surfaces, expected_app_id
+    )
+    if commit_idx <= chosen["destroy_index"]:
+        raise TraceValidationError(
+            "target window has no non-null buffer commit after color manager teardown"
+        )
+
+    evidence: dict[str, Any] = {
+        "schema": TRACE_SCHEMA,
+        "revision": SDR_FALLBACK_REVISION,
+        "status": "PASS",
+        "oracle": "sdr_fallback",
+        "scope": TRACE_ONLY_SDR_FALLBACK_SCOPE,
+        "matched": {
+            "manager": {
+                "global_id": chosen["global_id"],
+                "object_id": chosen["manager_id"],
+                "advertised_version": chosen["advertised_version"],
+                "bound_version": chosen["bound_version"],
+                "done_index": chosen["done_index"],
+                "destroy_index": chosen["destroy_index"],
+                "supported_intents": sorted(chosen["supported_intents"]),
+                "supported_tfs": sorted(chosen["supported_tfs"]),
+                "supported_primaries": sorted(chosen["supported_primaries"]),
+                "supported_features": sorted(chosen["supported_features"]),
+                "tf_srgb_absent": True,
+            },
+            "color_management": {
+                "cm_surface_count": 0,
+                "image_description_count": 0,
+                "set_image_description_count": 0,
+            },
+            "surface": {
+                "wl_surface_id": surf_id,
+                "commit_index": commit_idx,
+                "effective_buffer_id": buf_id,
+                "app_id": expected_app_id,
+            },
+        },
+    }
+    if selected_conn is not None:
+        evidence["selected_connection_id"] = selected_conn
+        evidence["total_connections_observed"] = total_conns
+        evidence["connection_tags_verified"] = True
+    return evidence
+
+
 def create_trace_only_report(
     trace_path: Path,
     expected_app_id: str,
@@ -3441,15 +3736,35 @@ def create_trace_only_report(
 ) -> dict[str, Any]:
     """Validate a single raw Wayland trace for autonomous L3p evidence without CineHDR publication report."""
     effective_oracle = "composite_window" if oracle is None else oracle
-    if effective_oracle not in ("composite_window", "primary_composite"):
+    if effective_oracle not in ("composite_window", "primary_composite", "sdr_fallback"):
         raise TraceValidationError(
-            f"trace-only mode requires oracle composite_window ({effective_oracle!r} specified)"
+            f"trace-only mode requires oracle composite_window, primary_composite, or sdr_fallback ({effective_oracle!r} specified)"
         )
     if expected_app_id is None or not isinstance(expected_app_id, str) or not expected_app_id.strip():
         raise TraceValidationError("trace-only mode requires a non-empty app_id")
     target_app_id = expected_app_id.strip()
 
     trace_text = trace_path.read_text(encoding="utf-8", errors="replace")
+    if effective_oracle == "sdr_fallback":
+        evidence = validate_sdr_fallback_trace(
+            trace_text, expected_app_id=target_app_id, trace_only=True
+        )
+        evidence.update(
+            {
+                "trace_only": True,
+                "protocol_evidence_level": "L3p",
+                "expected_app_id": target_app_id,
+                "observed_app_id": target_app_id,
+                "trace": _input_reference(trace_path),
+                "scope": (
+                    TRACE_ONLY_SDR_FALLBACK_SCOPE
+                    if evidence.get("status") == "PASS"
+                    else TRACE_ONLY_UNKNOWN_SCOPE
+                ),
+            }
+        )
+        return evidence
+
     evidence = validate_composite_window_trace(
         trace_text, expected_app_id=target_app_id, trace_only=True
     )
@@ -3543,10 +3858,15 @@ def create_trace_only_failure_evidence(
         observed_app_ids = []
 
     observed_app_id = observed_app_ids[0] if len(observed_app_ids) == 1 else None
+    failure_revision = (
+        SDR_FALLBACK_REVISION
+        if effective_oracle == "sdr_fallback"
+        else PRIMARY_COMPOSITE_REVISION
+    )
 
     return {
         "schema": TRACE_SCHEMA,
-        "revision": PRIMARY_COMPOSITE_REVISION,
+        "revision": failure_revision,
         "status": "FAIL",
         "oracle": effective_oracle,
         "expected_app_id": expected_app_id,
@@ -3587,7 +3907,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True, help="Output JSON evidence path")
     parser.add_argument(
         "--oracle",
-        choices=("composite_window", "primary_composite", "strict_multiphase", "legacy"),
+        choices=("composite_window", "primary_composite", "sdr_fallback", "strict_multiphase", "legacy"),
         default=None,
         help="Color management validation oracle (default: composite_window if requested or legacy)",
     )
@@ -3614,8 +3934,10 @@ def main(argv: list[str] | None = None) -> int:
         if not args.app_id or not args.app_id.strip():
             parser.error("--trace-only mode requires --app-id")
         effective_oracle = "composite_window" if args.oracle is None else args.oracle
-        if effective_oracle not in ("composite_window", "primary_composite"):
-            parser.error(f"--trace-only mode requires oracle composite_window (got {args.oracle!r})")
+        if effective_oracle not in ("composite_window", "primary_composite", "sdr_fallback"):
+            parser.error(
+                f"--trace-only mode requires oracle composite_window, primary_composite, or sdr_fallback (got {args.oracle!r})"
+            )
 
         try:
             evidence = create_trace_only_report(

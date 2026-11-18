@@ -48,17 +48,18 @@ adjustments, MPRIS, translations) comes from upstream Cine.
 ## Platform status
 
 Each result is recorded against the evidence levels defined in
-[docs/TESTING.md](docs/TESTING.md): **L2** playback works, **L3p** the client
-sent an HDR color description for the video surface and committed it on the
-Wayland protocol trace, **L4** visual comparison against mpv on a test pattern.
+[docs/TESTING.md](docs/TESTING.md): **L2** playback works; **L3p** is a Wayland
+protocol trace (HDR description and commit for native HDR, or their absence
+and an SDR buffer commit for KDE fallback); **L4** is a visual comparison
+against mpv on a test pattern.
 
-| Environment | Stack | SDR playback (L2) | mpv reference (L3p) | HDR10 protocol (L3p) | HDR10 visual (L4) |
-|---|---|---|---|---|---|
-| **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** | **PASS** | **PASS** | **PASS** |
-| GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
-| GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
-| KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (three L2 runs; file open, playback, pause, seek, resize/fullscreen, and exit checked; logs reviewed; HDR/L3p not tested) | N/A | N/A | N/A |
-| KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | `NOT_RUN` | N/A | N/A | N/A |
+| Environment | Stack | SDR playback (L2) | HDR-to-SDR fallback (L3/L3p) | mpv reference (L3p) | HDR10 protocol (L3p) | HDR10 visual (L4) |
+|---|---|---|---|---|---|---|
+| **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** | N/A | **PASS** | **PASS** | **PASS** |
+| GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | `NOT_RUN` | N/A | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+| GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | `NOT_RUN` | N/A | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+| KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (playback, pause, seek, resize/fullscreen, exit during playback) | **PASS** (GTK lacks TF sRGB → SDR tone mapping, no HDR description) | N/A | N/A | N/A |
+| KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | N/A | N/A | N/A |
 
 `NOT_RUN` means not tested, not failing. Dates, builds and per-scenario detail
 are in [docs/TESTING.md](docs/TESTING.md). A Dolby Vision Profile 8 clip plays as
