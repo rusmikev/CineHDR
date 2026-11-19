@@ -70,6 +70,20 @@
   </requires>
 
   <releases>
+    <!-- Release candidate: remove type="development" and set final publication date on release -->
+    <release version="1.8.8.1" type="development" date="2026-11-19">
+      <description translate="no">
+        <ul>
+          <li>Merged upstream Cine main updates (preserving mpv.conf startup options, improved session-restore window sizing, subtitle font selection, popover height limits, and updated translations) while keeping the standard Flatpak on libmpv v0.41.0 with the screenshot fix and legacy renderer default</li>
+          <li>Updated the standard Flatpak to GNOME Runtime 51 and rechecked SDR playback and HDR10 Wayland submission on GNOME with AMD graphics</li>
+          <li>Validated HDR10 output and transitions between HDR and SDR displays on GNOME with Intel graphics</li>
+          <li>Validated 1080p SDR playback on GNOME and Plasma Wayland with NVIDIA PRIME, CUDA interop, and NVDEC on a GeForce RTX 3050</li>
+          <li>Validated HDR-to-SDR tone mapping on Plasma with AMD graphics when GTK lacks the sRGB transfer function</li>
+          <li>Moved validation tooling outside the standard Flatpak and separated the experimental GPU Next build from the standard package</li>
+          <li>Updated the README with installation instructions, platform test results, and known limitations</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.8.0" date="2026-11-09">
       <description translate="no">
         <ul>

@@ -5,8 +5,9 @@ Release notes for CineHDR. Entries are taken from the AppStream metadata in
 for what Flatpak and software centers display. Version `X.Y.Z.N` means upstream
 Cine `X.Y.Z` plus CineHDR revision `N`.
 
-## Unreleased
+## 1.8.8.1 (Unreleased)
 
+- Merged upstream Cine `main` (`e8c84e1`: preserving `mpv.conf` startup options, improved session-restore window sizing, subtitle font selection, popover height limits, and updated translations) while keeping the standard Flatpak on `libmpv v0.41.0` with the screenshot fix and legacy renderer default.
 - Updated the standard Flatpak to GNOME Runtime 51. Rechecked SDR playback and HDR10 Wayland submission on GNOME with AMD graphics.
 - Validated HDR10 output and transitions between HDR and SDR displays on GNOME with Intel graphics.
 - Validated 1080p SDR playback on GNOME and Plasma Wayland with NVIDIA PRIME, CUDA interop, and NVDEC on a GeForce RTX 3050.

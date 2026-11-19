@@ -18,10 +18,13 @@ clean mpv-based player for the GNOME desktop. Upstream Cine has no HDR output
 path. This fork adds one, so that HDR10 and HLG content is delivered to an HDR-enabled display through the Wayland
 color-management protocol.
 
-**Status:** HDR10 and HLG output is verified on **GNOME 50/51 with AMD graphics**
-(see [Platform status](#platform-status)). Other desktops and GPUs are not yet
-verified. On unsupported setups the player falls back to normal SDR playback
-with tone mapping, exactly like upstream.
+**Status:** Native HDR10 output is verified on **GNOME with AMD and Intel
+graphics** (with HLG also verified on GNOME/AMD; see
+[Platform status](#platform-status)). **KDE Plasma ≥ 6.7** is verified for SDR
+playback and HDR-to-SDR tone-mapping fallback (native HDR on KDE is deferred
+past 1.0). **NVIDIA PRIME** (RTX 3050) is verified for 1080p SDR playback with
+CUDA interop and NVDEC on GNOME and Plasma Wayland. On unsupported setups the
+player falls back to normal SDR playback with tone mapping, like upstream.
 
 ## What this fork adds
 
@@ -59,7 +62,7 @@ against mpv on a test pattern.
 | GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | **PASS** (1080p SDR playback and clean exit; mpv reported frame drops in fullscreen 4K60 on the tested HDMI display, with no visible issues reported) | N/A | **PASS** | **PASS** | **PASS** |
 | GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | **PASS** (1080p with CUDA interop; default interop reports a startup GL error; mpv reported frame drops in fullscreen 4K60 with CUDA on the tested HDMI display, with no visible issues reported) | N/A | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
 | KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (playback, pause, seek, resize/fullscreen, exit during playback) | **PASS** (GTK lacks TF sRGB → SDR tone mapping, no HDR description) | N/A | N/A | N/A |
-| KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | **PASS** (1080p with CUDA interop on RTX 3050) | **Partial** (SDR tone mapping reported by the app, no protocol trace) | N/A | N/A | N/A |
+| KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | **PASS** (1080p with CUDA interop on RTX 3050; 4K60 drop-delta measurement in Plasma is incomplete) | **Partial** (HDR-to-SDR tone mapping confirmed by app diagnostics, no protocol trace) | N/A | N/A | N/A |
 
 `NOT_RUN` means not tested, not failing. Dates, builds and per-scenario detail
 are in [docs/TESTING.md](docs/TESTING.md). A Dolby Vision Profile 8 clip plays as
@@ -69,12 +72,21 @@ other hardware.
 
 ### Known limitations
 
-- **GNOME ≥ 48 is required for native HDR.** Enable HDR per monitor in
-  *Settings → Displays*.
-- **KDE Plasma:** native HDR is deferred past 1.0. KWin no longer advertises the
-  `sRGB` transfer function that GTK 4.22+ requires, so GTK disables color
-  management; CineHDR then falls back to SDR tone mapping. The planned fix is an
-  upstream GTK change.
+- **GNOME ≥ 48 on Wayland is required for native HDR.** Enable HDR per monitor
+  in *Settings → Displays*. X11 and compositors without Wayland color
+  management fall back to SDR tone mapping.
+- **KDE Plasma ≥ 6.7:** native HDR is deferred past 1.0. KWin no longer
+  advertises the deprecated `sRGB` transfer function that GTK 4.22–4.24
+  requires, so GTK disables color management and CineHDR falls back to SDR tone
+  mapping. Upstream issue
+  [GNOME/gtk#7921](https://gitlab.gnome.org/GNOME/gtk/-/work_items/7921) is
+  closed without a fix; a follow-up upstream GTK MR is planned.
+- **Dolby Vision:** Profile 8 plays its HDR10-compatible base layer without RPU
+  processing. Profile 5 falls back to SDR with a diagnostic reason in the
+  legacy renderer.
+- **NVIDIA PRIME:** see the NVIDIA PRIME section under
+  [Configuration reference](#configuration-reference) for the
+  `gpu-hwdec-interop=cuda` workaround on RTX 3050.
 - **Publishing an HDR texture is not proof of HDR on screen.** That needs the
   protocol trace (L3p) and a visual check (L4), which is why the table above
   separates them.
