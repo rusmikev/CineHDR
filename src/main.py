@@ -184,10 +184,10 @@ class CineApplication(Adw.Application):
         win = CineWindow(application=self)
 
         if should_auto_resize and win._session_restoring:
-            win.realize()
+            win.ensure_video_render_context()
             return
 
-        win.realize()
+        win.ensure_video_render_context()
         win.set_win_size_and_present()
 
     def do_open(self, files, n_files, hint):
@@ -199,7 +199,7 @@ class CineApplication(Adw.Application):
             win = CineWindow(application=self)
             win.start_page.set_visible(False)
 
-        win.realize()
+        win.ensure_video_render_context()
         if not open_new:
             win.present()
 

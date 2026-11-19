@@ -64,8 +64,12 @@ def restore_last_playlist(window) -> bool:
         if not os.path.exists(FILE) or os.path.getsize(FILE) == 0:
             return False
 
+        def _load_restored_playlist():
+            window.ensure_video_render_context()
+            window.mpv.loadfile(FILE, "replace")
+
         window.start_page.set_sensitive(False)
-        idle_add_once(window.mpv.loadfile, FILE, "replace")
+        idle_add_once(_load_restored_playlist)
         idle_add_once(window.show_toast, _("Session Restored"), True)
         return True
     except Exception:

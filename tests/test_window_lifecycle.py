@@ -729,6 +729,117 @@ class TestWindowObserversAndCopyReportParity(unittest.TestCase):
         self.assertIn("Enabled (subsurface / direct scanout possible)", report)
 
 
+class TestColdOpenRenderContextOrder(unittest.TestCase):
+    def test_ensure_video_render_context_realizes_window_then_video_area(self):
+        win = _make_blank_window()
+        calls = []
+        state = {"win": False, "area": False}
+
+        def win_realize():
+            calls.append("win.realize")
+            state["win"] = True
+
+        def area_realize():
+            calls.append("video_area.realize")
+            state["area"] = True
+
+        win.get_realized = lambda: state["win"]
+        win.realize = win_realize
+        win._video_area = SimpleNamespace(
+            get_realized=lambda: state["area"],
+            realize=area_realize,
+        )
+
+        win.ensure_video_render_context()
+        self.assertEqual(calls, ["win.realize", "video_area.realize"])
+
+        # Idempotent once realized
+        win.ensure_video_render_context()
+        self.assertEqual(calls, ["win.realize", "video_area.realize"])
+
+    def test_do_open_realizes_video_area_before_loadfile(self):
+        from src.main import CineApplication
+
+        app = CineApplication.__new__(CineApplication)
+        app.gpu_validation_config = None
+        app._gpu_validation_session = None
+        app.can_restore_session = True
+        app.props = SimpleNamespace(active_window=None)
+
+        calls = []
+        win = _make_blank_window()
+        win.get_realized = lambda: False
+        win.realize = lambda: calls.append("win.realize")
+        win._video_area = SimpleNamespace(
+            get_realized=lambda: False,
+            realize=lambda: calls.append("video_area.realize"),
+        )
+        win.mpv = MagicMock()
+        win.mpv.loadfile = lambda path, mode: calls.append(("loadfile", path, mode))
+        app.get_windows = lambda: [win]
+
+        gfile = MagicMock()
+        gfile.get_path.return_value = "/tmp/sample.mkv"
+
+        with patch("src.main.CineWindow", return_value=win), \
+             patch("src.main.os.path.exists", return_value=True):
+            app.do_open([gfile], 1, "")
+
+        self.assertEqual(
+            calls,
+            [
+                "win.realize",
+                "video_area.realize",
+                ("loadfile", "/tmp/sample.mkv", "append-play"),
+            ],
+        )
+
+    def test_restore_last_playlist_ensures_render_context_before_loadfile(self):
+        from src.save_session import restore_last_playlist
+
+        calls = []
+        win = _make_blank_window()
+        win.app = SimpleNamespace(can_restore_session=True)
+        win.ensure_video_render_context = lambda: calls.append("ensure_render_context")
+        win.mpv = MagicMock()
+        win.mpv.loadfile = lambda path, mode: calls.append(("loadfile", path, mode))
+
+        scheduled = []
+
+        def fake_idle(fn, *args, **kwargs):
+            scheduled.append((fn, args, kwargs))
+            return 1
+
+        with patch("src.save_session.os.path.exists", return_value=True), \
+             patch("src.save_session.os.path.getsize", return_value=42), \
+             patch("src.save_session.idle_add_once", side_effect=fake_idle):
+            restored = restore_last_playlist(win)
+
+        self.assertTrue(restored)
+        self.assertFalse(win.app.can_restore_session)
+        for fn, args, kwargs in scheduled:
+            fn(*args, **kwargs)
+        self.assertEqual(calls[0], "ensure_render_context")
+        self.assertEqual(calls[1][0], "loadfile")
+
+    def test_rotate_observer_swaps_dimensions_and_dispatches_on_idle(self):
+        win = _make_blank_window()
+        win._presented = False
+        win._shutting_down = False
+        props = {}
+        win.mpv = SimpleNamespace(
+            event_callback=lambda name: lambda fn: fn,
+            property_observer=lambda name: lambda fn: props.setdefault(name, []).append(fn) or fn,
+            width=1920,
+            height=1080,
+        )
+        win._setup_observers()
+
+        with patch("src.window.idle_add_once") as mock_idle:
+            props["video-params/rotate"][0]("video-params/rotate", 90)
+        mock_idle.assert_called_once_with(win.set_win_size_and_present, 1080, 1920)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)
     unittest.main()

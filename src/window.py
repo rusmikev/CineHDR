@@ -373,6 +373,12 @@ class CineWindow(Adw.ApplicationWindow):
         if not self._is_gpu_validation:
             self._session_restoring = restore_last_playlist(self)
 
+    def ensure_video_render_context(self):
+        if not self.get_realized():
+            self.realize()
+        if not self._video_area.get_realized():
+            self._video_area.realize()
+
     def set_win_size_and_present(self, width=1920, height=1080):
         set_window_size_and_present(self, width, height)
 
