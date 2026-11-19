@@ -59,7 +59,7 @@ against mpv on a test pattern.
 | GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | **PASS** (1080p SDR playback and clean exit; mpv reported frame drops in fullscreen 4K60 on the tested HDMI display, with no visible issues reported) | N/A | **PASS** | **PASS** | **PASS** |
 | GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | **PASS** (1080p with CUDA interop; default interop reports a startup GL error; mpv reported frame drops in fullscreen 4K60 with CUDA on the tested HDMI display, with no visible issues reported) | N/A | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
 | KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (playback, pause, seek, resize/fullscreen, exit during playback) | **PASS** (GTK lacks TF sRGB → SDR tone mapping, no HDR description) | N/A | N/A | N/A |
-| KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | N/A | N/A | N/A |
+| KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | **PASS** (1080p with CUDA interop on RTX 3050) | **Partial** (SDR tone mapping reported by the app, no protocol trace) | N/A | N/A | N/A |
 
 `NOT_RUN` means not tested, not failing. Dates, builds and per-scenario detail
 are in [docs/TESTING.md](docs/TESTING.md). A Dolby Vision Profile 8 clip plays as
@@ -189,7 +189,7 @@ renderer.
 </details>
 
 <details>
-<summary>NVIDIA PRIME on GNOME Wayland (SDR)</summary>
+<summary>NVIDIA PRIME on GNOME and KDE Wayland (SDR)</summary>
 
 On the tested RTX 3050 laptop, the legacy renderer played 1080p SDR with
 `nvdec` when mpv loaded only the CUDA interop. The default interop search
