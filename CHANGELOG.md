@@ -7,8 +7,12 @@ Cine `X.Y.Z` plus CineHDR revision `N`.
 
 ## Unreleased
 
-- Rewrote the README: clear scope, platform status table, English only.
-- Decoupled the product `video_widget` from the validation module (first step of moving validation tooling out of the installed product).
+- Updated the standard Flatpak to GNOME Runtime 51. Rechecked SDR playback and HDR10 Wayland submission on GNOME with AMD graphics.
+- Validated HDR10 output and transitions between HDR and SDR displays on GNOME with Intel graphics.
+- Validated 1080p SDR playback on GNOME and Plasma Wayland with NVIDIA PRIME, CUDA interop, and NVDEC on a GeForce RTX 3050.
+- Validated HDR-to-SDR tone mapping on Plasma with AMD graphics when GTK lacks the sRGB transfer function.
+- Moved validation tooling outside the standard Flatpak. Separated the experimental GPU Next build from the standard package.
+- Updated the README with installation instructions, platform test results, and known limitations.
 
 ## 1.8.8.0 (2026-11-09)
 

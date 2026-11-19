@@ -161,7 +161,7 @@
 |---|---|---|---|
 | P4.1 | Влить upstream `main` повторно (если выйдет после B4); версия `1.8.x.1`; `metainfo` `<release>` с датой и changelog | A | TODO |
 | P4.2 | README финальный: установка из GitHub Release; требования (GNOME ≥ 48, Wayland, HDR-монитор; статус KDE по D8); таблица поддержки DE × GPU из `TESTING.md`; ограничения (X11 — SDR, DoVi P5 — SDR, KDE Plasma ≥ 6.7 — SDR fallback до фикса в GTK, NVIDIA — см. раздел); как снять Copy Report для баг-репорта | A | TODO |
-| P4.3 | `CHANGELOG.md`; скриншоты HDR-меню и диагностики | A/O | TODO |
+| P4.3 | `CHANGELOG.md`; скриншоты HDR-меню и диагностики | A/O | IN PROGRESS: черновик Unreleased обновлён по результатам матрицы. Скриншоты и привязка к версии предстоят |
 | P4.4 | Тег `v1.8.x.1` (с подписью), GitHub Release с `CineHDR-x86_64.flatpak` из CI, release notes | O | TODO |
 | P4.5 | (после релиза, опционально) Flathub: отдельная задача — домен для app-id, ревью манифеста | — | TODO |
 
