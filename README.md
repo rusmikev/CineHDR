@@ -57,7 +57,7 @@ against mpv on a test pattern.
 |---|---|---|---|---|---|---|
 | **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** (includes a 4K60 smoke check on Flatpak runtime 51) | N/A | **PASS** | **PASS** (also rechecked on Flatpak runtime 51) | **PASS** |
 | GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | **PASS** (1080p SDR playback and clean exit) | N/A | **PASS** | **PASS** | **PASS** |
-| GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | `UNCLEAR` (default interop reproduces startup GL error; limited CUDA interop smoke passed) | N/A | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
+| GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | **PASS** (1080p with CUDA interop; default interop reports a startup GL error) | N/A | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
 | KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (playback, pause, seek, resize/fullscreen, exit during playback) | **PASS** (GTK lacks TF sRGB → SDR tone mapping, no HDR description) | N/A | N/A | N/A |
 | KDE / NVIDIA | Plasma ≥ 6.7, KWin, NVIDIA (PRIME) | `NOT_RUN` | `NOT_RUN` | N/A | N/A | N/A |
 
@@ -185,6 +185,34 @@ renderer.
   failure); `gpu-next` (strict, fails visibly).
 - **`GSK_RENDERER`:** if unset, CineHDR selects `gl` on GTK ≥ 4.18 (`ngl` on
   older GTK, `gl` under Niri). An explicit user value is always kept.
+
+</details>
+
+<details>
+<summary>NVIDIA PRIME on GNOME Wayland (SDR)</summary>
+
+On the tested RTX 3050 laptop, the legacy renderer played 1080p SDR with
+`nvdec` when mpv loaded only the CUDA interop. The default interop search
+reported a startup OpenGL error on that setup.
+
+For this workaround, add `gpu-hwdec-interop=cuda` to CineHDR's Flatpak
+`mpv.conf` under `~/.var/app/io.github.rusmikev.CineHDR/config/cinehdr/`.
+This selects the interop used by the renderer. The playback decoder can
+still be `nvdec`. Remove the line before using a different GPU or to restore
+the default interop selection.
+
+On the tested setup, the following launch selected the NVIDIA renderer.
+Use the EGL vendor manifest path that exists inside your Flatpak.
+
+```bash
+flatpak run --env=__NV_PRIME_RENDER_OFFLOAD=1 \
+  --env=__GLX_VENDOR_LIBRARY_NAME=nvidia \
+  --env=__EGL_VENDOR_LIBRARY_FILENAMES=/usr/lib/x86_64-linux-gnu/GL/glvnd/egl_vendor.d/10_nvidia.json \
+  --env=CINEHDR_RENDER_BACKEND=legacy io.github.rusmikev.CineHDR
+```
+
+Check **HDR Diagnostics** for the actual OpenGL renderer and active decoder.
+See [the test matrix](docs/TESTING.md) for the validated scope.
 
 </details>
 
