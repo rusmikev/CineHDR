@@ -4581,6 +4581,7 @@ class TestWindowShutdownLifecycle(unittest.TestCase):
         win.mpv.playlist_count = 5
         win.mpv.playlist_pos = 4
         win._shutting_down = False
+        win._presented = True
 
         with patch("src.window.idle_add_once") as mock_idle, \
              patch("src.window.logger.warning") as mock_warn:

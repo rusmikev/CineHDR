@@ -15,7 +15,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gtk
 
 from .mpv_gl_area import ThumbPreviewGLArea
-from .utils import format_time
+from .utils import format_time, get_window_w_h
 
 
 def _setup_tooltip_layers(win: Any) -> None:
@@ -144,6 +144,14 @@ def setup_playback_control_widgets(win: Any) -> None:
     for btn in buttons:
         popover = btn.props.popover
         popover.connect("closed", win.hide_ui_timeout)
+        if (
+            btn == win.subtitles_menu_btn
+            or btn == win.audio_tracks_menu_btn
+            or btn == win.video_tracks_menu_btn
+            or btn == win.chapters_menu_btn
+        ):
+            scrolled_w = popover.get_first_child().get_first_child()
+            scrolled_w.set_max_content_height(422)
         if btn == win.open_menu_btn:
 
             def on_popv_closed(*args):
@@ -151,6 +159,29 @@ def setup_playback_control_widgets(win: Any) -> None:
                     win.mpv.write_watch_later_config()
 
             popover.connect("closed", on_popv_closed)
+
+
+def set_window_size_and_present(
+    win: Any, width: float = 1920, height: float = 1080
+) -> None:
+    """Scale small videos up, apply target default window size, and present once."""
+    scale_tiers = (
+        (144, 1.6666),
+        (240, 1.50),
+        (360, 1.3333),
+        (480, 1.15),
+    )
+
+    for threshold, multiplier in scale_tiers:
+        if min(width, height) <= threshold:
+            width *= multiplier
+            height *= multiplier
+            break
+
+    new_w, new_h = get_window_w_h(win, width, height)
+    win.set_default_size(new_w, new_h)
+    win.present()
+    win._presented = True
 
 
 def setup_thumb_preview(win: Any) -> None:

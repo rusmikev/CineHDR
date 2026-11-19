@@ -65,6 +65,9 @@ def _register_file_observers(win: Any, win_mod: Any) -> None:
             info = event.as_dict()
             reason = info["reason"]
 
+            if not win._presented and not info.get("playlist_insert_num_entries"):
+                win_mod.idle_add_once(win.set_win_size_and_present)
+
             if reason == b"error":
                 # Avoid stopping playback on last file/folder error
                 playlist_count = cast(int, win.mpv.playlist_count)
@@ -102,6 +105,29 @@ def _register_playlist_and_ab_observers(win: Any, win_mod: Any) -> None:
     @win.mpv.property_observer("path")
     def on_path_change(_name, path):
         win._video_path = path
+
+    @win.mpv.property_observer("video-params/rotate")
+    def on_rotate_change(_name, rotate_val):
+        if win._shutting_down or rotate_val is None or win._presented:
+            return
+
+        try:
+            vid_w = cast(int, win.mpv.width) or 1920
+            vid_h = cast(int, win.mpv.height) or 1080
+        except mpv.ShutdownError:
+            return
+
+        if abs(rotate_val) in (90, 270):
+            vid_w, vid_h = vid_h, vid_w
+
+        win_mod.idle_add_once(win.set_win_size_and_present, vid_w, vid_h)
+
+    @win.mpv.property_observer("audio-params")
+    def on_a_params_change(_name, audio_params):
+        if win._shutting_down or audio_params is None or win._presented:
+            return
+
+        win_mod.idle_add_once(win.set_win_size_and_present)
 
     @win.mpv.property_observer("playlist-count")
     def on_playlist_count_change(_name, _count):

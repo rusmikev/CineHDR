@@ -114,18 +114,6 @@ def get_has_host_permission():
 has_host_permission = get_has_host_permission()
 
 
-def get_mouse_bindings(bindings):
-    active_mouse_bindings = {}
-    try:
-        for b in bindings:
-            if "MBTN" in b["key"]:
-                active_mouse_bindings[b["key"]] = b["cmd"]
-    except Exception:
-        logger.exception("get_mouse_bindings failed")
-
-    return active_mouse_bindings
-
-
 def parse_bindings(bindings):
     non_repeatable = set()
     has_enter, has_kp_enter = False, False
@@ -152,7 +140,8 @@ def parse_bindings(bindings):
 
 def is_local_path(path):
     parsed = urlparse(str(path))
-    return bool(not parsed.scheme or parsed.scheme == "file" or len(parsed.scheme) == 1)
+    s = parsed.scheme
+    return bool(not s or s == "file" or len(s) == 1)
 
 
 def _run_once(func, *args, **kwargs):
@@ -230,25 +219,24 @@ def get_display_param():
 
 def _get_fallback_w_h(width, height):
     aspect_ratio = width / height
-    base_size = 1120
+    max_w, max_h = 1120, 630
 
     if aspect_ratio < 1:
-        new_h = int(base_size / aspect_ratio)
-        new_w = base_size
+        new_h = round(max_w / aspect_ratio)
+        new_w = max_w
     else:
-        new_w = int(base_size * aspect_ratio)
-        new_h = base_size
+        new_w = round(max_w * aspect_ratio)
+        new_h = max_w
 
-    max_w, max_h = 1280, 720
     if new_w > max_w or new_h > max_h:
         scale = min(max_w / new_w, max_h / new_h)
-        new_w = int(new_w * scale)
-        new_h = int(new_h * scale)
+        new_w = round(new_w * scale)
+        new_h = round(new_h * scale)
 
     return new_w, new_h
 
 
-def _get_window_w_h(window, width, height):
+def get_window_w_h(window, width, height):
     # Code mostly copied from showtime/loupe:
     # https://gitlab.gnome.org/GNOME/showtime/-/blob/25066ad0ca1c20bd8b9f6f776f5be75b31277039/showtime/widgets/window.py#L467-500
     # https://gitlab.gnome.org/GNOME/loupe/-/blob/4ca5f9e03d18667db5d72325597cebc02887777a/src/widgets/image/rendering.rs#L151
@@ -286,7 +274,7 @@ def _get_window_w_h(window, width, height):
         new_w = max_w
         new_h = height * new_w / width
 
-    max_h = monitor_height - 106 * hidpi_scale
+    max_h = monitor_height - 104 * hidpi_scale
     if new_h > max_h:
         new_h = max_h
         new_w = width * new_h / height
@@ -310,28 +298,6 @@ def _get_window_w_h(window, width, height):
             final_h += 1
 
     return final_w, final_h
-
-
-def set_window_size(window, width, height):
-    if width <= 0 or height <= 0:
-        return
-
-    scale_tiers = (
-        (144, 1.6666),
-        (240, 1.50),
-        (360, 1.3333),
-        (480, 1.15),
-    )
-
-    # Scale up small videos
-    for threshold, multiplier in scale_tiers:
-        if min(width, height) <= threshold:
-            width *= multiplier
-            height *= multiplier
-            break
-
-    new_w, new_h = _get_window_w_h(window, width, height)
-    window.set_default_size(new_w, new_h)
 
 
 def format_time(seconds):

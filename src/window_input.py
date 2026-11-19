@@ -410,27 +410,32 @@ def on_click_released(win: Any, n_press: int, button: str) -> None:
         button == "MBTN_RIGHT" and win._right_clk == SecondaryClick.PLAY_PAUSE
     )
 
+    if is_secondary_pause:
+        win._cycle_pause()
+        return
+
     if win._click_delay_id:
         win_mod.GLib.source_remove(win._click_delay_id)
         win._click_delay_id = 0
 
-    if n_press == 1 and not win._click_holding:
-        if button == "MBTN_LEFT" and win._left_clk != PrimaryClick.BYPASS:
+    if (
+        n_press == 1
+        and not win._click_holding
+        and button == "MBTN_LEFT"
+        and win._left_clk != PrimaryClick.BYPASS
+    ):
 
-            def click():
-                win._cycle_pause()
-                win._click_delay_id = 0
+        def click():
+            win._cycle_pause()
+            win._click_delay_id = 0
 
-            win._click_delay_id = win_mod.timeout_add_once(win._click_time, click)
-            return
-    elif n_press == 2 and (cmd_str_dbl := win._mouse_binds.get(f"{button}_DBL")):
-        win._run_command(cmd_str_dbl)
+        win._click_delay_id = win_mod.timeout_add_once(win._click_time, click)
+        return
+    elif n_press == 2:
+        win.mpv.command_async("keypress", button + "_DBL")
         return
 
-    if is_secondary_pause:
-        win._cycle_pause()
-    elif cmd_str := win._mouse_binds.get(button):
-        win._run_command(cmd_str)
+    win.mpv.command_async("keypress", button)
 
 
 def cancel_click_hold(win: Any) -> None:

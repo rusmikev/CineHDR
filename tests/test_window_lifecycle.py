@@ -252,11 +252,10 @@ class TestWindowActionsAndInit(unittest.TestCase):
              patch.object(CineWindow, "_setup_observers"):
             mock_settings.get_boolean.return_value = True
             mock_settings.get_int.return_value = 0
-            CineWindow.__init__(win, is_activate=True, application=mock_app)
+            CineWindow.__init__(win, application=mock_app)
 
         self.assertIs(win._diagnostics_exporter, mock_exporter)
         self.assertTrue(win._is_gpu_validation)
-        self.assertEqual(win.conf_hwdec, ["vaapi"])
         mock_video_area.setup_window_integration.assert_called_once_with(win)
         mock_mpv_cls.assert_called_once()
         mock_restore.assert_not_called()
@@ -555,8 +554,7 @@ class TestWindowControlsAndInput(unittest.TestCase):
 
         win._is_inactive = False
         win._on_click_released(None, 2, 10, 10, "MBTN_LEFT")
-        win.mpv.command_async.assert_any_call("cycle", "fullscreen")
-        win.mpv.command_async.assert_any_call("show-text", "hi")
+        win.mpv.command_async.assert_any_call("keypress", "MBTN_LEFT_DBL")
 
     def test_mouse_scroll_touchpad_scales_and_emits_wheel_command(self):
         win = _make_blank_window()
@@ -617,6 +615,8 @@ class TestWindowObserversAndCopyReportParity(unittest.TestCase):
             ("event", "file-loaded"),
             ("event", "end-file"),
             ("prop", "path"),
+            ("prop", "video-params/rotate"),
+            ("prop", "audio-params"),
             ("prop", "playlist-count"),
             ("prop", "playlist-pos"),
             ("prop", "ab-loop-b"),
@@ -665,6 +665,7 @@ class TestWindowObserversAndCopyReportParity(unittest.TestCase):
 
         # end-file non-error idle close when keep_open is False and not startup
         win._is_startup = False
+        win._presented = True
         win.mpv.keep_open = False
         win.mpv.idle_active = True
         idle_ev = MagicMock()

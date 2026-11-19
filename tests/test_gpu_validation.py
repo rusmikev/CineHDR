@@ -1156,7 +1156,6 @@ class ValidationIntegrationTests(unittest.TestCase):
         self.assertIn("процесс завершился без нового отчёта", launcher)
         self.assertIn('os.environ.get("CINEHDR_GPU_VALIDATION"', main)
         self.assertIn("Gio.ApplicationFlags.NON_UNIQUE", main)
-        self.assertIn("rotation_value = parts[2].strip()", main)
         self.assertLess(
             main.index("prepare_validation_player"),
             main.index('win.mpv.loadfile(path, "append-play")'),
@@ -1167,8 +1166,8 @@ class ValidationIntegrationTests(unittest.TestCase):
         window = (ROOT / "src/window.py").read_text(encoding="utf-8")
         self.assertIn("Validation seeks must never overwrite", window)
         validation_flag = window.index("self._is_gpu_validation: bool")
-        restore_guard = window.index("and not self._is_gpu_validation")
-        restore_call = window.index("restore_last_playlist(self, self.app, self.mpv)")
+        restore_guard = window.index("if not self._is_gpu_validation:")
+        restore_call = window.index("restore_last_playlist(self)")
         self.assertLess(validation_flag, restore_guard)
         self.assertLess(restore_guard, restore_call)
         self.assertIn("Ignoring session save during GPU validation", window)
@@ -2194,12 +2193,11 @@ class TestStartupFixtureContract(unittest.TestCase):
         prev_win.mpv = MagicMock()
         prev_win.mpv.pause = False
 
-        with patch("src.main.CineWindow", return_value=active_win):
+        with patch("src.main.CineWindow", return_value=active_win), \
+             patch("src.main.os.path.exists", return_value=True):
             app.props = MagicMock()
             app.props.active_window = None
             app.get_windows = MagicMock(return_value=[prev_win, active_win])
-            app._find_first_file = MagicMock(return_value=None)
-            app._set_size_and_present = MagicMock()
             app.hide_ui_timeout = MagicMock()
 
             gfile = MagicMock()
@@ -2207,8 +2205,8 @@ class TestStartupFixtureContract(unittest.TestCase):
 
             app.do_open([gfile], 1, None)
 
-        self.assertFalse(active_win.mpv.pause, "Active window must unpause on normal open")
-        self.assertTrue(prev_win.mpv.pause, "Previous window must be paused on normal open")
+        active_win.mpv.command_async.assert_any_call("set", "pause", False)
+        prev_win.mpv.command_async.assert_any_call("set", "pause", True)
 
     def test_wait_until_ready_rejects_playlist_pos_not_zero(self):
         """_wait_until_ready must reject readiness and terminate when playlist-pos is not 0."""

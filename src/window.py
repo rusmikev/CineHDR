@@ -38,7 +38,7 @@ from .mpris import MPRIS
 from .mpv_gl_area import ThumbPreviewGLArea
 from .options import OptionsMenuButton
 from .playlist import PlaylistItemObj
-from .preferences import settings, sync_mpv_with_settings
+from .preferences import get_init_mpv_settings, settings, sync_mpv_with_settings
 from .save_session import (
     is_same_playlist as is_same_playlist,
     restore_last_playlist,
@@ -50,7 +50,6 @@ from .utils import (
     INPUT_CONF,
     SCREENSHOT_DIR,
     WATCH_HISTORY_JSONL,
-    get_mouse_bindings,
     has_host_permission as has_host_permission,
     idle_add_once as idle_add_once,
     is_local_path as is_local_path,
@@ -69,6 +68,7 @@ from .window_controls import (
     on_progress_released,
     on_progress_scroll,
     set_time_tooltip,
+    set_window_size_and_present,
     setup_playback_control_widgets,
     setup_thumb_preview as controls_setup_thumb_preview,
     toggle_elapsed_remaining,
@@ -214,7 +214,7 @@ class CineWindow(Adw.ApplicationWindow):
     video_progress_adj: Gtk.Adjustment = Gtk.Template.Child()
     time_total_label: Gtk.Label = Gtk.Template.Child()
 
-    def __init__(self, is_activate=False, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.app: Adw.Application = cast(Adw.Application, kwargs.get("application"))
         self._mpris: MPRIS = self.app.mpris  # type: ignore
@@ -243,14 +243,9 @@ class CineWindow(Adw.ApplicationWindow):
         self._load_input_bindings()
         sync_mpv_with_settings(self)
 
-        if (
-            settings.get_boolean("save-session")
-            and is_activate
-            and not self._is_gpu_validation
-        ):
-            restore_last_playlist(self, self.app, self.mpv)
-
     def _init_window_state(self):
+        self._presented: bool = False
+        self._session_restoring: bool = False
         self._visible_dialog: Adw.Dialog | None = None
         self.playlist_ls: Gio.ListStore = Gio.ListStore.new(PlaylistItemObj)
         self._playlist_debounce_id: int = 0
@@ -306,6 +301,7 @@ class CineWindow(Adw.ApplicationWindow):
         self._media_load_generation: int = 0
 
     def _create_mpv_player(self):
+        init_setts = get_init_mpv_settings()
         return mpv.MPV(
             log_handler=self._mpv_log_handler,
             loglevel="warn",
@@ -319,15 +315,20 @@ class CineWindow(Adw.ApplicationWindow):
             load_scripts=True,
             audio_display="embedded-first",
             audio_file_auto="fuzzy",
+            alang=init_setts["alang"],
+            slang=init_setts["slang"],
             sub_auto="fuzzy",
             sub_file_paths="sub:subs:subtitles:Sub:Subs:Subtitles:srt:srts:Srt:Srts",
             sub_border_size=2,
-            sub_shadow_offset=0.6,
-            sub_border_color="#B6000000",
-            sub_shadow_color="#97000000",
-            sub_color="#ebebeb",
+            sub_color=init_setts["sub-color"],
+            sub_scale=init_setts["sub-scale"],
+            sub_font=init_setts["sub-font"],
+            sub_border_style=init_setts["sub-border-style"],
+            sub_shadow_offset=init_setts["sub-shadow-offset"],
+            sub_border_color=init_setts["sub-border-color"],
+            sub_back_color=init_setts["sub-back-color"],
+            sub_shadow_color=init_setts["sub-back-color"],
             sub_use_margins=False,
-            sub_font="Adwaita Sans SemiBold",
             osd_font="Adwaita Sans",
             osd_bold=True,
             osd_bar=False,
@@ -338,12 +339,14 @@ class CineWindow(Adw.ApplicationWindow):
             osd_shadow_color="#1B000000",
             osd_margin_x=66,
             osd_margin_y=66,
+            volume=init_setts["volume"],
             volume_max=150,
             keep_open=True,
             ytdl=True,
             ytdl_raw_options="yes-playlist=",
             cursor_autohide_fs_only=True,
             autocreate_playlist="filter",
+            save_position_on_quit=init_setts["save-position-on-quit"],
             save_watch_history=True,
             watch_history_path=WATCH_HISTORY_JSONL,
         )
@@ -360,15 +363,18 @@ class CineWindow(Adw.ApplicationWindow):
             if settings.get_boolean("graphics-offload")
             else Gtk.GraphicsOffloadEnabled.DISABLED
         )
-        if self.mpv["window-maximized"] or settings.get_boolean("is-maximized"):
-            self.maximize()
-
-        self.conf_hwdec = list(filter(lambda x: x != "no", cast(list, self.mpv.hwdec)))
         self.mpv["vo"] = "libmpv"
         self.mpv["osc"] = "no"
         self.mpv["load-console"] = "no"
         for opt in ("vid", "aid", "volume", "sub-scale", "ab-loop-a", "ab-loop-b"):
             self.mpv.command("change-list", "watch-later-options", "remove", opt)
+
+    def restore_session(self):
+        if not self._is_gpu_validation:
+            self._session_restoring = restore_last_playlist(self)
+
+    def set_win_size_and_present(self, width=1920, height=1080):
+        set_window_size_and_present(self, width, height)
 
     def _load_input_bindings(self):
         try:
@@ -378,7 +384,6 @@ class CineWindow(Adw.ApplicationWindow):
             logger.exception("load-input-conf failed")
 
         self._input_bindings = cast(dict, self.mpv.input_bindings)
-        self._mouse_binds: dict = get_mouse_bindings(self._input_bindings)
         self._nonrepeat_keys, self._has_enter_binding, self._has_kp_enter_binding = (
             parse_bindings(self._input_bindings)
         )

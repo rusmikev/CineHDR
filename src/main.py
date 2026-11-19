@@ -19,7 +19,6 @@
 
 import logging
 import os
-import subprocess
 import sys
 from gettext import gettext as _
 from typing import cast
@@ -27,10 +26,15 @@ from typing import cast
 import gi
 
 gi.require_version("Adw", "1")
+gi.require_version("Gdk", "4.0")
 gi.require_version("Gio", "2.0")
+gi.require_version("GObject", "2.0")
 gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "4.0")
-gi.require_version("Gdk", "4.0")
+gi.require_version("GdkX11", "4.0")
+gi.require_version("GdkWayland", "4.0")
+gi.require_version("Pango", "1.0")
+
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from .diagnostics_report import DIAGNOSTICS_EXPORT_DIR_ENV, DIAGNOSTICS_EXPORT_PATH_ENV
@@ -44,7 +48,7 @@ from .mpris import MPRIS
 from .preferences import Preferences, settings
 from .render_backend import select_process_backend
 from .save_session import is_same_playlist
-from .utils import load_optional_validation, set_window_size
+from .utils import load_optional_validation
 from .window import CineWindow
 
 logger = logging.getLogger(__name__)
@@ -114,6 +118,10 @@ class CineApplication(Adw.Application):
             resource_base_path="/io/github/rusmikev/CineHDR",
         )
 
+        self.mpris = MPRIS(self)
+
+        self.can_restore_session = True
+
         self.add_main_option(
             "new-window",
             ord("n"),
@@ -160,8 +168,6 @@ class CineApplication(Adw.Application):
         )
 
     def do_startup(self):
-        self.mpris = MPRIS(self)
-
         Adw.Application.do_startup(self)
         Adw.StyleManager.get_default().props.color_scheme = Adw.ColorScheme.FORCE_DARK
 
@@ -173,68 +179,29 @@ class CineApplication(Adw.Application):
         )
 
     def do_activate(self):
-        win = CineWindow(application=self, is_activate=True)
-        self._set_size_and_present(win)
+        should_auto_resize = self.can_restore_session
 
-    def _set_size_and_present(self, window, width=1920, height=1080):
-        window.realize()
-        set_window_size(window, width, height)
-        window.present()
+        win = CineWindow(application=self)
+
+        if should_auto_resize and win._session_restoring:
+            win.realize()
+            return
+
+        win.realize()
+        win.set_win_size_and_present()
 
     def do_open(self, files, n_files, hint):
+        self.can_restore_session = False
         win: CineWindow = cast(CineWindow, self.props.active_window)
         open_new = settings.get_boolean("open-new-windows") or not win
-        vid_w, vid_h = 1920, 1080
 
         if open_new:
             win = CineWindow(application=self)
             win.start_page.set_visible(False)
 
-            first_video_path = None
-            for gfile in files:
-                first_video_path = self._find_first_file(gfile)
-
-                if first_video_path:
-                    break
-
-            if first_video_path:
-                try:
-                    cmd = [
-                        "ffprobe",
-                        "-v",
-                        "error",
-                        "-select_streams",
-                        "v:0",
-                        "-show_entries",
-                        "stream=width,height:stream_side_data=rotation",
-                        "-of",
-                        "csv=s=x:p=0",
-                        first_video_path,
-                    ]
-                    output = subprocess.check_output(
-                        cmd, text=True, timeout=2, stderr=subprocess.DEVNULL
-                    ).strip()
-
-                    if output:
-                        # "1920x1080x-90" or just "1920x1080"
-                        parts = output.splitlines()[0].split("x")
-
-                        width = int(parts[0])
-                        height = int(parts[1])
-
-                        rotation_value = parts[2].strip() if len(parts) > 2 else ""
-                        rotation = int(rotation_value) if rotation_value else 0
-
-                        if abs(rotation) in (90, 270):
-                            vid_w = height
-                            vid_h = width
-                        else:
-                            vid_w = width
-                            vid_h = height
-                except Exception:
-                    logger.exception("Metadata probe failed")
-
-        self._set_size_and_present(win, vid_w, vid_h)
+        win.realize()
+        if not open_new:
+            win.present()
 
         if not open_new:
             if is_same_playlist(win.mpv.playlist):
@@ -256,17 +223,21 @@ class CineApplication(Adw.Application):
                 )
 
         for gfile in files:
-            path = gfile.get_path() or gfile.get_uri()
-            if path:
+            local_path = gfile.get_path()
+            path = local_path or gfile.get_uri()
+            if path and (local_path is None or os.path.exists(local_path)):
                 win.mpv.loadfile(path, "append-play")
+            else:
+                win.set_win_size_and_present()
+                win.show_toast(_("File Error") + f": {path}")
 
         for window in self.get_windows():
             w = cast(CineWindow, window)
             # Pause previous opened windows
             if w != win:
-                w.mpv.pause = True
+                w.mpv.command_async("set", "pause", True)
             elif not is_fixed_fixture_validation:
-                w.mpv.pause = False
+                w.mpv.command_async("set", "pause", False)
 
         win.hide_ui_timeout()
 
@@ -281,58 +252,8 @@ class CineApplication(Adw.Application):
             )
             GLib.idle_add(self._gpu_validation_session.start)
 
-    def _find_first_file(self, gfile, visited=None):
-        """Local-only recursive search."""
-        if gfile.get_uri_scheme() != "file":
-            return None
-
-        if visited is None:
-            visited = set()
-
-        path = gfile.get_path()
-        if not path or path in visited:
-            return None
-        visited.add(path)
-
-        try:
-            info = gfile.query_info(
-                "standard::type", Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, None
-            )
-            f_type = info.get_file_type()
-
-            if f_type == Gio.FileType.REGULAR:
-                return path
-
-            if f_type == Gio.FileType.DIRECTORY:
-                enumerator = gfile.enumerate_children(
-                    "standard::name,standard::type",
-                    Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
-                    None,
-                )
-
-                subdirectories = []
-                for child in enumerator:
-                    child_type = child.get_file_type()
-                    name = child.get_name()
-
-                    if name.startswith("."):
-                        continue
-
-                    if child_type == Gio.FileType.REGULAR:
-                        return gfile.get_child(name).get_path()
-                    elif child_type == Gio.FileType.DIRECTORY:
-                        subdirectories.append(gfile.get_child(name))
-
-                for folder in subdirectories:
-                    found = self._find_first_file(folder, visited)
-                    if found:
-                        return found
-        except Exception:
-            logger.exception("find_first_file failed")
-        return None
-
-    # From showtime
     def do_handle_local_options(self, options: GLib.VariantDict):
+        # Copied from showtime: https://gitlab.gnome.org/GNOME/showtime/-/blob/25066ad0ca1c20bd8b9f6f776f5be75b31277039/showtime/main.py#L211-224
         """Handle local command line arguments."""
         self.register()  # This is so props.is_remote works
 

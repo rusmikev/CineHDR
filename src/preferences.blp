@@ -188,6 +188,12 @@ template $Preferences: Adw.Dialog {
 					[suffix]
 					ColorDialogButton sub_color_btn {
 						valign: center;
+
+						dialog: ColorDialog {
+							title: _("Subtitle Background");
+							modal: true;
+							with-alpha: true;
+						};
 					}
 
 					[suffix]
@@ -206,25 +212,6 @@ template $Preferences: Adw.Dialog {
 				Adw.ActionRow font_row {
 					title: _("Subtitle Font");
 					activatable: true;
-
-					MenuButton {
-						icon-name: "info-outline-symbolic";
-						valign: center;
-
-						styles [
-							"flat",
-						]
-
-						popover: Popover {
-							Label {
-								label: _("Some fonts may not work");
-
-								styles [
-									"warning",
-								]
-							}
-						};
-					}
 
 					[suffix]
 					Label font_label {
@@ -268,6 +255,12 @@ template $Preferences: Adw.Dialog {
 					ColorDialogButton sub_bg_color_btn {
 						valign: center;
 						sensitive: bind subtitle_bg_switch.active;
+
+						dialog: ColorDialog {
+							title: _("Subtitle Background");
+							modal: true;
+							with-alpha: true;
+						};
 					}
 
 					[suffix]
