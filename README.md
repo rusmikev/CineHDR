@@ -58,7 +58,7 @@ against mpv on a test pattern.
 
 | Environment | Stack | SDR playback (L2) | HDR-to-SDR fallback (L3/L3p) | mpv reference (L3p) | HDR10 protocol (L3p) | HDR10 visual (L4) |
 |---|---|---|---|---|---|---|
-| **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** (includes a 4K60 smoke check on Flatpak runtime 51 and a VA-API screenshot check on the release candidate) | N/A | **PASS** | **PASS** (also rechecked on Flatpak runtime 51) | **PASS** |
+| **GNOME / AMD** | GNOME 50, Mutter, AMD (Mesa) | **PASS** (includes a 4K60 smoke check on Flatpak runtime 51 and a VA-API screenshot check on candidate r2 and a cold-start smoke on r4) | N/A | **PASS** | **PASS** (also rechecked on Flatpak runtime 51) | **PASS** |
 | GNOME / Intel | GNOME ≥ 48, Intel (Mesa) | **PASS** (1080p SDR playback and clean exit; mpv reported frame drops in fullscreen 4K60 on the tested HDMI display, with no visible issues reported) | N/A | **PASS** | **PASS** | **PASS** |
 | GNOME / NVIDIA | GNOME ≥ 48, NVIDIA (PRIME) | **PASS** (1080p with CUDA interop; default interop reports a startup GL error; mpv reported frame drops in fullscreen 4K60 with CUDA on the tested HDMI display, with no visible issues reported) | N/A | `NOT_RUN` | `NOT_RUN` | `NOT_RUN` |
 | KDE / AMD | Plasma ≥ 6.7, KWin, AMD (Mesa) | **PASS** (playback, pause, seek, resize/fullscreen, exit during playback) | **PASS** (GTK lacks TF sRGB → SDR tone mapping, no HDR description) | N/A | N/A | N/A |
