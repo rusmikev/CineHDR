@@ -14,6 +14,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
 
 from .playlist import Playlist, PlaylistItemObj
+from .utils import mpv_prop
 
 
 def _register_file_observers(win: Any, win_mod: Any) -> None:
@@ -111,11 +112,13 @@ def _register_playlist_and_ab_observers(win: Any, win_mod: Any) -> None:
         if win._shutting_down or rotate_val is None or win._presented:
             return
 
-        try:
-            vid_w = cast(int, win.mpv.width) or 1920
-            vid_h = cast(int, win.mpv.height) or 1080
-        except mpv.ShutdownError:
+        raw_w = mpv_prop(win.mpv, "width")
+        raw_h = mpv_prop(win.mpv, "height")
+        if win._shutting_down:
             return
+
+        vid_w = cast(int, raw_w) or 1920
+        vid_h = cast(int, raw_h) or 1080
 
         if abs(rotate_val) in (90, 270):
             vid_w, vid_h = vid_h, vid_w

@@ -30,7 +30,7 @@ gi.require_version("Gio", "2.0")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, Gio, Gtk
 from .render_backend import RenderSelectionSource
-from .utils import CONFIG_DIR, has_host_permission, is_flatpak
+from .utils import CONFIG_DIR, has_host_permission, is_flatpak, mpv_prop
 
 logger = logging.getLogger(__name__)
 settings = Gio.Settings.new("io.github.rusmikev.CineHDR")
@@ -59,14 +59,19 @@ def get_init_mpv_settings():
 def sync_mpv_with_settings(window):
     mpv = window.mpv
 
-    if mpv.window_maximized or settings.get_boolean("is-maximized"):
+    if mpv_prop(mpv, "window-maximized") or settings.get_boolean("is-maximized"):
         window.maximize()
 
     if settings.get_boolean("save-session"):
         window.restore_session()
 
     if settings.get_boolean("hwdec"):
-        mpv.hwdec = [h for h in mpv.hwdec if h != "no"] + ["auto"]
+        raw_hwdec = mpv_prop(mpv, "hwdec")
+        if isinstance(raw_hwdec, str):
+            hwdec = [raw_hwdec] if raw_hwdec != "no" else []
+        else:
+            hwdec = [h for h in (raw_hwdec or ()) if h != "no"]
+        mpv.hwdec = hwdec + ["auto"]
 
     if settings.get_boolean("normalize-volume"):
         mpv.command_async("af", "add", "@cine_loudnorm:lavfi=[loudnorm=I=-20]")
@@ -153,15 +158,30 @@ class Preferences(Adw.Dialog):
         self.connect("closed", self._disconnect_settings)
 
     def _sync_back_setts(self, mpv):
-        settings.set_boolean("save-video-position", mpv.save_position_on_quit)
-        settings.set_int("volume", mpv.volume)
-        settings.set_string("audio-languages", ",".join(mpv.alang))
-        settings.set_string("subtitle-languages", ",".join(mpv.slang))
-        settings.set_string("subtitle-color", mpv.sub_color)
-        settings.set_double("subtitle-scale", mpv.sub_scale)
-        settings.set_string("subtitle-font", mpv.sub_font)
-        settings.set_string("subtitle-bg-color", mpv.sub_back_color)
-        settings.set_boolean("subtitle-bg", mpv.sub_border_style == "background-box")
+        if (save_pos := mpv_prop(mpv, "save-position-on-quit")) is not None:
+            settings.set_boolean("save-video-position", bool(save_pos))
+        if (volume := mpv_prop(mpv, "volume")) is not None:
+            settings.set_int("volume", int(volume))
+        if (alang := mpv_prop(mpv, "alang")) is not None:
+            settings.set_string(
+                "audio-languages",
+                alang if isinstance(alang, str) else ",".join(alang),
+            )
+        if (slang := mpv_prop(mpv, "slang")) is not None:
+            settings.set_string(
+                "subtitle-languages",
+                slang if isinstance(slang, str) else ",".join(slang),
+            )
+        if (sub_color := mpv_prop(mpv, "sub-color")) is not None:
+            settings.set_string("subtitle-color", str(sub_color))
+        if (sub_scale := mpv_prop(mpv, "sub-scale")) is not None:
+            settings.set_double("subtitle-scale", float(sub_scale))
+        if (sub_font := mpv_prop(mpv, "sub-font")) is not None:
+            settings.set_string("subtitle-font", str(sub_font))
+        if (sub_back_color := mpv_prop(mpv, "sub-back-color")) is not None:
+            settings.set_string("subtitle-bg-color", str(sub_back_color))
+        if (sub_border_style := mpv_prop(mpv, "sub-border-style")) is not None:
+            settings.set_boolean("subtitle-bg", sub_border_style == "background-box")
 
     def _bind_ui(self):
         bindings = [
@@ -273,7 +293,11 @@ class Preferences(Adw.Dialog):
 
     def _on_hwdec_changed(self, settings, key):
         hwdec_on = settings.get_boolean(key)
-        hwdec = [h for h in self._mpv.hwdec if h != "no"]
+        raw_hwdec = mpv_prop(self._mpv, "hwdec")
+        if isinstance(raw_hwdec, str):
+            hwdec = [raw_hwdec] if raw_hwdec != "no" else []
+        else:
+            hwdec = [h for h in (raw_hwdec or ()) if h != "no"]
         self._mpv.hwdec = hwdec + ["auto"] if hwdec_on else ["no"] + hwdec
 
     def _on_renderer_row_changed(self, row, _param):

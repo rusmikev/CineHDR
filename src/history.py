@@ -25,7 +25,7 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from .utils import idle_add_once, is_local_path
+from .utils import idle_add_once, is_local_path, mpv_prop
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class HistoryDialog(Adw.Dialog):
     def __init__(self, window, **kwargs):
         super().__init__(**kwargs)
         self._win = window
-        self._hist_path = window.mpv.watch_history_path
+        self._hist_path = mpv_prop(window.mpv, "watch-history-path")
         self._groups = {}
 
         self._load_all_group = Adw.PreferencesGroup()

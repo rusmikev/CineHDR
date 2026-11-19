@@ -124,8 +124,12 @@ class OptionsMenuButton(Gtk.MenuButton):
         if not self.get_active():
             return
 
-        aspect_overr = cast(float, self._win.mpv.video_aspect_override)
-        target_val = aspect_overr if aspect_overr > 0 else -1
+        aspect_overr = mpv_prop(self._win.mpv, "video-aspect-override")
+        target_val = (
+            aspect_overr
+            if isinstance(aspect_overr, (int, float)) and aspect_overr > 0
+            else -1
+        )
         self._set_sensitive(self.aspect_reset_btn, target_val != -1)
 
         aspects = self.aspect_list
@@ -171,13 +175,13 @@ class OptionsMenuButton(Gtk.MenuButton):
             val = cast(float, self._win.mpv[mpv_key])
             set_open_val(spin, reset_btn, val, default_val=default)
 
-        rotate_val = int(self._win.mpv.video_rotate or 0)
+        rotate_val = int(mpv_prop(self._win.mpv, "video-rotate", 0) or 0)
         self._set_sensitive(self.rotate_reset_btn, rotate_val != 0)
 
         self._set_sensitive(self.flip_reset_btn, self._has_flip())
 
         try:
-            crop_str = cast(str, self._win.mpv.video_crop)
+            crop_str = mpv_prop(self._win.mpv, "video-crop", "")
 
             if not crop_str:
                 self.crop_dropdown.set_selected(0)
@@ -268,14 +272,14 @@ class OptionsMenuButton(Gtk.MenuButton):
     # --- ROTATE ---
     @Gtk.Template.Callback()
     def _on_rotate_right(self, _btn):
-        curr = cast(int, self._win.mpv.video_rotate or 0)
+        curr = int(mpv_prop(self._win.mpv, "video-rotate", 0) or 0)
         next_rot = (curr + 90) % 360
         self._win.mpv.command_async("set", "video-rotate", next_rot)
         self._set_sensitive(self.rotate_reset_btn, next_rot != 0)
 
     @Gtk.Template.Callback()
     def _on_rotate_left(self, _btn):
-        curr = cast(int, self._win.mpv.video_rotate or 0)
+        curr = int(mpv_prop(self._win.mpv, "video-rotate", 0) or 0)
         next_rot = (curr - 90) % 360
         self._win.mpv.command_async("set", "video-rotate", next_rot)
         self._set_sensitive(self.rotate_reset_btn, next_rot != 0)
