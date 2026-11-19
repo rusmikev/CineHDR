@@ -70,8 +70,7 @@
   </requires>
 
   <releases>
-    <!-- Release candidate: remove type="development" and set final publication date on release -->
-    <release version="1.8.8.1" type="development" date="2026-11-19">
+    <release version="1.8.8.1" date="2026-11-19">
       <description translate="no">
         <ul>
           <li>Merged upstream Cine main updates (preserving mpv.conf startup options, improved session-restore window sizing, subtitle font selection, popover height limits, and updated translations) while keeping the standard Flatpak on libmpv v0.41.0 with the screenshot fix and legacy renderer default</li>

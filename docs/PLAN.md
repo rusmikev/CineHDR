@@ -159,9 +159,9 @@
 
 | # | Задача | Исп. | Статус |
 |---|---|---|---|
-| P4.1 | Влить upstream `main` повторно (если выйдет после B4); версия `1.8.x.1`; `metainfo` `<release>` с датой и changelog | A | IN PROGRESS: 1.8.8.1 r2 (`04516d1`, Flatpak `bdd61665`) собран. Аппаратный холодный старт FAIL: пять сообщений libmpv `No render context set` до успешного воспроизведения. r4 (`e157a0e`, Flatpak `b9708ef7`, `smoke-20261119T101756Z.ZH0USM`): регрессия холодного старта прошла контроль. Ошибок видеовыхода нет, три читаемых снимка, exit 0. Финальные метаданные ждут выпуска |
-| P4.2 | README финальный: установка из GitHub Release; требования (GNOME ≥ 48, Wayland, HDR-монитор; статус KDE по D8); таблица поддержки DE × GPU из `TESTING.md`; ограничения (X11 — SDR, DoVi P5 — SDR, KDE Plasma ≥ 6.7 — SDR fallback до фикса в GTK, NVIDIA — см. раздел); как снять Copy Report для баг-репорта | A | TODO |
-| P4.3 | `CHANGELOG.md`; скриншоты HDR-меню и диагностики | A/O | IN PROGRESS: черновик Unreleased обновлён по результатам матрицы. Запись 1.8.8.1 и оба UI-снимка r2 готовы. Дата выпуска предстоит |
+| P4.1 | Влить upstream `main` повторно (если выйдет после B4); версия `1.8.x.1`; `metainfo` `<release>` с датой и changelog | A | DONE 2026-11-19: upstream Cine `e8c84e1` влит, версия и метаданные 1.8.8.1 согласованы. Холодный старт FAIL в r2 (`04516d1`, Flatpak `bdd61665`) исправлен в r4 (`e157a0e`, Flatpak `b9708ef7`, `smoke-20261119T101756Z.ZH0USM`): без ошибок видеовыхода, три читаемых снимка, exit 0 |
+| P4.2 | README финальный: установка из GitHub Release; требования (GNOME ≥ 48, Wayland, HDR-монитор; статус KDE по D8); таблица поддержки DE × GPU из `TESTING.md`; ограничения (X11 — SDR, DoVi P5 — SDR, KDE Plasma ≥ 6.7 — SDR fallback до фикса в GTK, NVIDIA — см. раздел); как снять Copy Report для баг-репорта | A | DONE 2026-11-19: установка, требования, Copy Report, D8 и таблица проверенных конфигураций сверены с TESTING.md |
+| P4.3 | `CHANGELOG.md`; скриншоты HDR-меню и диагностики | A/O | DONE 2026-11-19: запись 1.8.8.1 в CHANGELOG, скриншоты HDR-меню и Diagnostics получены в аппаратном прогоне r2 |
 | P4.4 | Тег `v1.8.x.1` (с подписью), GitHub Release с `CineHDR-x86_64.flatpak` из CI, release notes | O | TODO |
 | P4.5 | (после релиза, опционально) Flathub: отдельная задача — домен для app-id, ревью манифеста | — | TODO |
 
