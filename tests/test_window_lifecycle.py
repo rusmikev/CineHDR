@@ -53,6 +53,7 @@ from src.diagnostics_report import (  # noqa: E402
     generate_video_output_report,
 )
 from src.utils import PrimaryClick, SecondaryClick  # noqa: E402
+from src.video_widget import MpvVideoWidget  # noqa: E402
 from src.window import CineWindow, make_mpv_log_handler, safe_mpv_file_error_label  # noqa: E402
 
 
@@ -730,34 +731,35 @@ class TestWindowObserversAndCopyReportParity(unittest.TestCase):
 
 
 class TestColdOpenRenderContextOrder(unittest.TestCase):
-    def test_ensure_video_render_context_realizes_window_then_video_area(self):
+    def test_ensure_video_render_context_realizes_window_then_gl_area(self):
         win = _make_blank_window()
         calls = []
-        state = {"win": False, "area": False}
+        state = {"win": False, "gl_area": False}
 
         def win_realize():
             calls.append("win.realize")
             state["win"] = True
 
-        def area_realize():
-            calls.append("video_area.realize")
-            state["area"] = True
+        def gl_area_realize():
+            calls.append("gl_area.realize")
+            state["gl_area"] = True
 
         win.get_realized = lambda: state["win"]
         win.realize = win_realize
-        win._video_area = SimpleNamespace(
-            get_realized=lambda: state["area"],
-            realize=area_realize,
+        win._video_area = MpvVideoWidget.__new__(MpvVideoWidget)
+        win._video_area.gl_area = SimpleNamespace(
+            get_realized=lambda: state["gl_area"],
+            realize=gl_area_realize,
         )
 
         win.ensure_video_render_context()
-        self.assertEqual(calls, ["win.realize", "video_area.realize"])
+        self.assertEqual(calls, ["win.realize", "gl_area.realize"])
 
         # Idempotent once realized
         win.ensure_video_render_context()
-        self.assertEqual(calls, ["win.realize", "video_area.realize"])
+        self.assertEqual(calls, ["win.realize", "gl_area.realize"])
 
-    def test_do_open_realizes_video_area_before_loadfile(self):
+    def test_do_open_realizes_gl_area_before_loadfile(self):
         from src.main import CineApplication
 
         app = CineApplication.__new__(CineApplication)
@@ -770,9 +772,10 @@ class TestColdOpenRenderContextOrder(unittest.TestCase):
         win = _make_blank_window()
         win.get_realized = lambda: False
         win.realize = lambda: calls.append("win.realize")
-        win._video_area = SimpleNamespace(
+        win._video_area = MpvVideoWidget.__new__(MpvVideoWidget)
+        win._video_area.gl_area = SimpleNamespace(
             get_realized=lambda: False,
-            realize=lambda: calls.append("video_area.realize"),
+            realize=lambda: calls.append("gl_area.realize"),
         )
         win.mpv = MagicMock()
         win.mpv.loadfile = lambda path, mode: calls.append(("loadfile", path, mode))
@@ -789,7 +792,7 @@ class TestColdOpenRenderContextOrder(unittest.TestCase):
             calls,
             [
                 "win.realize",
-                "video_area.realize",
+                "gl_area.realize",
                 ("loadfile", "/tmp/sample.mkv", "append-play"),
             ],
         )

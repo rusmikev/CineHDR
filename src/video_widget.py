@@ -187,6 +187,12 @@ class MpvVideoWidget(Gtk.Widget):
         """Clean integration hook for window-level HDR UI (e.g. hdr_menu_btn)."""
         self._window = window
 
+    def realize_render_context(self) -> None:
+        """Initialize the GLArea before opening media in an unmapped window."""
+        # Widget.realize() realizes ancestors, but not children.
+        if not self.gl_area.get_realized():
+            self.gl_area.realize()
+
     def _update_cached_hdr_support(self, *args):
         update_cached_hdr_support(self, check_hdr_support)
 
