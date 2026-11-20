@@ -80,7 +80,10 @@ other hardware.
   requires, so GTK disables color management and CineHDR falls back to SDR tone
   mapping. Upstream issue
   [GNOME/gtk#7921](https://gitlab.gnome.org/GNOME/gtk/-/work_items/7921) is
-  closed without a fix; a follow-up upstream GTK MR is planned.
+  closed without a fix. A local experiment with KWin 6.8.2 showed that an
+  `sRGB` transfer-function fallback in GTK alone is not enough: GTK also drops
+  the luminance range of KWin's preferred HDR description, so HDR content is
+  clipped to SDR. Native HDR on Plasma therefore needs further GTK changes.
 - **Dolby Vision:** Profile 8 plays its HDR10-compatible base layer without RPU
   processing. Profile 5 falls back to SDR with a diagnostic reason in the
   legacy renderer.

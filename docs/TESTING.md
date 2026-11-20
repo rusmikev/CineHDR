@@ -15,7 +15,7 @@
 | GNOME-AMD | GNOME ≥ 48 / Mutter | AMD (Mesa) | да | основной стенд |
 | GNOME-Intel | GNOME ≥ 48 / Mutter | Intel (Mesa) | по возможности | ноутбук |
 | GNOME-NVIDIA | GNOME ≥ 48 / Mutter | NVIDIA proprietary, PRIME | по возможности | ноутбук |
-| KDE-AMD | Plasma ≥ 6.7 / KWin | AMD (Mesa) | да | в 1.0 — проверка SDR + корректного fallback по D8 (`missing TF srgb` в GTK); нативный HDR — post-1.0 после P2.0 |
+| KDE-AMD | Plasma ≥ 6.7 / KWin | AMD (Mesa) | да | в 1.0 — проверка SDR + корректного fallback по D8 (`missing TF srgb` в GTK); нативный HDR — post-1.0, ждёт изменений в GTK (вывод P2.0) |
 | KDE-NVIDIA | Plasma ≥ 6.7 / KWin | NVIDIA proprietary, PRIME | по возможности | в 1.0 — SDR + корректный fallback (D8) |
 
 ## Сценарии
