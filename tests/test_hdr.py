@@ -2341,7 +2341,7 @@ class TestHdrOutputAllowed(unittest.TestCase):
 
     def test_blocked_caps_missing_tf_srgb(self):
         from src.hdr_detection import hdr_output_allowed
-        from src.gtk_cm_policy import CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, TF_PQ
+        from src.gtk_cm_policy import CmCaps, INTENT_PERCEPTUAL, FEAT_PARAMETRIC, PRIM_SRGB, REASON_MISSING_TF_SRGB, TF_PQ
         caps = CmCaps(
             intents=frozenset({INTENT_PERCEPTUAL}),
             features=frozenset({FEAT_PARAMETRIC}),
@@ -2353,7 +2353,9 @@ class TestHdrOutputAllowed(unittest.TestCase):
              patch("src.wayland_output_hdr.get_output_hdr_states", return_value=self._default_states()):
             allowed, reason = hdr_output_allowed("DP-1", env={"GDK_DEBUG": "color-mgmt"})
             self.assertFalse(allowed)
-            self.assertEqual(reason, "GTK cannot create sRGB image description: missing TF srgb")
+            self.assertEqual(reason, REASON_MISSING_TF_SRGB)
+            self.assertTrue(reason.startswith("GTK cannot create sRGB image description: missing TF srgb"))
+            self.assertIn("GNOME/gtk#7921", reason)
 
     def test_blocked_caps_missing_srgb_primaries(self):
         from src.hdr_detection import hdr_output_allowed

@@ -163,6 +163,15 @@ def apply_gsk_renderer_policy(env: MutableMapping[str, str]) -> Optional[str]:
     env["GSK_RENDERER"] = renderer
     return renderer
 
+# Keep the "GTK cannot create sRGB image description: missing TF srgb" prefix verbatim:
+# tests, docs and the KDE fallback evidence match on it. The tail explains the cause.
+REASON_MISSING_TF_SRGB = (
+    "GTK cannot create sRGB image description: missing TF srgb "
+    "(the compositor no longer advertises the deprecated sRGB transfer function; "
+    "GTK needs a fix, see GNOME/gtk#7921)"
+)
+
+
 def gtk_color_managed(caps: Optional[CmCaps], env=os.environ) -> Tuple[bool, str]:
     """(bool, reason): whether GTK will manage colors."""
     if not gtk_cm_opted_in(env):
@@ -174,7 +183,7 @@ def gtk_color_managed(caps: Optional[CmCaps], env=os.environ) -> Tuple[bool, str
     if FEAT_PARAMETRIC not in caps.features:
         return False, "GTK cannot create sRGB image description: missing parametric feature"
     if TF_SRGB not in caps.tfs:
-        return False, "GTK cannot create sRGB image description: missing TF srgb"
+        return False, REASON_MISSING_TF_SRGB
     if not (PRIM_SRGB in caps.primaries or FEAT_SET_PRIMARIES in caps.features):
         return False, "GTK cannot create sRGB image description: missing sRGB primaries"
     return True, "ok"
