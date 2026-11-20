@@ -34,6 +34,7 @@ if _gresource_path := os.environ.get("CINEHDR_GRESOURCE"):
     Gio.resources_register(Gio.Resource.load(_gresource_path))
 
 from src import diagnostics_report  # noqa: E402
+from src.gtk_cm_policy import REASON_MISSING_TF_SRGB  # noqa: E402
 from src.diagnostics_report import (  # noqa: E402
     DIAGNOSTICS_EXPORT_DIR_ENV,
     DIAGNOSTICS_EXPORT_PATH_ENV,
@@ -217,12 +218,12 @@ GOLDEN_KDE_FALLBACK_REPORT = (
     "\n"
     "[Output & Color State]\n"
     "HDR Status: Active (SDR Tone Mapping enabled)\n"
-    "Auto gate: blocked: GTK cannot create sRGB image description: missing TF srgb\n"
+    "Auto gate: blocked: " + REASON_MISSING_TF_SRGB + "\n"
     "Display HDR Supported: No (Fallback to SDR / 8-bit)\n"
     "Compositor Color Management: Yes (wp_color_manager_v1 advertised)\n"
     "Monitor HDR State: Compositor reports HDR on: HDMI-A-1; current output unknown\n"
     "Graphics Offload: Disabled — output goes through GTK compositing\n"
-    "System HDR Limitation: GTK cannot create sRGB image description: missing TF srgb\n"
+    "System HDR Limitation: " + REASON_MISSING_TF_SRGB + "\n"
     "Gdk.ColorState: sRGB (published texture)\n"
     "FBO Format: GL_RGBA8 (8-bit render target; not the Wayland surface format)\n"
     "Publication State Gap: Publication suppressed: waiting for committed output state\n"
@@ -538,7 +539,7 @@ class DiagnosticsReportCharacterizationTests(unittest.TestCase):
             dovi_rpu_warning_count=2,
             dovi_rpu_warning_text="dovi: Multiple Dolby Vision RPUs",
         )
-        reason_missing_srgb = "GTK cannot create sRGB image description: missing TF srgb"
+        reason_missing_srgb = REASON_MISSING_TF_SRGB
 
         with patch("src.preferences.settings", fake_settings), \
              patch("src.hdr_detection.check_hdr_support", return_value=False), \

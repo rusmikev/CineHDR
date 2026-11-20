@@ -31,6 +31,7 @@ from src.gtk_cm_policy import (  # noqa: E402
     OPT_IN_TOO_LATE,
     PRIM_BT2020,
     PRIM_SRGB,
+    REASON_MISSING_TF_SRGB,
     TF_COMPOUND_POWER_2_4,
     TF_EXT_LINEAR,
     TF_GAMMA22,
@@ -409,7 +410,10 @@ class TestGtkColorManagedCaps(unittest.TestCase):
     def test_kwin_caps_missing_srgb_fails_closed(self):
         ok, reason = gtk_color_managed(self.kwin_caps, env={"GDK_DEBUG": "color-mgmt"})
         self.assertFalse(ok)
-        self.assertEqual(reason, "GTK cannot create sRGB image description: missing TF srgb")
+        self.assertEqual(reason, REASON_MISSING_TF_SRGB)
+        # The established prefix stays verbatim; the tail points to the upstream issue.
+        self.assertTrue(reason.startswith("GTK cannot create sRGB image description: missing TF srgb"))
+        self.assertIn("GNOME/gtk#7921", reason)
 
     def test_missing_caps_fails_closed(self):
         ok, reason = gtk_color_managed(None, env={"GDK_DEBUG": "color-mgmt"})
